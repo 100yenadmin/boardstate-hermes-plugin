@@ -19,6 +19,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { DashboardStore } from "@boardstate/core";
 import { FsStorageAdapter } from "@boardstate/core/node";
+import { validateWorkspaceDoc } from "@boardstate/schema";
 import {
   attachWsTransport,
   createInProcessHost,
@@ -30,6 +31,68 @@ import {
 const stateDirEnv = process.env.BOARDSTATE_STATE_DIR;
 const storage = new FsStorageAdapter(stateDirEnv ? { storageDir: stateDirEnv } : {});
 const store = new DashboardStore({ storage });
+
+// A clean, fully-renderable, Hermes-native first-boot board. The upstream
+// `DashboardStore` seeds a default "Overview" whose stat-card/instances/etc. widgets
+// bind to host RPCs a generic Boardstate sidecar doesn't serve — those render as red
+// error cells. We pre-empt that seed for an EMPTY state dir only (workspace.json
+// absent — the exact condition the default seed triggers on), so an operator's first
+// open shows a welcoming board with zero error cells. A non-empty dir is never touched.
+const WELCOME_WORKSPACE = {
+  schemaVersion: 1,
+  workspaceVersion: 1,
+  widgetsRegistry: {},
+  prefs: { tabOrder: ["board"] },
+  tabs: [
+    {
+      slug: "board",
+      title: "Board",
+      icon: "layoutDashboard",
+      hidden: false,
+      createdBy: "system",
+      widgets: [
+        {
+          id: "welcome",
+          kind: "builtin:markdown",
+          title: "Hermes Board",
+          grid: { x: 0, y: 0, w: 6, h: 3 },
+          collapsed: false,
+          hidden: false,
+          props: {
+            markdown:
+              "# Hermes Board\n\nAsk Hermes to build here — every `boardstate_*` tool call lands on this board live.",
+          },
+        },
+        {
+          id: "example",
+          kind: "builtin:markdown",
+          title: "Example widget",
+          grid: { x: 6, y: 0, w: 6, h: 3 },
+          collapsed: false,
+          hidden: false,
+          props: {
+            markdown:
+              "**Example widget** — a props-only card, no data source needed.\n\nAsk Hermes for a live one: a stat card, an activity feed, or a custom widget.",
+          },
+        },
+      ],
+    },
+  ],
+};
+
+async function seedInitialWorkspaceIfEmpty(): Promise<void> {
+  // `readFile` returns null when the file is absent — the same signal the store's own
+  // seed uses. Present ⇒ an existing board we must leave untouched.
+  if ((await storage.readFile(store.workspacePath)) !== null) {
+    return;
+  }
+  const doc = validateWorkspaceDoc(structuredClone(WELCOME_WORKSPACE));
+  await storage.mkdir(store.dashboardDir);
+  await storage.writeFileAtomic(store.workspacePath, JSON.stringify(doc, null, 2));
+}
+
+await seedInitialWorkspaceIfEmpty();
+
 const host = createInProcessHost(store, storage);
 // Same registration the MCP server uses: base 14 methods + shipped extensions, with
 // the node-side file-binding resolver + widget-bundle installer injected.

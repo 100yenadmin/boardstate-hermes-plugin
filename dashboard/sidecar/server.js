@@ -6936,6 +6936,54 @@ function nodeRpcDeps() {
 var stateDirEnv = process.env.BOARDSTATE_STATE_DIR;
 var storage = new FsStorageAdapter(stateDirEnv ? { storageDir: stateDirEnv } : {});
 var store = new DashboardStore({ storage });
+var WELCOME_WORKSPACE = {
+  schemaVersion: 1,
+  workspaceVersion: 1,
+  widgetsRegistry: {},
+  prefs: { tabOrder: ["board"] },
+  tabs: [
+    {
+      slug: "board",
+      title: "Board",
+      icon: "layoutDashboard",
+      hidden: false,
+      createdBy: "system",
+      widgets: [
+        {
+          id: "welcome",
+          kind: "builtin:markdown",
+          title: "Hermes Board",
+          grid: { x: 0, y: 0, w: 6, h: 3 },
+          collapsed: false,
+          hidden: false,
+          props: {
+            markdown: "# Hermes Board\n\nAsk Hermes to build here \u2014 every `boardstate_*` tool call lands on this board live."
+          }
+        },
+        {
+          id: "example",
+          kind: "builtin:markdown",
+          title: "Example widget",
+          grid: { x: 6, y: 0, w: 6, h: 3 },
+          collapsed: false,
+          hidden: false,
+          props: {
+            markdown: "**Example widget** \u2014 a props-only card, no data source needed.\n\nAsk Hermes for a live one: a stat card, an activity feed, or a custom widget."
+          }
+        }
+      ]
+    }
+  ]
+};
+async function seedInitialWorkspaceIfEmpty() {
+  if (await storage.readFile(store.workspacePath) !== null) {
+    return;
+  }
+  const doc = validateWorkspaceDoc(structuredClone(WELCOME_WORKSPACE));
+  await storage.mkdir(store.dashboardDir);
+  await storage.writeFileAtomic(store.workspacePath, JSON.stringify(doc, null, 2));
+}
+await seedInitialWorkspaceIfEmpty();
 var host = createInProcessHost(store, storage);
 registerBoardstateRpc(host, {
   store,

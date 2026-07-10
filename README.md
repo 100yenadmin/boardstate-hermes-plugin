@@ -2,14 +2,15 @@
 
 A drop-in tab for the [Hermes](https://github.com/NousResearch/hermes-agent) web
 dashboard (`hermes dashboard`) that renders a **live [Boardstate](https://github.com/100yenadmin/boardstate) board** —
-the layout-as-data dashboard an agent builds via `boardstate-mcp`, streamed into the
+the layout-as-data dashboard Hermes builds via `boardstate-mcp`, streamed into the
 Hermes UI over a WebSocket to a local sidecar.
 
 The plugin adds a **Board** tab (after *Skills*). Opening it mounts the real
 `<boardstate-view>` custom element and drives it over the Boardstate networked
 transport. A Node sidecar owns the control plane over an fs-backed store, so a widget
-an agent adds via `boardstate-mcp` (or the `boardstate` CLI) against the same state
-dir shows up on the board.
+Hermes adds via `boardstate-mcp` (or the `boardstate` CLI) against the same state
+dir shows up on the board. On first boot against an empty state dir the sidecar seeds
+a clean, Hermes-native welcome board (no external data bindings, zero error cells).
 
 ![Board tab — live widget over the WS sidecar](.github/media/board-tab.png)
 
@@ -95,7 +96,7 @@ Populate the board with the Boardstate MCP server or CLI against the same dir:
 export BOARDSTATE_STATE_DIR=~/.hermes/boardstate-state
 boardstate dashboard widgets add --tab main --kind builtin:markdown \
   --title "Hello" --props '{"markdown":"# Live from the agent"}'
-# …or run `boardstate-mcp` so an agent builds the board via tools.
+# …or run `boardstate-mcp` so Hermes builds the board via tools.
 ```
 
 > **Cross-process live updates:** the sidecar broadcasts `boardstate.changed` on its
