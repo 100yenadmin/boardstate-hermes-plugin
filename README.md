@@ -11,6 +11,10 @@ transport. A Node sidecar owns the control plane over an fs-backed store, so a w
 an agent adds via `boardstate-mcp` (or the `boardstate` CLI) against the same state
 dir shows up on the board.
 
+![Board tab — live widget over the WS sidecar](.github/media/board-tab.png)
+
+*Verification shot: the real plugin bundle + WS bridge + Node sidecar + fs state; the "Hermes Plugin Proof" widget was added via the boardstate CLI and renders live. (Run through a faithful plugin-SDK harness — see Caveats for the stale-web_dist note.)*
+
 ## Architecture
 
 ```
