@@ -1,0 +1,10 @@
+node_modules/
+*.log
+.DS_Store
+# Build artifacts are committed on purpose (the plugin is a runtime drop-in):
+#   dashboard/dist/index.js, dashboard/sidecar/server.js, dashboard/vendor/*
+# Only sourcemaps are noise.
+*.map
+
+__pycache__/
+*.pyc

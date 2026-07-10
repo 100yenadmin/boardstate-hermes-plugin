@@ -1,0 +1,14 @@
+{
+  "name": "boardstate",
+  "label": "Board",
+  "description": "Live Boardstate board — the layout-as-data dashboard an agent builds via boardstate-mcp, rendered live over a WebSocket to a local sidecar.",
+  "icon": "BarChart3",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/board",
+    "position": "after:skills"
+  },
+  "entry": "dist/index.js",
+  "css": "vendor/boardstate.css",
+  "api": "plugin_api.py"
+}
