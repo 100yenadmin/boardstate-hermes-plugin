@@ -57,6 +57,10 @@ check("themeBase teal -> dark", themeBase("rgb(4, 28, 28)") === "dark");
 check("themeBase paper -> light", themeBase("rgb(251, 251, 253)") === "light");
 check("themeBase handles rgba", themeBase("rgba(255, 255, 255, 1)") === "light");
 check("relLuminance junk -> 0", relLuminance("transparent") === 0);
+// color(srgb r g b) form (0..1 components — what getComputedStyle returns for color-mix).
+check("color(srgb) light -> light", themeBase("color(srgb 0.99 0.99 0.99)") === "light");
+check("color(srgb) dark -> dark", themeBase("color(srgb 0.02 0.11 0.11 / 0.94)") === "dark");
+check("color(srgb) not divided by 255", relLuminance("color(srgb 1 1 1)") > 0.9);
 
 // Mapping coverage: every palette-carrying --bs-* token must be mapped, and every
 // mapping target must reference Hermes tokens (--color-* or --*-base).
