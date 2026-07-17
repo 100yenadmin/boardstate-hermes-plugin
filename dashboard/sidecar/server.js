@@ -96,7 +96,7 @@ var require_code = __commonJS({
     }
     exports._ = _;
     var plus = new _Code("+");
-    function str(strs, ...args) {
+    function str2(strs, ...args) {
       const expr = [safeStringify(strs[0])];
       let i = 0;
       while (i < args.length) {
@@ -107,7 +107,7 @@ var require_code = __commonJS({
       optimize(expr);
       return new _Code(expr);
     }
-    exports.str = str;
+    exports.str = str2;
     function addCodeArg(code, arg) {
       if (arg instanceof _Code)
         code.push(...arg._items);
@@ -150,7 +150,7 @@ var require_code = __commonJS({
       return;
     }
     function strConcat(c1, c2) {
-      return c2.emptyStr() ? c1 : c1.emptyStr() ? c2 : str`${c1}${c2}`;
+      return c2.emptyStr() ? c1 : c1.emptyStr() ? c2 : str2`${c1}${c2}`;
     }
     exports.strConcat = strConcat;
     function interpolate(x) {
@@ -854,9 +854,9 @@ var require_codegen = __commonJS({
       forOf(nameOrPrefix, iterable, forBody, varKind = scope_1.varKinds.const) {
         const name = this._scope.toName(nameOrPrefix);
         if (this.opts.es5) {
-          const arr = iterable instanceof code_1.Name ? iterable : this.var("_arr", iterable);
-          return this.forRange("_i", 0, (0, code_1._)`${arr}.length`, (i) => {
-            this.var(name, (0, code_1._)`${arr}[${i}]`);
+          const arr2 = iterable instanceof code_1.Name ? iterable : this.var("_arr", iterable);
+          return this.forRange("_i", 0, (0, code_1._)`${arr2}.length`, (i) => {
+            this.var(name, (0, code_1._)`${arr2}[${i}]`);
             forBody(name);
           });
         }
@@ -864,12 +864,12 @@ var require_codegen = __commonJS({
       }
       // `for-in` statement.
       // With option `ownProperties` replaced with a `for-of` loop for object keys
-      forIn(nameOrPrefix, obj, forBody, varKind = this.opts.es5 ? scope_1.varKinds.var : scope_1.varKinds.const) {
+      forIn(nameOrPrefix, obj2, forBody, varKind = this.opts.es5 ? scope_1.varKinds.var : scope_1.varKinds.const) {
         if (this.opts.ownProperties) {
-          return this.forOf(nameOrPrefix, (0, code_1._)`Object.keys(${obj})`, forBody);
+          return this.forOf(nameOrPrefix, (0, code_1._)`Object.keys(${obj2})`, forBody);
         }
         const name = this._scope.toName(nameOrPrefix);
-        return this._for(new ForIter("in", varKind, name, obj), () => forBody(name));
+        return this._for(new ForIter("in", varKind, name, obj2), () => forBody(name));
       }
       // end `for` loop
       endFor() {
@@ -1055,9 +1055,9 @@ var require_util = __commonJS({
     exports.checkStrictMode = exports.getErrorPath = exports.Type = exports.useFunc = exports.setEvaluated = exports.evaluatedPropsToName = exports.mergeEvaluated = exports.eachItem = exports.unescapeJsonPointer = exports.escapeJsonPointer = exports.escapeFragment = exports.unescapeFragment = exports.schemaRefOrVal = exports.schemaHasRulesButRef = exports.schemaHasRules = exports.checkUnknownRules = exports.alwaysValidSchema = exports.toHash = void 0;
     var codegen_1 = require_codegen();
     var code_1 = require_code();
-    function toHash(arr) {
+    function toHash(arr2) {
       const hash = {};
-      for (const item of arr)
+      for (const item of arr2)
         hash[item] = true;
       return hash;
     }
@@ -1112,22 +1112,22 @@ var require_util = __commonJS({
       return (0, codegen_1._)`${topSchemaRef}${schemaPath}${(0, codegen_1.getProperty)(keyword)}`;
     }
     exports.schemaRefOrVal = schemaRefOrVal;
-    function unescapeFragment(str) {
-      return unescapeJsonPointer(decodeURIComponent(str));
+    function unescapeFragment(str2) {
+      return unescapeJsonPointer(decodeURIComponent(str2));
     }
     exports.unescapeFragment = unescapeFragment;
-    function escapeFragment(str) {
-      return encodeURIComponent(escapeJsonPointer(str));
+    function escapeFragment(str2) {
+      return encodeURIComponent(escapeJsonPointer(str2));
     }
     exports.escapeFragment = escapeFragment;
-    function escapeJsonPointer(str) {
-      if (typeof str == "number")
-        return `${str}`;
-      return str.replace(/~/g, "~0").replace(/\//g, "~1");
+    function escapeJsonPointer(str2) {
+      if (typeof str2 == "number")
+        return `${str2}`;
+      return str2.replace(/~/g, "~0").replace(/\//g, "~1");
     }
     exports.escapeJsonPointer = escapeJsonPointer;
-    function unescapeJsonPointer(str) {
-      return str.replace(/~1/g, "/").replace(/~0/g, "~");
+    function unescapeJsonPointer(str2) {
+      return str2.replace(/~1/g, "/").replace(/~0/g, "~");
     }
     exports.unescapeJsonPointer = unescapeJsonPointer;
     function eachItem(xs, f) {
@@ -2152,8 +2152,8 @@ var require_json_schema_traverse = __commonJS({
         post(schema, jsonPtr, rootSchema, parentJsonPtr, parentKeyword, parentSchema, keyIndex);
       }
     }
-    function escapeJsonPtr(str) {
-      return str.replace(/~/g, "~0").replace(/\//g, "~1");
+    function escapeJsonPtr(str2) {
+      return str2.replace(/~/g, "~0").replace(/\//g, "~1");
     }
   }
 });
@@ -2689,11 +2689,11 @@ var require_validate = __commonJS({
         if (!this.allErrors)
           this.gen.if(cond);
       }
-      setParams(obj, assign) {
+      setParams(obj2, assign) {
         if (assign)
-          Object.assign(this.params, obj);
+          Object.assign(this.params, obj2);
         else
-          this.params = obj;
+          this.params = obj2;
       }
       block$data(valid, codeBlock, $dataValid = codegen_1.nil) {
         this.gen.block(() => {
@@ -3217,10 +3217,10 @@ var require_utils = __commonJS({
         return { host: host2, isIPV6: false };
       }
     }
-    function findToken(str, token) {
+    function findToken(str2, token) {
       let ind = 0;
-      for (let i = 0; i < str.length; i++) {
-        if (str[i] === token) ind++;
+      for (let i = 0; i < str2.length; i++) {
+        if (str2[i] === token) ind++;
       }
       return ind;
     }
@@ -3957,7 +3957,7 @@ var require_core = __commonJS({
     var util_1 = require_util();
     var $dataRefSchema = require_data();
     var uri_1 = require_uri();
-    var defaultRegExp = (str, flags) => new RegExp(str, flags);
+    var defaultRegExp = (str2, flags) => new RegExp(str2, flags);
     defaultRegExp.code = "new RegExp";
     var META_IGNORE_OPTIONS = ["removeAdditional", "useDefaults", "coerceTypes"];
     var EXT_SCOPE_NAMES = /* @__PURE__ */ new Set([
@@ -4752,16 +4752,16 @@ var require_ucs2length = __commonJS({
   "node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
-    function ucs2length(str) {
-      const len = str.length;
+    function ucs2length(str2) {
+      const len = str2.length;
       let length = 0;
       let pos = 0;
       let value;
       while (pos < len) {
         length++;
-        value = str.charCodeAt(pos++);
+        value = str2.charCodeAt(pos++);
         if (value >= 55296 && value <= 56319 && pos < len) {
-          value = str.charCodeAt(pos);
+          value = str2.charCodeAt(pos);
           if ((value & 64512) === 56320)
             pos++;
         }
@@ -6644,8 +6644,8 @@ var require_formats = __commonJS({
     }
     var DATE = /^(\d\d\d\d)-(\d\d)-(\d\d)$/;
     var DAYS = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    function date3(str) {
-      const matches = DATE.exec(str);
+    function date3(str2) {
+      const matches = DATE.exec(str2);
       if (!matches)
         return false;
       const year = +matches[1];
@@ -6664,8 +6664,8 @@ var require_formats = __commonJS({
     }
     var TIME = /^(\d\d):(\d\d):(\d\d(?:\.\d+)?)(z|([+-])(\d\d)(?::?(\d\d))?)?$/i;
     function getTime(strictTimeZone) {
-      return function time3(str) {
-        const matches = TIME.exec(str);
+      return function time3(str2) {
+        const matches = TIME.exec(str2);
         if (!matches)
           return false;
         const hr = +matches[1];
@@ -6711,8 +6711,8 @@ var require_formats = __commonJS({
     var DATE_TIME_SEPARATOR = /t|\s/i;
     function getDateTime(strictTimeZone) {
       const time3 = getTime(strictTimeZone);
-      return function date_time(str) {
-        const dateTime = str.split(DATE_TIME_SEPARATOR);
+      return function date_time(str2) {
+        const dateTime = str2.split(DATE_TIME_SEPARATOR);
         return dateTime.length === 2 && date3(dateTime[0]) && time3(dateTime[1]);
       };
     }
@@ -6737,13 +6737,13 @@ var require_formats = __commonJS({
     }
     var NOT_URI_FRAGMENT = /\/|:/;
     var URI = /^(?:[a-z][a-z0-9+\-.]*:)(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)|(?:[a-z0-9\-._~!$&'()*+,;=]|%[0-9a-f]{2})*)(?::\d*)?(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)(?:\?(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?$/i;
-    function uri(str) {
-      return NOT_URI_FRAGMENT.test(str) && URI.test(str);
+    function uri(str2) {
+      return NOT_URI_FRAGMENT.test(str2) && URI.test(str2);
     }
     var BYTE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/gm;
-    function byte(str) {
+    function byte(str2) {
       BYTE.lastIndex = 0;
-      return BYTE.test(str);
+      return BYTE.test(str2);
     }
     var MIN_INT32 = -(2 ** 31);
     var MAX_INT32 = 2 ** 31 - 1;
@@ -6757,11 +6757,11 @@ var require_formats = __commonJS({
       return true;
     }
     var Z_ANCHOR = /[^\\]\\Z/;
-    function regex(str) {
-      if (Z_ANCHOR.test(str))
+    function regex(str2) {
+      if (Z_ANCHOR.test(str2))
         return false;
       try {
-        new RegExp(str);
+        new RegExp(str2);
         return true;
       } catch (e) {
         return false;
@@ -15942,6 +15942,107 @@ function nodeRpcDeps() {
   };
 }
 
+// dashboard/sidecar/src/hermes-data.ts
+function isRpcBinding(binding) {
+  return typeof binding === "object" && binding !== null && binding.source === "rpc" && typeof binding.method === "string";
+}
+var num = (v) => typeof v === "number" && Number.isFinite(v) ? v : 0;
+var str = (v) => typeof v === "string" ? v : "";
+var arr = (v) => Array.isArray(v) ? v : [];
+var obj = (v) => typeof v === "object" && v !== null ? v : {};
+var HANDLERS = {
+  // usage widget: { totals: { totalCost, totalTokens }, days? }
+  "usage.status": async (get) => {
+    const u = obj(await get("/api/analytics/usage"));
+    const totals = obj(u.totals ?? u);
+    const totalCost = num(totals.total_estimated_cost ?? totals.estimated_cost ?? totals.totalCost);
+    const totalTokens = num(totals.total_input ?? totals.input_tokens) + num(totals.total_output ?? totals.output_tokens);
+    return { totals: { totalCost, totalTokens }, days: num(u.days) || void 0 };
+  },
+  // stat-card (usd): a single number.
+  "usage.cost": async (get) => {
+    const u = obj(await get("/api/analytics/usage"));
+    const totals = obj(u.totals ?? u);
+    return num(totals.total_estimated_cost ?? totals.estimated_cost ?? totals.totalCost);
+  },
+  // sessions widget: rows { key, label, status, hasActiveRun, updatedAt }
+  "sessions.list": async (get, params) => {
+    const limit = num(params.limit) || 8;
+    const raw = await get("/api/sessions");
+    const list = Array.isArray(raw) ? raw : arr(obj(raw).sessions);
+    return list.slice(0, limit).map((s) => {
+      const row = obj(s);
+      return {
+        key: str(row.id ?? row.session_id ?? row.key),
+        label: str(row.title ?? row.label ?? row.name) || str(row.id ?? row.session_id),
+        status: str(row.status),
+        hasActiveRun: Boolean(row.has_active_run ?? row.hasActiveRun ?? row.active),
+        updatedAt: str(row.updated_at ?? row.updatedAt ?? row.last_activity)
+      };
+    });
+  },
+  // instances widget: { presence: [{ instanceId, platform, version, lastInputSeconds }] }
+  "system-presence": async (get) => {
+    const s = obj(await get("/api/status"));
+    const agents = arr(s.active_agents ?? s.agents ?? s.presence);
+    return {
+      presence: agents.map((a) => {
+        const row = obj(a);
+        return {
+          instanceId: str(row.instance_id ?? row.id ?? row.name),
+          platform: str(row.platform ?? row.channel),
+          version: str(row.version),
+          lastInputSeconds: num(row.last_input_seconds ?? row.idle_seconds)
+        };
+      })
+    };
+  },
+  // cron widget: { jobs: [{ id, name, enabled, state: { nextRunAtMs, lastRunStatus } }] }
+  "cron.list": async (get, params) => {
+    const limit = num(params.limit) || 8;
+    const raw = await get("/api/cron");
+    const list = Array.isArray(raw) ? raw : arr(obj(raw).jobs ?? obj(raw).crons);
+    return {
+      jobs: list.slice(0, limit).map((j) => {
+        const row = obj(j);
+        const state = obj(row.state);
+        return {
+          id: str(row.id ?? row.name),
+          name: str(row.name ?? row.id),
+          enabled: Boolean(row.enabled ?? row.active),
+          state: {
+            nextRunAtMs: num(state.nextRunAtMs ?? row.next_run_at_ms ?? row.next_run_ms),
+            lastRunStatus: str(state.lastRunStatus ?? row.last_run_status ?? row.last_status)
+          }
+        };
+      })
+    };
+  }
+};
+HANDLERS["node.list"] = HANDLERS["system-presence"];
+function createHermesRpcResolver(config2) {
+  const fetchImpl = config2.fetchImpl ?? fetch;
+  const base = config2.baseUrl.replace(/\/+$/, "");
+  const get = async (path3) => {
+    const res = await fetchImpl(`${base}${path3}`, {
+      headers: { "X-Hermes-Session-Token": config2.sessionToken, Accept: "application/json" }
+    });
+    if (!res.ok) {
+      throw new Error(`Hermes ${path3} \u2192 ${res.status}`);
+    }
+    return res.json();
+  };
+  return async (binding, options) => {
+    if (isRpcBinding(binding)) {
+      const handler = HANDLERS[binding.method];
+      if (handler) {
+        return handler(get, binding.params ?? {});
+      }
+    }
+    return config2.fallback(binding, options);
+  };
+}
+
 // dashboard/sidecar/src/mcp.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
 
@@ -16164,8 +16265,8 @@ function defineLazy(object3, key, getter) {
     configurable: true
   });
 }
-function objectClone(obj) {
-  return Object.create(Object.getPrototypeOf(obj), Object.getOwnPropertyDescriptors(obj));
+function objectClone(obj2) {
+  return Object.create(Object.getPrototypeOf(obj2), Object.getOwnPropertyDescriptors(obj2));
 }
 function assignProp(target, prop, value) {
   Object.defineProperty(target, prop, {
@@ -16186,10 +16287,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path3) {
+function getElementAtPath(obj2, path3) {
   if (!path3)
-    return obj;
-  return path3.reduce((acc, key) => acc?.[key], obj);
+    return obj2;
+  return path3.reduce((acc, key) => acc?.[key], obj2);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -16204,14 +16305,14 @@ function promiseAllObject(promisesObj) {
 }
 function randomString(length = 10) {
   const chars = "abcdefghijklmnopqrstuvwxyz";
-  let str = "";
+  let str2 = "";
   for (let i = 0; i < length; i++) {
-    str += chars[Math.floor(Math.random() * chars.length)];
+    str2 += chars[Math.floor(Math.random() * chars.length)];
   }
-  return str;
+  return str2;
 }
-function esc(str) {
-  return JSON.stringify(str);
+function esc(str2) {
+  return JSON.stringify(str2);
 }
 function slugify(input) {
   return input.toLowerCase().trim().replace(/[^\w\s-]/g, "").replace(/[\s_-]+/g, "-").replace(/^-+|-+$/g, "");
@@ -16325,8 +16426,8 @@ var primitiveTypes = /* @__PURE__ */ new Set([
   "symbol",
   "undefined"
 ]);
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function escapeRegex(str2) {
+  return str2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 function clone(inst, def, params) {
   const cl = new inst._zod.constr(def ?? inst._zod.def);
@@ -16648,9 +16749,9 @@ function parsedType(data) {
       if (Array.isArray(data)) {
         return "array";
       }
-      const obj = data;
-      if (obj && Object.getPrototypeOf(obj) !== Object.prototype && "constructor" in obj && obj.constructor) {
-        return obj.constructor.name;
+      const obj2 = data;
+      if (obj2 && Object.getPrototypeOf(obj2) !== Object.prototype && "constructor" in obj2 && obj2.constructor) {
+        return obj2.constructor.name;
       }
     }
   }
@@ -16668,8 +16769,8 @@ function issue(...args) {
   }
   return { ...iss };
 }
-function cleanEnum(obj) {
-  return Object.entries(obj).filter(([k, _]) => {
+function cleanEnum(obj2) {
+  return Object.entries(obj2).filter(([k, _]) => {
     return Number.isNaN(Number.parseInt(k, 10));
   }).map((el) => el[1]);
 }
@@ -25905,10 +26006,19 @@ async function seedInitialWorkspaceIfEmpty() {
 }
 await seedInitialWorkspaceIfEmpty();
 var host = createInProcessHost(store, storage);
+var nodeDeps = nodeRpcDeps();
+var hermesUrl = process.env.HERMES_DASHBOARD_URL;
+var hermesToken = process.env.HERMES_SESSION_TOKEN;
+var resolveBinding3 = hermesUrl && hermesToken ? createHermesRpcResolver({
+  baseUrl: hermesUrl,
+  sessionToken: hermesToken,
+  fallback: nodeDeps.resolveBinding
+}) : nodeDeps.resolveBinding;
 registerBoardstateRpc(host, {
   store,
   dataRead: { stateDir: store.stateDir },
-  ...nodeRpcDeps()
+  ...nodeDeps,
+  resolveBinding: resolveBinding3
 });
 var widgetRoute = createWidgetHttpRouteHandler({ store });
 var sidecarNonceForMcp = process.env.BOARDSTATE_SIDECAR_NONCE;
