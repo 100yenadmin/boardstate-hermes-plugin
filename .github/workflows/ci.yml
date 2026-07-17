@@ -27,6 +27,9 @@ jobs:
       - name: MCP single-host liveness (agent tool call → live board update)
         run: node test/mcp-liveness.mjs
 
+      - name: Hermes data resolver wire-contract (rpc bindings → REST fixture)
+        run: node test/hermes-data.mjs
+
       - name: Assert built artifacts committed and in sync
         run: |
           git diff --exit-code -- dashboard/dist dashboard/sidecar dashboard/vendor \

@@ -81,6 +81,27 @@ def _node_bin() -> str:
     return os.environ.get("HERMES_NODE_BIN") or shutil.which("node") or "node"
 
 
+def _hermes_data_credentials() -> tuple[Optional[str], Optional[str]]:
+    """Best-effort dashboard base URL + session token for the sidecar's Hermes REST
+    data resolver. Reads the dashboard's own loopback session token + bound port from
+    ``hermes_cli.web_server``. Returns (None, None) if unavailable (older dashboard,
+    gated/OAuth mode, or import failure) — the sidecar then serves no live Hermes data.
+    """
+    try:
+        from hermes_cli import web_server as _ws  # local import: avoid load-order coupling
+
+        token = getattr(_ws, "_SESSION_TOKEN", None)
+        app = getattr(_ws, "app", None)
+        port = getattr(getattr(app, "state", None), "bound_port", None)
+        # Only the loopback token path is wired here; gated/OAuth data-fetch is a
+        # follow-up (would use the process-internal credential instead).
+        if token and port:
+            return f"http://127.0.0.1:{int(port)}", str(token)
+    except Exception as exc:  # pragma: no cover - dashboard internals unavailable
+        log.info("boardstate: Hermes data credentials unavailable (%s); live data off", exc)
+    return None, None
+
+
 # ---------------------------------------------------------------------------
 # WebSocket auth — delegate to the dashboard's canonical gate (see kanban).
 # ---------------------------------------------------------------------------
@@ -167,6 +188,15 @@ async def _ensure_sidecar() -> tuple[int, str]:
         env["BOARDSTATE_STATE_DIR"] = str(state_dir)
         env["BOARDSTATE_SIDECAR_NONCE"] = nonce
         env.setdefault("PORT", "0")  # ephemeral loopback port
+
+        # Inject the dashboard base URL + session token so the sidecar can resolve
+        # `source:"rpc"` data bindings (sessions/usage/status/cron) against Hermes REST.
+        # Server-side only — the credential never enters the board document or a browser.
+        # Best-effort: without it the sidecar simply serves no live Hermes data (graceful).
+        hermes_url, hermes_token = _hermes_data_credentials()
+        if hermes_url and hermes_token:
+            env["HERMES_DASHBOARD_URL"] = hermes_url
+            env["HERMES_SESSION_TOKEN"] = hermes_token
 
         proc = await asyncio.create_subprocess_exec(
             _node_bin(),

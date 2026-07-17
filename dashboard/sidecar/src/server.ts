@@ -27,6 +27,7 @@ import {
   nodeRpcDeps,
   registerBoardstateRpc,
 } from "@boardstate/server/node";
+import { createHermesRpcResolver } from "./hermes-data.js";
 import { createMcpEndpoint } from "./mcp.js";
 
 const stateDirEnv = process.env.BOARDSTATE_STATE_DIR;
@@ -95,12 +96,30 @@ async function seedInitialWorkspaceIfEmpty(): Promise<void> {
 await seedInitialWorkspaceIfEmpty();
 
 const host = createInProcessHost(store, storage);
-// Same registration the MCP server uses: base 14 methods + shipped extensions, with
-// the node-side file-binding resolver + widget-bundle installer injected.
+
+// Data-read resolver: the node default (file bindings + widget installer), wrapped with
+// the Hermes REST resolver when `plugin_api` injected a dashboard URL + session token at
+// spawn. Without them (CLI/demo), the stock node resolver is used unchanged — so live
+// Hermes data is a pure superset, never a regression.
+const nodeDeps = nodeRpcDeps();
+const hermesUrl = process.env.HERMES_DASHBOARD_URL;
+const hermesToken = process.env.HERMES_SESSION_TOKEN;
+const resolveBinding =
+  hermesUrl && hermesToken
+    ? createHermesRpcResolver({
+        baseUrl: hermesUrl,
+        sessionToken: hermesToken,
+        fallback: nodeDeps.resolveBinding,
+      })
+    : nodeDeps.resolveBinding;
+
+// Same registration the MCP server uses: base methods + shipped extensions, with the
+// node-side widget-bundle installer + the (possibly Hermes-wrapped) binding resolver.
 registerBoardstateRpc(host, {
   store,
   dataRead: { stateDir: store.stateDir },
-  ...nodeRpcDeps(),
+  ...nodeDeps,
+  resolveBinding,
 });
 
 // Approved custom-widget assets resolve under the sidecar's own `/widgets` route
