@@ -21,7 +21,7 @@ const out = await build({
 const mod = await import(
   "data:text/javascript;base64," + Buffer.from(out.outputFiles[0].text).toString("base64")
 );
-const { BS_TO_HERMES, aliasChain, relLuminance, themeBase } = mod;
+const { BS_TO_HERMES, BS_TO_DESKTOP, aliasChain, relLuminance, themeBase } = mod;
 
 let n = 0;
 const check = (name, cond) => {
@@ -71,5 +71,15 @@ for (const t of REQUIRED) {
 const allTargets = Object.values(BS_TO_HERMES).flat();
 check("all targets are hermes tokens", allTargets.every((t) => /^--(color-|background-|foreground-|midground-)/.test(t)));
 check("no self-referential --bs- target", allTargets.every((t) => !t.startsWith("--bs-")));
+
+// Desktop map: same coverage, but targets the Electron app's --ui-* / --foreground tokens.
+check("BS_TO_DESKTOP exists", BS_TO_DESKTOP && typeof BS_TO_DESKTOP === "object");
+for (const t of REQUIRED) {
+  check(`desktop maps ${t}`, Array.isArray(BS_TO_DESKTOP[t]) && BS_TO_DESKTOP[t].length >= 1);
+}
+const desktopTargets = Object.values(BS_TO_DESKTOP).flat();
+check("all desktop targets are --ui-*/--foreground", desktopTargets.every((t) => /^--(ui-|foreground)/.test(t)));
+check("no self-referential desktop --bs- target", desktopTargets.every((t) => !t.startsWith("--bs-")));
+check("web + desktop cover the same --bs-* keys", JSON.stringify(Object.keys(BS_TO_HERMES).sort()) === JSON.stringify(Object.keys(BS_TO_DESKTOP).sort()));
 
 console.log(`\ntheme mapping: ${n} checks`);
