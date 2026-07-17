@@ -39,9 +39,12 @@ jobs:
       - name: Board templates (each is a schema-valid, allowlisted workspace)
         run: node test/templates.mjs
 
+      - name: Desktop plugin bundle (loader-safe imports + contract + inlined boardstate)
+        run: node test/desktop-plugin.mjs
+
       - name: Assert built artifacts committed and in sync
         run: |
-          git diff --exit-code -- dashboard/dist dashboard/sidecar dashboard/vendor \
+          git diff --exit-code -- dashboard/dist dashboard/desktop dashboard/sidecar dashboard/vendor \
             || (echo "::error::Built artifacts are stale — run 'npm run build' and commit." && exit 1)
 
   python:

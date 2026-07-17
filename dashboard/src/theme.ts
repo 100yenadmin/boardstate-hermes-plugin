@@ -38,6 +38,33 @@ export const BS_TO_HERMES: Record<string, string[]> = {
 // every Hermes token is absent (older host, non-Hermes embed) the whole
 // declaration is invalid and the inline override drops, revealing the bundle's
 // own `data-theme` default. This is why a missing host is safe.
+//
+// The Hermes DESKTOP app (Electron renderer) uses a different token system than the
+// web dashboard — `--ui-*` surfaces/text/strokes + `--ui-accent`/`--ui-red`… — so the
+// desktop plugin needs its own map. Same var()-alias mechanism; same pure helpers.
+export const BS_TO_DESKTOP: Record<string, string[]> = {
+  "--bs-bg": ["--ui-base", "--ui-editor-surface-background"],
+  "--bs-bg-hover": ["--ui-row-hover-background", "--ui-control-hover-background"],
+  "--bs-bg-muted": ["--ui-bg-tertiary"],
+  "--bs-surface-muted": ["--ui-bg-tertiary"],
+  "--bs-card": ["--ui-bg-elevated", "--ui-chat-surface-background"],
+  "--bs-card-highlight": ["--ui-row-active-background", "--ui-bg-elevated"],
+  "--bs-border": ["--ui-stroke-secondary"],
+  "--bs-border-strong": ["--ui-stroke-primary"],
+  "--bs-input": ["--ui-control-active-background", "--ui-bg-tertiary"],
+  "--bs-text": ["--ui-text-primary", "--foreground"],
+  "--bs-text-strong": ["--ui-text-primary", "--foreground"],
+  "--bs-text-muted": ["--ui-text-tertiary"],
+  "--bs-text-dim": ["--ui-text-quaternary", "--ui-text-tertiary"],
+  "--bs-muted": ["--ui-text-tertiary"],
+  "--bs-accent": ["--ui-accent"],
+  "--bs-accent-foreground": ["--ui-base", "--foreground"],
+  "--bs-ring": ["--ui-accent"],
+  "--bs-danger": ["--ui-red"],
+  "--bs-success": ["--ui-green"],
+  "--bs-warning": ["--ui-yellow"],
+};
+
 export function aliasChain(candidates: string[]): string {
   let expr = `var(${candidates[candidates.length - 1]})`;
   for (let i = candidates.length - 2; i >= 0; i--) {

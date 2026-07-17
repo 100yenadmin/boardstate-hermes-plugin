@@ -139,6 +139,27 @@ mcp_servers:
 Then ask Hermes, e.g. *"add a stat card showing 7 active agents"* — the widget appears on
 the board live. Or click a **template** in the board toolbar for an instant live board.
 
+### Desktop app
+
+The same board runs in the Hermes **desktop app** (Electron) as a first-class page. The
+desktop frontend is a single self-contained ESM `plugin.js` (boardstate is inlined,
+because the desktop loader only resolves `@hermes/plugin-sdk` / `react*`); it reuses the
+**exact same backend** — the Python `plugin_api.py` + sidecar the web tab uses — reaching
+it over the desktop bridge (`window.hermesDesktop.getConnection()` → the same
+`/api/plugins/boardstate/ws`). It self-styles to the desktop's `--ui-*` theme tokens.
+
+```bash
+# Install the Python backend (as above) AND the desktop frontend plugin:
+mkdir -p ~/.hermes/desktop-plugins/boardstate
+cp dashboard/desktop/plugin.js ~/.hermes/desktop-plugins/boardstate/plugin.js
+```
+
+The desktop app watches that directory — the **Board** page appears in the sidebar within
+a few seconds (or ⌘K → *Reload desktop plugins*). On an OAuth remote the live board needs
+a local gateway (single-use WS tickets); a poll fallback is planned.
+
+![The board in the desktop app](.github/media/desktop-board.png)
+
 ### Config
 
 | Setting | Default | Notes |

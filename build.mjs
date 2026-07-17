@@ -52,6 +52,26 @@ await esbuild.build({
   logLevel: "info",
 });
 
+// 1b) Desktop app plugin — a single self-contained ESM `plugin.js`. The desktop loader
+// only resolves `@hermes/plugin-sdk` + `react*`, so EVERYTHING boardstate is inlined
+// (createWsTransport + the Lit element bundle + CSS as text + theme + templates). React
+// and the SDK stay external (the app owns the singletons).
+mkdirSync(path.join(dashboardDir, "desktop"), { recursive: true });
+await esbuild.build({
+  entryPoints: [path.join(dashboardDir, "desktop/plugin.tsx")],
+  outfile: path.join(dashboardDir, "desktop/plugin.js"),
+  bundle: true,
+  format: "esm",
+  platform: "browser",
+  target: ["es2020"],
+  jsx: "automatic",
+  external: ["react", "react-dom", "react/jsx-runtime", "@hermes/plugin-sdk"],
+  loader: { ".css": "text" },
+  sourcemap: false,
+  minify: true,
+  logLevel: "info",
+});
+
 // 2) Node sidecar bundle — single self-contained ESM file; node builtins stay external.
 await esbuild.build({
   entryPoints: [path.join(dashboardDir, "sidecar/src/server.ts")],

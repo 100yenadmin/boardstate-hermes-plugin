@@ -3,6 +3,20 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.1.0
+
+### Added
+
+- **Desktop app support.** The board runs in the Hermes desktop app (Electron) as a
+  first-class page via a single self-contained `dashboard/desktop/plugin.js` (boardstate
+  inlined — the desktop loader only resolves `@hermes/plugin-sdk` / `react*`). It reuses
+  the **same backend** as the web tab, reaching it over the desktop bridge
+  (`window.hermesDesktop.getConnection()` → `/api/plugins/boardstate/ws`), registers a
+  workspace route + sidebar nav, self-styles to the desktop `--ui-*` theme tokens, and
+  carries the template picker. OAuth-remote gateways fall back (poll planned).
+- CI: desktop bundle structural gate (loader-safe imports, inlined boardstate, contract);
+  theme test extended to the desktop token map.
+
 ## 1.0.0
 
 The first full release: the board is now something the Hermes agent **builds and operates
