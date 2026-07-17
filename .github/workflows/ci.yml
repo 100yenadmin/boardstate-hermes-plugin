@@ -48,7 +48,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install backend test deps
-        run: pip install fastapi websockets
+        run: pip install fastapi websockets httpx
 
       - name: Byte-compile the plugin backend
         run: python -m py_compile dashboard/plugin_api.py
