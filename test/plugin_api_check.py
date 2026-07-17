@@ -90,13 +90,29 @@ def main() -> int:
     check("operator route authorizes before acting", "_authorize_operator" in op_src)
     check("authorization consults the dashboard session gate", "_has_valid_session_token" in auth_src or "request.state.session" in auth_src)
     check("authorization consults the operators allowlist", "_load_operators_allowlist" in auth_src)
-    check("allowlist absent ⇒ denied in gated mode", "gated" in auth_src and "403" in auth_src)
     check("allowlist file is boardstate.operators.json in state dir", "boardstate.operators.json" in src)
     for fn in ("_operators_allowlist_path", "_load_operators_allowlist", "_authorize_operator"):
         check(f"has {fn}", hasattr(mod, fn))
 
-    # The nonce is forwarded to the sidecar's /operator (never leaves the two processes).
-    check("operator route forwards {method, params} to sidecar /operator?nonce=", "/operator?nonce=" in op_src and '"method": method' in op_src)
+    # AUTH-1 (fail CLOSED): only an EXPLICIT loopback bind (auth_required IS False) is trusted
+    # without an allowlist; indeterminate/gated require the allowlist.
+    check("gating fails closed (auth_required is False ⇒ loopback single-user)", "auth_required is False" in auth_src)
+    check("indeterminate/gated require the allowlist (loopback_single_user gate)", "loopback_single_user" in auth_src and "403" in auth_src)
+
+    # ── SEC-1: the operator secret is a DEDICATED credential, never in the port file ──
+    spawn_src = inspect.getsource(mod._spawn_sidecar)
+    check("generates a separate operator secret", spawn_src.count("secrets.token_urlsafe") >= 2)
+    check("passes the operator secret via env (BOARDSTATE_OPERATOR_SECRET)", "BOARDSTATE_OPERATOR_SECRET" in spawn_src)
+    check("stores the operator secret in-memory (_sidecar)", '"operator_secret"' in spawn_src)
+    # The port-file write records ONLY port/nonce/pid — never the operator secret.
+    portfile_write = spawn_src[spawn_src.index("pf.write_text"):spawn_src.index("pf.write_text") + 200]
+    check("port file records port + nonce + pid only", '"port": port' in portfile_write and '"nonce": nonce' in portfile_write)
+    check("operator secret is NEVER written to the port file", "operator_secret" not in portfile_write and "operatorSecret" not in portfile_write)
+    check("port file is chmod 600", "chmod" in spawn_src and "0o600" in spawn_src)
+    # The operator route forwards the DEDICATED secret (not the adoption nonce) and refuses when absent.
+    check("operator route forwards the operator secret to sidecar /operator?nonce=", '/operator?nonce={operator_secret}' in op_src)
+    check("operator route forwards {method, params}", '"method": method' in op_src)
+    check("adopted sidecar (no operator secret) ⇒ operator actions unavailable", "operator_secret" in op_src and "unavailable" in op_src)
 
     # Absent allowlist file ⇒ None (loopback-only signal); present ⇒ a list of principals.
     check("_load_operators_allowlist returns None when absent", mod._load_operators_allowlist(Path("/nonexistent-bs-state-dir")) is None)

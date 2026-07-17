@@ -19,7 +19,8 @@
 // (e.g. a readOnly→mutation flip) re-pends the grant and refuses instead of executing.
 //
 // Secret hygiene (invariant #3): every agent-facing error is redacted of connector config
-// (command/url/args) and the raw detail is logged server-side only.
+// (command/url/args + env keys/values + header values) and the raw detail is logged
+// server-side only.
 
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -40,6 +41,13 @@ import {
 
 const AGENT_TOOL_PREFIX = "dashboard_";
 const MCP_TOOL_PREFIX = "boardstate_";
+// The single agent identity this MCP session acts as. Threaded into both the base dashboard
+// tools' `context` and the gated connector RPCs' request context, so agent-scoped grants
+// resolve to the same acting agent on both surfaces (CORRECT-2).
+const MCP_AGENT_ID = "agent";
+// The broker's own default confirm-wait (5 min). Used when the host doesn't override it, so a
+// parked-mutation invoke can never wait forever (CORRECT-1).
+const DEFAULT_MUTATION_TIMEOUT_MS = 300_000;
 // Present first-party `dashboard_*` tools under the ecosystem's `boardstate_*` prefix.
 // Tools already carrying a `boardstate_`/external namespace (`boardstate_tool_search`,
 // `connector__tool`) pass through unchanged — and the CALL path indexes by this exact
@@ -150,6 +158,13 @@ export async function createMcpEndpoint(
 
   // The gated connector-invocation tools (present only when connectors are wired). Both run
   // through the host RPCs that call `gateCall` — the agent can never bypass the hash re-pend.
+  // CORRECT-2: every connector RPC carries the MCP agent context `{ agentId }`, so a grant
+  // SCOPED to a specific agent (`agents` on approve) resolves the acting agent (`boundAgentActor`)
+  // instead of seeing `undefined` and always refusing. The base dashboard tools use the same id.
+  const requestCtx = { agentId: MCP_AGENT_ID };
+  // CORRECT-1: a bounded confirm wait — never `undefined` (which waits forever). Default to the
+  // broker's 5-minute default; on timeout the tool returns a PARKED settlement, not a hang.
+  const mutationTimeoutMs = connectors?.mutationTimeoutMs ?? DEFAULT_MUTATION_TIMEOUT_MS;
   const frameExternal = (result: unknown): unknown => ({ result, note: EXTERNAL_UNTRUSTED_NOTE });
   const connectorArgs = (args: Record<string, unknown>) => ({
     connector: typeof args.connector === "string" ? args.connector : "",
@@ -166,28 +181,43 @@ export async function createMcpEndpoint(
             "on every call, so a changed tool re-pends its grant instead of running. Discover tools with boardstate_tool_search.",
           inputSchema: CONNECTOR_TOOL_SCHEMA as unknown as Record<string, unknown>,
           execute: async (args) =>
-            frameExternal(await host.request("dashboard.connector.read", connectorArgs(args))),
+            frameExternal(
+              await host.request("dashboard.connector.read", connectorArgs(args), requestCtx),
+            ),
         },
         {
           name: "boardstate_connector_invoke",
           description:
             "Invoke an operator-APPROVED external connector tool. A readOnly tool runs directly; " +
-            "a mutating tool PARKS as a pending action and BLOCKS until the operator confirms. The " +
-            "connector's live manifest is re-checked (anti-rug-pull) on every call.",
+            "a mutating tool PARKS as a pending action and BLOCKS until the operator confirms (up to " +
+            "a bounded timeout, after which it returns as still-parked). The connector's live manifest " +
+            "is re-checked (anti-rug-pull) on every call.",
           inputSchema: CONNECTOR_TOOL_SCHEMA as unknown as Record<string, unknown>,
           execute: async (args) => {
             const invoked = (await host.request(
               "dashboard.action.invoke",
               connectorArgs(args),
-            )) as { pending?: unknown; id?: unknown };
+              requestCtx,
+            )) as { pending?: unknown; id?: unknown; expiresAt?: unknown };
             if (invoked && invoked.pending === true && typeof invoked.id === "string") {
-              return frameExternal(
-                await connectors.confirmAndExecute(invoked.id, {
-                  ...(connectors.mutationTimeoutMs !== undefined
-                    ? { timeoutMs: connectors.mutationTimeoutMs }
-                    : {}),
-                }),
-              );
+              try {
+                return frameExternal(
+                  await connectors.confirmAndExecute(invoked.id, { timeoutMs: mutationTimeoutMs }),
+                );
+              } catch (error) {
+                // The wait for the operator's confirm timed out — the action itself is STILL
+                // parked (the engine leaves its lifecycle unchanged). Return the parked contract
+                // so the agent's tools/call settles cleanly instead of hanging forever.
+                if (error instanceof Error && (error as { code?: unknown }).code === "action_timeout") {
+                  return {
+                    parked: true,
+                    id: invoked.id,
+                    ...(typeof invoked.expiresAt === "string" ? { expiresAt: invoked.expiresAt } : {}),
+                    note: "Action is awaiting operator confirmation; it remains pending. Ask the operator to confirm.",
+                  };
+                }
+                throw error;
+              }
             }
             return frameExternal(invoked);
           },
@@ -203,7 +233,7 @@ export async function createMcpEndpoint(
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
-        ...buildTools("agent").map((tool) => {
+        ...buildTools(MCP_AGENT_ID).map((tool) => {
           const schema = agentToolToJsonSchema(tool);
           return {
             name: toMcpToolName(schema.name),
@@ -222,7 +252,7 @@ export async function createMcpEndpoint(
       const mcpName = request.params.name;
       const args = (request.params.arguments ?? {}) as Record<string, unknown>;
       try {
-        const tool = toolsByMcpName("agent").get(mcpName);
+        const tool = toolsByMcpName(MCP_AGENT_ID).get(mcpName);
         if (tool) {
           const { details } = await tool.execute(mcpName, args);
           return textResult(details);

@@ -32,7 +32,7 @@ writeFileSync(
   join(stateDir, "boardstate.connectors.json"),
   JSON.stringify({ connectors: [{ name: "fake", transport: "http", url: fake.url }] }),
 );
-const { proc, port } = await spawnSidecar({ stateDir, nonce: NONCE, quiet: true });
+const { proc, port, operatorSecret } = await spawnSidecar({ stateDir, nonce: NONCE, quiet: true });
 
 // WS: read the live grant status.
 const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?nonce=${NONCE}`);
@@ -47,7 +47,7 @@ const wsRequest = (id, method, params = {}) =>
 const grantStatus = async () => (await wsRequest(`g-${Math.random()}`, "dashboard.workspace.get", {}))?.doc?.capabilitiesRegistry?.fake?.status;
 
 const operator = (method, params) =>
-  fetch(`http://127.0.0.1:${port}/operator?nonce=${NONCE}`, {
+  fetch(`http://127.0.0.1:${port}/operator?nonce=${operatorSecret}`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ method, params }),
   });
 

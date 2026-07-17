@@ -39,6 +39,15 @@ jobs:
       - name: Anti-rug-pull (manifest drift re-pends the grant, never executes)
         run: node test/rugpull-repend.mjs
 
+      - name: Operator secret (port-file knowledge cannot drive the operator plane — SEC-1)
+        run: node test/operator-secret.mjs
+
+      - name: Invoke timeout (an unconfirmed mutation settles as parked, never hangs — CORRECT-1)
+        run: node test/invoke-timeout.mjs
+
+      - name: Agent-scoped grants (MCP agent context threaded through the gate — CORRECT-2)
+        run: node test/scoped-grant.mjs
+
       - name: Hermes data resolver wire-contract (rpc bindings → REST fixture)
         run: node test/hermes-data.mjs
 

@@ -9,10 +9,20 @@ import { fileURLToPath } from "node:url";
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SIDECAR = join(REPO, "dashboard", "sidecar", "server.js");
 
-/** Spawn the sidecar; resolves `{ proc, port }`. Extra env (e.g. connectors) merges in. */
-export async function spawnSidecar({ stateDir, nonce, env = {}, quiet = false }) {
+/** Spawn the sidecar; resolves `{ proc, port, operatorSecret }`. `operatorSecret` is a DISTINCT
+ *  credential from the WS/MCP `nonce` (SEC-1) — required by /operator, never the adoption nonce.
+ *  Defaults to a fixed value so tests can POST to /operator; pass `operatorSecret: null` to spawn
+ *  WITHOUT one (operator endpoint disabled). Extra env (e.g. connectors) merges in. */
+export async function spawnSidecar({ stateDir, nonce, operatorSecret = `${nonce}-op-secret`, env = {}, quiet = false }) {
   const proc = spawn(process.execPath, [SIDECAR], {
-    env: { ...process.env, BOARDSTATE_STATE_DIR: stateDir, PORT: "0", BOARDSTATE_SIDECAR_NONCE: nonce, ...env },
+    env: {
+      ...process.env,
+      BOARDSTATE_STATE_DIR: stateDir,
+      PORT: "0",
+      BOARDSTATE_SIDECAR_NONCE: nonce,
+      ...(operatorSecret ? { BOARDSTATE_OPERATOR_SECRET: operatorSecret } : {}),
+      ...env,
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let buf = "";
@@ -37,7 +47,7 @@ export async function spawnSidecar({ stateDir, nonce, env = {}, quiet = false })
     });
     proc.on("exit", (c) => reject(new Error("sidecar exited " + c)));
   });
-  return { proc, port };
+  return { proc, port, operatorSecret: operatorSecret || null };
 }
 
 export function stopSidecar(proc) {

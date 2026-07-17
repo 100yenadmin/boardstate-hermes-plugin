@@ -72,4 +72,17 @@ allowlist: author `boardstate.operators.json` in the state dir listing the princ
 ```
 
 Absent that file in gated mode, the operator endpoint refuses every request (403): an
-undifferentiated session token must not be a self-service operator.
+undifferentiated session token must not be a self-service operator. The gate also fails
+**closed** when it cannot positively confirm a loopback single-user bind — if the dashboard
+mode is indeterminate, the allowlist is required.
+
+### Operator actions and the shared sidecar
+
+One sidecar is shared per state dir: a second backend (e.g. the desktop app alongside the web
+dashboard) **adopts** the running sidecar via the state-dir port file to render the board. The
+operator plane is gated by a **dedicated secret** that is held only in memory by the backend
+that **spawned** the sidecar — it is never written to the port file. So an *adopting* backend
+can render the board but cannot drive operator approve/confirm/deny (it returns 503 with a
+clear message); drive operator actions from the spawning backend, or restart so your backend
+owns the sidecar. This is deliberate: knowing the port-file contents must never be enough to
+approve a grant.

@@ -32,6 +32,7 @@ import { createHermesRpcResolver, registerHermesDataRpc } from "./hermes-data.js
 import { createMcpEndpoint } from "./mcp.js";
 import { createOperatorEndpoint } from "./operator.js";
 import { officeCliBootHint } from "./presets.js";
+import { buildRedactor } from "./redact.js";
 
 const stateDirEnv = process.env.BOARDSTATE_STATE_DIR;
 const storage = new FsStorageAdapter(stateDirEnv ? { storageDir: stateDirEnv } : {});
@@ -123,9 +124,15 @@ const resolveBinding =
 // the base RPC registration then takes the workspace's `capabilityToolsHash` so partial
 // grants stay anti-rug-pull correct — SPEC §17.1). Absent config ⇒ `null` ⇒ byte-identical
 // to the pre-M5 board. The config path is fixed (state dir), never the agent-writable doc.
+// Bounded wait for an operator's confirm on an agent-invoked mutation (CORRECT-1): threaded
+// into BOTH the pending-action engine and the MCP `boardstate_connector_invoke` tool, so the
+// agent's tools/call can never hang forever waiting on a confirm that never comes. Overridable
+// via env (tests use a short value); defaults to the broker's 5-minute default.
+const mutationTimeoutMs = Number(process.env.BOARDSTATE_MUTATION_TIMEOUT_MS) || 300_000;
+
 let connectors: ConnectorWorkspace | null = null;
 try {
-  connectors = await installConnectorsFromConfig(host, store);
+  connectors = await installConnectorsFromConfig(host, store, { mutationTimeoutMs });
 } catch (err) {
   // A present-but-malformed config is fail-closed: no connectors wired, board still renders.
   console.error(
@@ -182,19 +189,18 @@ const widgetRoute = createWidgetHttpRouteHandler({ store });
 // Same per-spawn nonce gate as the WS.
 const sidecarNonceForMcp = process.env.BOARDSTATE_SIDECAR_NONCE;
 
-// Redact connector config (command/url/args) + the per-spawn nonce from any agent-facing MCP
-// error (invariant #3). Built from the loaded config's sensitive strings; identity with none.
-const redactionStrings = [
+// Redact connector config (command/url/args/env keys+values/header values) + the sidecar
+// nonce + the operator secret from any agent-facing MCP error (invariant #3). Connector-sourced
+// strings are collected LENGTH-AGNOSTIC (SEC-2: an env value is an API key — even a short one
+// must never leak); the nonce/secret keep a length floor. Sorted DESC by length (SEC-3) so a
+// short value that prefixes a longer token can't leave the suffix unmasked.
+const operatorSecret = process.env.BOARDSTATE_OPERATOR_SECRET;
+const redactSecrets = buildRedactor([
+  // Config-sourced secrets (command/url/args/env keys+values/header values) — length-agnostic.
   ...(connectors?.sensitiveStrings ?? []),
-  ...(sidecarNonceForMcp ? [sidecarNonceForMcp] : []),
-].filter((s) => s.length >= 4);
-const redactSecrets = (message: string): string => {
-  let out = message;
-  for (const secret of redactionStrings) {
-    out = out.split(secret).join("[redacted]");
-  }
-  return out;
-};
+  // Long random process secrets: keep a floor so a stray short value never over-redacts text.
+  ...[sidecarNonceForMcp, operatorSecret].filter((s): s is string => typeof s === "string" && s.length >= 8),
+]);
 
 const mcpEndpoint = await createMcpEndpoint(host, store, {
   nonce: sidecarNonceForMcp,
@@ -204,16 +210,18 @@ const mcpEndpoint = await createMcpEndpoint(host, store, {
     ? {
         connectors: {
           confirmAndExecute: (id, opts) => connectors.workspace.actions.confirmAndExecute(id, opts),
+          mutationTimeoutMs,
         },
       }
     : {}),
 });
 
-// The operator DECISION seam: a nonce-gated in-process HTTP endpoint the parent `plugin_api`
-// bridge (and ONLY it) forwards operator approve/confirm/deny to. Operator verbs stay blocked
-// on `/ws` and excluded from `/mcp`; this is the one privileged path, gated by the same
-// per-spawn nonce. Always present (widget/capability approval matter even without connectors).
-const operatorEndpoint = createOperatorEndpoint(host, { nonce: sidecarNonceForMcp });
+// The operator DECISION seam: a DEDICATED-secret-gated in-process HTTP endpoint the parent
+// `plugin_api` bridge (and ONLY it) forwards operator approve/confirm/deny to. Operator verbs
+// stay blocked on `/ws` and excluded from `/mcp`. SEC-1: gated by BOARDSTATE_OPERATOR_SECRET
+// (never the port-file adoption nonce), so port-file knowledge alone can't drive it. Disabled
+// when no secret is configured (a direct CLI spawn drives the in-process host itself).
+const operatorEndpoint = createOperatorEndpoint(host, { secret: operatorSecret });
 
 const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
   const pathname = (req.url ?? "/").split("?")[0];

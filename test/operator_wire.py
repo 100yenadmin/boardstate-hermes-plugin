@@ -29,7 +29,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 DASHBOARD = Path(__file__).resolve().parent.parent / "dashboard"
-KNOWN_NONCE = "wire-test-nonce"
+KNOWN_NONCE = "wire-test-nonce"  # the /ws+/mcp adoption nonce (returned by _ensure_sidecar)
+OPERATOR_SECRET = "wire-operator-secret"  # SEC-1: the DEDICATED /operator credential
 
 
 def _load_plugin_api():
@@ -55,8 +56,8 @@ class _FakeSidecar:
                 length = int(self.headers.get("content-length", 0))
                 body = self.rfile.read(length).decode("utf-8") if length else ""
                 outer.requests.append({"path": self.path, "body": body})
-                # Enforce the nonce exactly as the real sidecar does.
-                if f"nonce={KNOWN_NONCE}" not in self.path:
+                # Enforce the DEDICATED operator secret exactly as the real sidecar does (SEC-1).
+                if f"nonce={OPERATOR_SECRET}" not in self.path:
                     self.send_response(401)
                     self.end_headers()
                     self.wfile.write(b'{"error":"unauthorized"}')
@@ -89,8 +90,11 @@ def main() -> int:
     async def _fake_ensure():
         return fake.port, KNOWN_NONCE
 
-    # Point the operator route at the fake sidecar, and isolate the state dir.
+    # Point the operator route at the fake sidecar, and isolate the state dir. The dedicated
+    # operator secret is held in-memory by the spawning backend (SEC-1) — set it here since the
+    # real _spawn_sidecar (which would set it) is bypassed by the _ensure_sidecar monkeypatch.
     mod._ensure_sidecar = _fake_ensure  # type: ignore[assignment]
+    mod._sidecar["operator_secret"] = OPERATOR_SECRET
     state_dir = Path(tempfile.mkdtemp(prefix="bs-operwire-"))
     mod._state_dir = lambda: state_dir  # type: ignore[assignment]
 
@@ -110,7 +114,7 @@ def main() -> int:
         check("sidecar result relayed verbatim", resp.json() == {"result": {"ok": True}})
         check("exactly one request reached the sidecar", len(fake.requests) == 1)
         forwarded = fake.requests[-1]
-        check("forwarded to /operator with the nonce", forwarded["path"] == f"/operator?nonce={KNOWN_NONCE}")
+        check("forwarded to /operator with the DEDICATED operator secret (not the adoption nonce)", forwarded["path"] == f"/operator?nonce={OPERATOR_SECRET}")
         body = json.loads(forwarded["body"])
         check(
             "forwarded body is EXACTLY { method, params }",
@@ -145,6 +149,60 @@ def main() -> int:
             json={"method": "dashboard.action.deny", "params": {"id": "abc"}},
         )
         check("listed principal → forwarded (200)", resp4.status_code == 200)
+
+        # ── 5. GATED mode (auth_required=True) — the multi-user safety guarantee (AUTH-2) ──
+        # A fake session middleware stands in for the auth gate (which attaches request.state.session).
+        opfile = state_dir / "boardstate.operators.json"
+
+        class _FakeSession:
+            def __init__(self, email: str):
+                self.email = email
+                self.user_id = email
+
+        def _gated_client(email: str | None) -> TestClient:
+            gated_app = FastAPI()
+            gated_app.state.auth_required = True
+            if email is not None:
+                @gated_app.middleware("http")
+                async def _inject(request, call_next):  # noqa: ANN001
+                    request.state.session = _FakeSession(email)
+                    return await call_next(request)
+            gated_app.include_router(mod.router, prefix="/api/plugins/boardstate")
+            return TestClient(gated_app)
+
+        confirm = {"method": "dashboard.action.confirm", "params": {"id": "abc"}}
+        gated = _gated_client("alice@example.com")
+
+        opfile.unlink(missing_ok=True)  # no allowlist file
+        before = len(fake.requests)
+        r_noallow = gated.post("/api/plugins/boardstate/operator", json=confirm)
+        check("gated + NO allowlist file → 403 (fail closed)", r_noallow.status_code == 403)
+        check("gated no-allowlist never forwarded", len(fake.requests) == before)
+
+        opfile.write_text(json.dumps({"operators": ["bob@example.com"]}))  # alice not listed
+        before = len(fake.requests)
+        r_notlisted = gated.post("/api/plugins/boardstate/operator", json=confirm)
+        check("gated + principal NOT in allowlist → 403", r_notlisted.status_code == 403)
+        check("gated not-listed never forwarded", len(fake.requests) == before)
+
+        opfile.write_text(json.dumps({"operators": ["alice@example.com"]}))  # alice listed
+        r_listed = gated.post("/api/plugins/boardstate/operator", json=confirm)
+        check("gated + principal IN allowlist → forwarded (200)", r_listed.status_code == 200)
+
+        # gated but NO session (gate failure) → 401
+        gated_no_session = _gated_client(None)
+        r_nosession = gated_no_session.post("/api/plugins/boardstate/operator", json=confirm)
+        check("gated + no session → 401", r_nosession.status_code == 401)
+
+        # ── 6. INDETERMINATE mode (auth_required unset) — fail CLOSED (AUTH-1) ──
+        indet_app = FastAPI()  # app.state.auth_required deliberately NOT set → None
+        indet_app.include_router(mod.router, prefix="/api/plugins/boardstate")
+        indet_client = TestClient(indet_app)
+        opfile.unlink(missing_ok=True)  # no allowlist
+        before = len(fake.requests)
+        r_indet = indet_client.post("/api/plugins/boardstate/operator", json=confirm)
+        check("indeterminate mode + no allowlist → 403 (fail closed, AUTH-1)", r_indet.status_code == 403)
+        check("indeterminate denied never forwarded", len(fake.requests) == before)
     finally:
         fake.close()
 

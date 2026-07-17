@@ -40,11 +40,14 @@ export function officeCliSetup(): PresetSetup {
   };
 }
 
-/** A one-line boot hint for the operator: is OfficeCLI ready, and the next step to enable it. */
+/** A one-line boot hint for the operator: is OfficeCLI ready, and the next step to enable it.
+ *  HYGIENE-1: this is logged to the sidecar's stdout (→ dashboard log), so it must NOT embed
+ *  connector config values (command/args) — it points at the docs instead of dumping the config. */
 export function officeCliBootHint(): string {
   const setup = officeCliSetup();
-  const sample = JSON.stringify({ connectors: [setup.connector] });
+  const next =
+    "author boardstate.connectors.json in the state dir (see docs/connectors/officecli.md)";
   return setup.detected
-    ? `[boardstate] OfficeCLI detected on PATH — enable it by writing boardstate.connectors.json: ${sample}`
-    : `[boardstate] OfficeCLI connector available. ${setup.install} Then author boardstate.connectors.json: ${sample}`;
+    ? `[boardstate] OfficeCLI detected on PATH — enable it: ${next}.`
+    : `[boardstate] OfficeCLI connector available. ${setup.install} Then ${next}.`;
 }

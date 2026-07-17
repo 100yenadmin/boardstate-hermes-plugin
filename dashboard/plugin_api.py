@@ -77,7 +77,13 @@ except ImportError:  # pragma: no cover - Windows
 # the cross-process first-connect race. `owned` marks whether WE spawned it (reap only
 # our own on exit).
 _sidecar_lock = asyncio.Lock()
-_sidecar: dict = {"proc": None, "port": None, "nonce": None, "owned": False}
+# ``operator_secret`` (SEC-1) is the DEDICATED credential for the sidecar's /operator endpoint.
+# Unlike ``nonce`` (the /ws + /mcp adoption credential, published to the port file so a second
+# backend can render the board), it is NEVER written to disk — only THIS spawning process holds
+# it — so knowing the port-file contents is not sufficient to drive operator actions. An adopted
+# (not-spawned) sidecar has ``operator_secret = None`` here → operator actions are unavailable on
+# that backend (documented, acceptable).
+_sidecar: dict = {"proc": None, "port": None, "nonce": None, "operator_secret": None, "owned": False}
 _atexit_registered = False
 
 
@@ -240,14 +246,19 @@ async def _spawn_sidecar(state_dir: Path) -> tuple[int, str]:
     """Spawn a fresh sidecar and record it in the port-file. Caller holds the locks."""
     global _atexit_registered
 
-    # Per-spawn shared secret: the sidecar's WS gate (verifyClient) requires it as a
-    # `?nonce=` query param, so a random other local process can't drive the control
-    # plane just by finding the ephemeral loopback port. Only this bridge knows it.
+    # Per-spawn shared secret: the sidecar's WS/MCP gate (verifyClient) requires it as a
+    # `?nonce=` query param, so a random other local process can't drive the control plane just
+    # by finding the ephemeral loopback port. Published to the port file for adoption.
     nonce = secrets.token_urlsafe(32)
+    # SEC-1: a SEPARATE operator secret for the sidecar's /operator endpoint — NEVER written to
+    # the port file, so port-file knowledge alone cannot approve/confirm/deny. Only this process
+    # holds it.
+    operator_secret = secrets.token_urlsafe(32)
 
     env = os.environ.copy()
     env["BOARDSTATE_STATE_DIR"] = str(state_dir)
     env["BOARDSTATE_SIDECAR_NONCE"] = nonce
+    env["BOARDSTATE_OPERATOR_SECRET"] = operator_secret
     env.setdefault("PORT", "0")  # ephemeral loopback port
 
     # Inject the dashboard base URL + session token so the sidecar can resolve
@@ -278,12 +289,18 @@ async def _spawn_sidecar(state_dir: Path) -> tuple[int, str]:
     _sidecar["proc"] = proc
     _sidecar["port"] = port
     _sidecar["nonce"] = nonce
+    _sidecar["operator_secret"] = operator_secret  # in-memory only; NEVER persisted (SEC-1)
     _sidecar["owned"] = True
-    # Publish for other backend processes to adopt (single writer per state dir).
+    # Publish port + adoption nonce for other backend processes (single writer per state dir).
+    # The operator secret is DELIBERATELY excluded — adoption grants board rendering, not the
+    # operator plane. chmod 600 so only this user can even read the adoption record.
     try:
-        _portfile_path(state_dir).write_text(
-            json.dumps({"port": port, "nonce": nonce, "pid": os.getpid()})
-        )
+        pf = _portfile_path(state_dir)
+        pf.write_text(json.dumps({"port": port, "nonce": nonce, "pid": os.getpid()}))
+        try:
+            os.chmod(pf, 0o600)
+        except OSError:  # pragma: no cover - best-effort (e.g. Windows)
+            pass
     except Exception as exc:  # pragma: no cover - non-fatal
         log.warning("boardstate: could not write sidecar port-file: %s", exc)
     # Keep draining both streams so the pipe buffers never fill and stall node.
@@ -463,29 +480,39 @@ def _authorize_operator(request: "Request") -> tuple[Optional[str], Optional[Res
     except Exception:  # pragma: no cover - dashboard internals unavailable
         _ws = None
 
-    gated = bool(getattr(getattr(request, "app", None), "state", None) and getattr(request.app.state, "auth_required", False))
+    # AUTH-1 (fail CLOSED): only a POSITIVELY-confirmed loopback single-user bind — the
+    # dashboard set `app.state.auth_required = False` at startup (see web_server:should_require_auth)
+    # — is trusted as a self-service operator without an allowlist. If gating is INDETERMINATE
+    # (the attribute is absent — e.g. an atypical embedding) or the bind is gated/multi-user
+    # (True), the operator allowlist is MANDATORY. `auth_required` defaulting to False here would
+    # be fail-OPEN, so we treat "not exactly False" as untrusted.
+    state = getattr(getattr(request, "app", None), "state", None)
+    auth_required = getattr(state, "auth_required", None) if state is not None else None
+    loopback_single_user = auth_required is False
 
-    if gated:
-        # The gate middleware already authenticated the cookie and attached the session.
-        session = getattr(request.state, "session", None)
-        if session is None:
-            return None, JSONResponse(status_code=401, content={"error": "unauthorized"})
-        principal = getattr(session, "email", None) or getattr(session, "user_id", None) or None
-    else:
+    if loopback_single_user:
         # Loopback: validate the dashboard session token exactly as the WS gate does.
         checker = getattr(_ws, "_has_valid_session_token", None) if _ws else None
         if checker is not None and not checker(request):
             return None, JSONResponse(status_code=401, content={"error": "unauthorized"})
         principal = "loopback"
+    else:
+        # Gated OR indeterminate → the allowlist is mandatory (below). Identify the caller from
+        # the gate-attached session when present; a gated bind with no session is a gate failure.
+        session = getattr(request.state, "session", None)
+        if auth_required is True and session is None:
+            return None, JSONResponse(status_code=401, content={"error": "unauthorized"})
+        principal = (getattr(session, "email", None) or getattr(session, "user_id", None)) if session else None
 
     allowlist = _load_operators_allowlist(_state_dir())
     if allowlist is None:
-        # No allowlist file: single-user local operator only. In gated/multi-user mode we
-        # refuse — an undifferentiated session token must not be a self-service operator.
-        if gated:
+        # No allowlist file: permitted ONLY for a confirmed loopback single-user bind. Otherwise
+        # (gated or indeterminate) refuse — an undifferentiated session token must not be a
+        # self-service operator on a shared/unknown host.
+        if not loopback_single_user:
             return None, JSONResponse(
                 status_code=403,
-                content={"error": "operator allowlist (boardstate.operators.json) required in gated mode"},
+                content={"error": "operator allowlist (boardstate.operators.json) required unless the dashboard is a confirmed loopback single-user bind"},
             )
     else:
         if not principal or principal not in allowlist:
@@ -511,13 +538,24 @@ async def operator(request: "Request") -> "Response":
         return JSONResponse(status_code=400, content={"error": f"method not allowed on the operator endpoint: {method}"})
 
     try:
-        port, nonce = await _ensure_sidecar()
+        port, _nonce = await _ensure_sidecar()
     except Exception as exc:  # defensive: never crash the dashboard worker
         log.warning("boardstate: sidecar unavailable for operator: %s", exc)
         return JSONResponse(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, content={"error": "sidecar unavailable"})
 
-    # Forward the EXACT { method, params } shape to the sidecar's nonce-gated /operator.
-    url = f"http://127.0.0.1:{port}/operator?nonce={nonce}"
+    # SEC-1: forward with the DEDICATED operator secret (in-memory, never in the port file),
+    # NOT the adoption nonce. If this backend ADOPTED the sidecar (didn't spawn it) it has no
+    # operator secret — operator actions are unavailable here (drive them from the spawning
+    # backend, or restart so this process owns the sidecar).
+    operator_secret = _sidecar.get("operator_secret")
+    if not operator_secret:
+        return JSONResponse(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"error": "operator actions unavailable on this backend (adopted sidecar); use the backend that spawned it"},
+        )
+
+    # Forward the EXACT { method, params } shape to the sidecar's secret-gated /operator.
+    url = f"http://127.0.0.1:{port}/operator?nonce={operator_secret}"
     log.info("boardstate: operator %s by %s", method, principal)
     try:
         async with httpx.AsyncClient(timeout=None) as client:

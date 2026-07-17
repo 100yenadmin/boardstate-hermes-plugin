@@ -42,22 +42,49 @@ export type ConnectorWorkspace = {
   sensitiveStrings: string[];
 };
 
-/** Collect the connector config strings an error message could leak (command/args/url). */
-function collectSensitiveStrings(config: { connectors: ConnectorConfigLike[] }): string[] {
+/** Collect EVERY connector config string an error could leak — command/url/args AND the
+ *  secret-bearing fields: env keys + env-ref names + their RESOLVED process-env VALUES (API
+ *  keys, the most sensitive field — SEC-2), and header keys + values (incl. `${ENV}`-resolved).
+ *  Length-agnostic: a short API key must never leak, so no minimum-length filter here (the
+ *  redactor sorts DESC by length to mask overlapping secrets — SEC-3). */
+export function collectSensitiveStrings(
+  config: { connectors: ConnectorConfigLike[] },
+  env: Record<string, string | undefined> = process.env,
+): string[] {
   const out = new Set<string>();
+  const add = (value: unknown): void => {
+    if (typeof value === "string" && value.length > 0) {
+      out.add(value);
+    }
+  };
   for (const c of config.connectors) {
-    for (const value of [c.command, c.url, ...(c.args ?? [])]) {
-      // Redact only non-trivial substrings (a 1-3 char arg like "mcp" is not a secret and
-      // over-redacting it would mangle unrelated error text).
-      if (typeof value === "string" && value.length >= 4) {
-        out.add(value);
-      }
+    add(c.command);
+    add(c.url);
+    for (const arg of c.args ?? []) add(arg);
+    // env: `{ CHILD_VAR: SOURCE_ENV_NAME }`. Redact the child var name, the source ref name,
+    // AND the resolved secret value forwarded to the child (the actual API key).
+    for (const [childVar, ref] of Object.entries(c.env ?? {})) {
+      add(childVar);
+      add(ref);
+      add(env[ref]); // the resolved secret — never let it echo to the agent
+    }
+    // headers: key + literal value + any `${ENV}`-interpolated secret value.
+    for (const [headerKey, raw] of Object.entries(c.headers ?? {})) {
+      add(headerKey);
+      add(raw);
+      for (const m of raw.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) add(env[m[1]]);
     }
   }
   return [...out];
 }
 
-type ConnectorConfigLike = { command?: string; url?: string; args?: string[] };
+type ConnectorConfigLike = {
+  command?: string;
+  url?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+};
 
 /**
  * Load `boardstate.connectors.json` from the state dir and wire the whole M5 connector

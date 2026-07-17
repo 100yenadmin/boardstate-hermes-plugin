@@ -31,7 +31,7 @@ writeFileSync(
   JSON.stringify({ connectors: [{ name: "fake", transport: "http", url: fake.url }] }),
 );
 
-const { proc, port } = await spawnSidecar({ stateDir, nonce: NONCE });
+const { proc, port, operatorSecret } = await spawnSidecar({ stateDir, nonce: NONCE });
 
 try {
   // The agent's view: an MCP client over the sidecar's nonce-gated endpoint.
@@ -70,7 +70,7 @@ try {
   // verb: dashboard.connector.read — readOnly-only, never parks). Needs the grant granted;
   // approve it in-process via the operator endpoint first (the operator seam, tested fully
   // in the e2e — here just enough to prove the read path is wired).
-  const approve = await fetch(`http://127.0.0.1:${port}/operator?nonce=${NONCE}`, {
+  const approve = await fetch(`http://127.0.0.1:${port}/operator?nonce=${operatorSecret}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({

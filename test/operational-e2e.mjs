@@ -30,8 +30,9 @@ const check = (name, cond) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // POST an operator decision to the sidecar's /operator — the exact call plugin_api forwards.
-async function operator(port, nonce, method, params) {
-  const res = await fetch(`http://127.0.0.1:${port}/operator?nonce=${nonce}`, {
+// `secret` is the DEDICATED operator secret (SEC-1), not the WS/MCP adoption nonce.
+async function operator(port, secret, method, params) {
+  const res = await fetch(`http://127.0.0.1:${port}/operator?nonce=${secret}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ method, params }),
@@ -45,7 +46,7 @@ writeFileSync(
   join(stateDir, "boardstate.connectors.json"),
   JSON.stringify({ connectors: [{ name: "fake", transport: "http", url: fake.url }] }),
 );
-const { proc, port } = await spawnSidecar({ stateDir, nonce: NONCE });
+const { proc, port, operatorSecret } = await spawnSidecar({ stateDir, nonce: NONCE });
 
 // A WS board client — the operator's live view + the pending-action list.
 const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?nonce=${NONCE}`);
@@ -78,7 +79,7 @@ try {
   check("no granted external tools before approval", granted.length === 0);
 
   // ── 2. operator APPROVES a partial subset (echo + write_note) through the gate ──
-  const approved = await operator(port, NONCE, "dashboard.capability.approve", {
+  const approved = await operator(port, operatorSecret, "dashboard.capability.approve", {
     name: "fake", decision: "granted", actor: "user", tools: ["fake:echo", "fake:write_note"],
   });
   check("operator approve → 200", approved.status === 200);
@@ -108,7 +109,7 @@ try {
 
   // Let the adapter register its confirm waiter before we confirm (park→await race).
   await sleep(50);
-  const confirmed = await operator(port, NONCE, "dashboard.action.confirm", { id: pendingId, actor: "user" });
+  const confirmed = await operator(port, operatorSecret, "dashboard.action.confirm", { id: pendingId, actor: "user" });
   check("operator confirm → 200", confirmed.status === 200);
 
   const writeResult = await invokePromise;
@@ -118,7 +119,7 @@ try {
   check("no pending actions remain after confirm", (after?.pending ?? []).length === 0);
 
   // ── 5. the operator endpoint's own gate: non-operator verb + wrong nonce are refused ──
-  const nonOp = await operator(port, NONCE, "dashboard.workspace.replace", { doc: {} });
+  const nonOp = await operator(port, operatorSecret, "dashboard.workspace.replace", { doc: {} });
   check("operator endpoint refuses a non-operator verb (400)", nonOp.status === 400);
   const badNonce = await operator(port, "wrong-nonce", "dashboard.capability.approve", { name: "fake" });
   check("operator endpoint rejects a wrong nonce (401)", badNonce.status === 401);

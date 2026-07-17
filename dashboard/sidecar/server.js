@@ -28564,13 +28564,26 @@ function detectBinary(command, env = process.env) {
 
 // dashboard/sidecar/src/connectors.ts
 var CONNECTORS_CONFIG_FILE = "boardstate.connectors.json";
-function collectSensitiveStrings(config2) {
+function collectSensitiveStrings(config2, env = process.env) {
   const out = /* @__PURE__ */ new Set();
+  const add = (value) => {
+    if (typeof value === "string" && value.length > 0) {
+      out.add(value);
+    }
+  };
   for (const c of config2.connectors) {
-    for (const value of [c.command, c.url, ...c.args ?? []]) {
-      if (typeof value === "string" && value.length >= 4) {
-        out.add(value);
-      }
+    add(c.command);
+    add(c.url);
+    for (const arg of c.args ?? []) add(arg);
+    for (const [childVar, ref] of Object.entries(c.env ?? {})) {
+      add(childVar);
+      add(ref);
+      add(env[ref]);
+    }
+    for (const [headerKey, raw] of Object.entries(c.headers ?? {})) {
+      add(headerKey);
+      add(raw);
+      for (const m of raw.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) add(env[m[1]]);
     }
   }
   return [...out];
@@ -30639,6 +30652,8 @@ var StreamableHTTPServerTransport = class {
 // dashboard/sidecar/src/mcp.ts
 var AGENT_TOOL_PREFIX = "dashboard_";
 var MCP_TOOL_PREFIX = "boardstate_";
+var MCP_AGENT_ID = "agent";
+var DEFAULT_MUTATION_TIMEOUT_MS2 = 3e5;
 var toMcpToolName = (agentName) => agentName.startsWith(AGENT_TOOL_PREFIX) ? `${MCP_TOOL_PREFIX}${agentName.slice(AGENT_TOOL_PREFIX.length)}` : agentName;
 function textResult(details, isError = false) {
   return {
@@ -30678,6 +30693,8 @@ async function createMcpEndpoint(host2, store2, options = {}) {
     }
     return map;
   };
+  const requestCtx = { agentId: MCP_AGENT_ID };
+  const mutationTimeoutMs2 = connectors2?.mutationTimeoutMs ?? DEFAULT_MUTATION_TIMEOUT_MS2;
   const frameExternal = (result) => ({ result, note: EXTERNAL_UNTRUSTED_NOTE });
   const connectorArgs = (args) => ({
     connector: typeof args.connector === "string" ? args.connector : "",
@@ -30689,23 +30706,36 @@ async function createMcpEndpoint(host2, store2, options = {}) {
       name: "boardstate_connector_read",
       description: "Read live data from an operator-APPROVED external connector tool (readOnly only). A mutating or ungranted tool is refused; the connector's live manifest is re-checked on every call, so a changed tool re-pends its grant instead of running. Discover tools with boardstate_tool_search.",
       inputSchema: CONNECTOR_TOOL_SCHEMA,
-      execute: async (args) => frameExternal(await host2.request("dashboard.connector.read", connectorArgs(args)))
+      execute: async (args) => frameExternal(
+        await host2.request("dashboard.connector.read", connectorArgs(args), requestCtx)
+      )
     },
     {
       name: "boardstate_connector_invoke",
-      description: "Invoke an operator-APPROVED external connector tool. A readOnly tool runs directly; a mutating tool PARKS as a pending action and BLOCKS until the operator confirms. The connector's live manifest is re-checked (anti-rug-pull) on every call.",
+      description: "Invoke an operator-APPROVED external connector tool. A readOnly tool runs directly; a mutating tool PARKS as a pending action and BLOCKS until the operator confirms (up to a bounded timeout, after which it returns as still-parked). The connector's live manifest is re-checked (anti-rug-pull) on every call.",
       inputSchema: CONNECTOR_TOOL_SCHEMA,
       execute: async (args) => {
         const invoked = await host2.request(
           "dashboard.action.invoke",
-          connectorArgs(args)
+          connectorArgs(args),
+          requestCtx
         );
         if (invoked && invoked.pending === true && typeof invoked.id === "string") {
-          return frameExternal(
-            await connectors2.confirmAndExecute(invoked.id, {
-              ...connectors2.mutationTimeoutMs !== void 0 ? { timeoutMs: connectors2.mutationTimeoutMs } : {}
-            })
-          );
+          try {
+            return frameExternal(
+              await connectors2.confirmAndExecute(invoked.id, { timeoutMs: mutationTimeoutMs2 })
+            );
+          } catch (error2) {
+            if (error2 instanceof Error && error2.code === "action_timeout") {
+              return {
+                parked: true,
+                id: invoked.id,
+                ...typeof invoked.expiresAt === "string" ? { expiresAt: invoked.expiresAt } : {},
+                note: "Action is awaiting operator confirmation; it remains pending. Ask the operator to confirm."
+              };
+            }
+            throw error2;
+          }
         }
         return frameExternal(invoked);
       }
@@ -30719,7 +30749,7 @@ async function createMcpEndpoint(host2, store2, options = {}) {
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
-        ...buildTools("agent").map((tool) => {
+        ...buildTools(MCP_AGENT_ID).map((tool) => {
           const schema = agentToolToJsonSchema(tool);
           return {
             name: toMcpToolName(schema.name),
@@ -30738,7 +30768,7 @@ async function createMcpEndpoint(host2, store2, options = {}) {
       const mcpName = request.params.name;
       const args = request.params.arguments ?? {};
       try {
-        const tool = toolsByMcpName("agent").get(mcpName);
+        const tool = toolsByMcpName(MCP_AGENT_ID).get(mcpName);
         if (tool) {
           const { details } = await tool.execute(mcpName, args);
           return textResult(details);
@@ -30842,7 +30872,7 @@ function send(res, status, body) {
 }
 function createOperatorEndpoint(host2, options = {}) {
   const path4 = options.path ?? "/operator";
-  const nonce = options.nonce;
+  const secret = options.secret;
   return {
     async handle(req, res, pathname) {
       if (pathname !== path4) {
@@ -30852,12 +30882,14 @@ function createOperatorEndpoint(host2, options = {}) {
         send(res, 405, { error: "operator endpoint accepts POST only" });
         return true;
       }
-      if (nonce) {
-        const url2 = new URL(req.url ?? "/", "http://127.0.0.1");
-        if (url2.searchParams.get("nonce") !== nonce) {
-          send(res, 401, { error: "unauthorized" });
-          return true;
-        }
+      if (!secret) {
+        send(res, 403, { error: "operator endpoint is not configured (no operator secret)" });
+        return true;
+      }
+      const url2 = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (url2.searchParams.get("nonce") !== secret) {
+        send(res, 401, { error: "unauthorized" });
+        return true;
       }
       let payload;
       try {
@@ -30897,8 +30929,23 @@ function officeCliSetup() {
 }
 function officeCliBootHint() {
   const setup = officeCliSetup();
-  const sample = JSON.stringify({ connectors: [setup.connector] });
-  return setup.detected ? `[boardstate] OfficeCLI detected on PATH \u2014 enable it by writing boardstate.connectors.json: ${sample}` : `[boardstate] OfficeCLI connector available. ${setup.install} Then author boardstate.connectors.json: ${sample}`;
+  const next = "author boardstate.connectors.json in the state dir (see docs/connectors/officecli.md)";
+  return setup.detected ? `[boardstate] OfficeCLI detected on PATH \u2014 enable it: ${next}.` : `[boardstate] OfficeCLI connector available. ${setup.install} Then ${next}.`;
+}
+
+// dashboard/sidecar/src/redact.ts
+function buildRedactor(secrets) {
+  const sorted = [...new Set(secrets)].filter((s) => typeof s === "string" && s.length >= 1).sort((a, b) => b.length - a.length);
+  if (sorted.length === 0) {
+    return (message) => message;
+  }
+  return (message) => {
+    let out = message;
+    for (const secret of sorted) {
+      out = out.split(secret).join("[redacted]");
+    }
+    return out;
+  };
 }
 
 // dashboard/sidecar/src/server.ts
@@ -30962,9 +31009,10 @@ var resolveBinding3 = hermesUrl && hermesToken ? createHermesRpcResolver({
   sessionToken: hermesToken,
   fallback: nodeDeps.resolveBinding
 }) : nodeDeps.resolveBinding;
+var mutationTimeoutMs = Number(process.env.BOARDSTATE_MUTATION_TIMEOUT_MS) || 3e5;
 var connectors = null;
 try {
-  connectors = await installConnectorsFromConfig(host, store);
+  connectors = await installConnectorsFromConfig(host, store, { mutationTimeoutMs });
 } catch (err) {
   console.error(
     `[boardstate] connectors config rejected: ${err instanceof Error ? err.message : String(err)}`
@@ -30995,28 +31043,25 @@ if (hermesUrl && hermesToken) {
 }
 var widgetRoute = createWidgetHttpRouteHandler({ store });
 var sidecarNonceForMcp = process.env.BOARDSTATE_SIDECAR_NONCE;
-var redactionStrings = [
+var operatorSecret = process.env.BOARDSTATE_OPERATOR_SECRET;
+var redactSecrets = buildRedactor([
+  // Config-sourced secrets (command/url/args/env keys+values/header values) — length-agnostic.
   ...connectors?.sensitiveStrings ?? [],
-  ...sidecarNonceForMcp ? [sidecarNonceForMcp] : []
-].filter((s) => s.length >= 4);
-var redactSecrets = (message) => {
-  let out = message;
-  for (const secret of redactionStrings) {
-    out = out.split(secret).join("[redacted]");
-  }
-  return out;
-};
+  // Long random process secrets: keep a floor so a stray short value never over-redacts text.
+  ...[sidecarNonceForMcp, operatorSecret].filter((s) => typeof s === "string" && s.length >= 8)
+]);
 var mcpEndpoint = await createMcpEndpoint(host, store, {
   nonce: sidecarNonceForMcp,
   redactSecrets,
   ...connectors ? { toolSearch: connectors.workspace.toolSearch } : {},
   ...connectors ? {
     connectors: {
-      confirmAndExecute: (id, opts) => connectors.workspace.actions.confirmAndExecute(id, opts)
+      confirmAndExecute: (id, opts) => connectors.workspace.actions.confirmAndExecute(id, opts),
+      mutationTimeoutMs
     }
   } : {}
 });
-var operatorEndpoint = createOperatorEndpoint(host, { nonce: sidecarNonceForMcp });
+var operatorEndpoint = createOperatorEndpoint(host, { secret: operatorSecret });
 var httpServer = createServer((req, res) => {
   const pathname = (req.url ?? "/").split("?")[0];
   void operatorEndpoint.handle(req, res, pathname).then((handledOperator) => {
