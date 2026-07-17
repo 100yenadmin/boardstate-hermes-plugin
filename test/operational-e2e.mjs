@@ -82,16 +82,19 @@ try {
     name: "fake", decision: "granted", actor: "user", tools: ["fake:echo", "fake:write_note"],
   });
   check("operator approve → 200", approved.status === 200);
-  granted = (await mcp.listTools()).tools.map((t) => t.name).filter((n) => n.startsWith("fake"));
-  check("granted external tools appear to the agent after approval", granted.includes("fake__echo") && granted.includes("fake__write_note"));
+  // The agent invokes ONLY through the two GATED tools (anti-rug-pull): raw granted broker
+  // tools are never surfaced, so a connector call can never skip gateCall's hash re-pend.
+  const toolNames = (await mcp.listTools()).tools.map((t) => t.name);
+  check("gated connector tools exposed after wiring", toolNames.includes("boardstate_connector_read") && toolNames.includes("boardstate_connector_invoke"));
+  check("raw broker fast-path tools are NOT exposed", !toolNames.some((n) => n === "fake__echo" || n === "fake__write_note"));
 
-  // ── 3. agent invokes a readOnly tool DIRECTLY (no park) ──
-  const echo = await details("fake__echo", { text: "read the workbook summary" });
+  // ── 3. agent invokes a readOnly tool DIRECTLY (no park) via the gated read tool ──
+  const echo = await details("boardstate_connector_read", { connector: "fake", tool: "echo", args: { text: "read the workbook summary" } });
   check("readOnly tool executes directly + reaches the agent", JSON.stringify(echo).includes("read the workbook summary"));
   check("external result is framed UNTRUSTED to the model", /UNTRUSTED/i.test(JSON.stringify(echo)));
 
   // ── 4. agent invokes a MUTATION → it PARKS; operator CONFIRMS → it executes ──
-  const invokePromise = details("fake__write_note", { text: "generate the quarterly report .docx" });
+  const invokePromise = details("boardstate_connector_invoke", { connector: "fake", tool: "write_note", args: { text: "generate the quarterly report .docx" } });
 
   // Poll the pending-action list over the WS until the parked mutation shows up.
   let pendingId = null;

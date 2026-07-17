@@ -45,6 +45,15 @@ Approve/confirm decisions travel the operator gate only
 (`POST /api/plugins/boardstate/operator`), never the browser WebSocket or the agent's MCP
 connection.
 
+### Auto-run (autoConfirm) — an operator opt-in, off by default
+
+The approvals panel's per-tool **Auto-run** checkbox sets `autoConfirm` on a grant: an
+auto-confirmed tool executes **without** parking a pending action for per-call confirmation.
+It is an operator opt-in and is **off by default** — the plugin never enables it, and it is
+not a `boardstate.connectors.json` field (the config parser rejects it). Only enable Auto-run
+for fully-trusted, low-consequence tools; leave it off so every mutating call waits for your
+explicit confirm.
+
 ## 4. Operate
 
 Apply the **Office Ops** board template (the Templates row on the Board tab): a grant-gated

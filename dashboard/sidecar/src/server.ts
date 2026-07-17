@@ -181,10 +181,32 @@ const widgetRoute = createWidgetHttpRouteHandler({ store });
 // against THIS host so its `boardstate_*` writes land on the same bus the board reads.
 // Same per-spawn nonce gate as the WS.
 const sidecarNonceForMcp = process.env.BOARDSTATE_SIDECAR_NONCE;
+
+// Redact connector config (command/url/args) + the per-spawn nonce from any agent-facing MCP
+// error (invariant #3). Built from the loaded config's sensitive strings; identity with none.
+const redactionStrings = [
+  ...(connectors?.sensitiveStrings ?? []),
+  ...(sidecarNonceForMcp ? [sidecarNonceForMcp] : []),
+].filter((s) => s.length >= 4);
+const redactSecrets = (message: string): string => {
+  let out = message;
+  for (const secret of redactionStrings) {
+    out = out.split(secret).join("[redacted]");
+  }
+  return out;
+};
+
 const mcpEndpoint = await createMcpEndpoint(host, store, {
   nonce: sidecarNonceForMcp,
+  redactSecrets,
   ...(connectors ? { toolSearch: connectors.workspace.toolSearch } : {}),
-  ...(connectors ? { grantedTools: () => host.tools() } : {}),
+  ...(connectors
+    ? {
+        connectors: {
+          confirmAndExecute: (id, opts) => connectors.workspace.actions.confirmAndExecute(id, opts),
+        },
+      }
+    : {}),
 });
 
 // The operator DECISION seam: a nonce-gated in-process HTTP endpoint the parent `plugin_api`

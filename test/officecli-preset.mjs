@@ -60,6 +60,18 @@ check("detect-or-instruct: install pointer present iff not detected", setup.dete
 const hint = mod.officeCliBootHint();
 check("boot hint names the connectors file config", typeof hint === "string" && hint.includes("boardstate.connectors.json") && hint.includes("officecli"));
 
+// autoConfirm is a GRANT-level operator opt-in (the approvals "Auto-run" checkbox), NEVER a
+// connector-config field — so a connectors.json can't silently enable it. parseConnectorsConfig
+// rejects it as an unknown field, and a validated connector never carries autoConfirm.
+check("no autoConfirm on the parsed preset connector", !("autoConfirm" in setup.connector));
+let rejectedAutoConfirm = false;
+try {
+  parseConnectorsConfig({ connectors: [{ name: "x", transport: "stdio", command: "officecli", args: ["mcp"], autoConfirm: true }] });
+} catch {
+  rejectedAutoConfirm = true;
+}
+check("parseConnectorsConfig REJECTS an autoConfirm field in a connector config", rejectedAutoConfirm);
+
 rmSync(outfile, { force: true });
 
 console.log(`\nofficecli-preset: ${n} checks`);

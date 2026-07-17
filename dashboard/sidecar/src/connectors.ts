@@ -36,7 +36,28 @@ export type ConnectorWorkspace = {
   broker: McpBroker;
   /** Absolute path of the config file that authored these connectors. */
   configPath: string;
+  /** The server-side connector config values (command/args/url) that must NEVER surface in
+   *  an agent-facing / MCP error payload (a spawn ENOENT or fetch error echoes the literal
+   *  command/url — invariant #3). The MCP endpoint redacts these from every error it returns. */
+  sensitiveStrings: string[];
 };
+
+/** Collect the connector config strings an error message could leak (command/args/url). */
+function collectSensitiveStrings(config: { connectors: ConnectorConfigLike[] }): string[] {
+  const out = new Set<string>();
+  for (const c of config.connectors) {
+    for (const value of [c.command, c.url, ...(c.args ?? [])]) {
+      // Redact only non-trivial substrings (a 1-3 char arg like "mcp" is not a secret and
+      // over-redacting it would mangle unrelated error text).
+      if (typeof value === "string" && value.length >= 4) {
+        out.add(value);
+      }
+    }
+  }
+  return [...out];
+}
+
+type ConnectorConfigLike = { command?: string; url?: string; args?: string[] };
 
 /**
  * Load `boardstate.connectors.json` from the state dir and wire the whole M5 connector
@@ -84,5 +105,5 @@ export async function installConnectorsFromConfig(
       : {}),
   });
 
-  return { workspace, broker, configPath };
+  return { workspace, broker, configPath, sensitiveStrings: collectSensitiveStrings(config) };
 }
