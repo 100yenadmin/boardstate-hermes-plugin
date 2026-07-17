@@ -7,7 +7,7 @@
 //
 // Run after `npm run build`:  node test/broker-fixture.mjs
 
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "ws";
@@ -96,6 +96,37 @@ try {
     ws.send(JSON.stringify({ id: "read", method: "dashboard.connector.read", params: { connector: "fake", tool: "echo", args: { text: "Q3 revenue = $4.2M" } } }));
   });
   check("readOnly connector.read renders external data over the WS", JSON.stringify(readResult).includes("Q3 revenue = $4.2M"));
+
+  // ── regression: a workspace.replace (template apply / import) wipes capabilitiesRegistry;
+  // the connector layer must RE-REGISTER the configured connector (as "requested" — never
+  // resurrecting the grant) without a sidecar reboot, or the approvals widget goes blank
+  // and granted tools die mid-session.
+  const bareDoc = {
+    schemaVersion: 1,
+    workspaceVersion: 1,
+    widgetsRegistry: {},
+    prefs: { tabOrder: ["board"] },
+    tabs: [{ slug: "board", title: "Board", icon: "layoutDashboard", hidden: false, createdBy: "system", widgets: [] }],
+  };
+  await new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("workspace.replace timeout")), 5000);
+    const onMsg = (data) => {
+      const m = JSON.parse(data.toString());
+      if (m.id === "wipe") { clearTimeout(t); ws.off("message", onMsg); (m.error ? reject(new Error(JSON.stringify(m.error))) : resolve(m.result)); }
+    };
+    ws.on("message", onMsg);
+    ws.send(JSON.stringify({ id: "wipe", method: "dashboard.workspace.replace", params: { doc: bareDoc, actor: "user" } }));
+  });
+  // debounce (300ms) + refresh round-trip
+  let reRegistered = null;
+  for (let i = 0; i < 20 && !reRegistered; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    const doc = JSON.parse(readFileSync(join(stateDir, "dashboard", "workspace.json"), "utf8"));
+    const rec = doc.capabilitiesRegistry?.fake;
+    if (rec) reRegistered = rec;
+  }
+  check("grant RE-REGISTERS after a workspace.replace (no reboot)", !!reRegistered);
+  check("re-registered grant is REQUESTED — a replace never resurrects a grant", reRegistered?.status === "requested");
   ws.close();
 } finally {
   stopSidecar(proc);

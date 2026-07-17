@@ -28607,6 +28607,24 @@ async function installConnectorsFromConfig(host2, store2, options = {}) {
     store: store2,
     ...options.mutationTimeoutMs !== void 0 ? { mutationTimeoutMs: options.mutationTimeoutMs } : {}
   });
+  let regTimer = null;
+  host2.addEventListener("boardstate.changed", () => {
+    if (regTimer) return;
+    regTimer = setTimeout(() => {
+      regTimer = null;
+      void (async () => {
+        try {
+          const doc = await store2.read();
+          const registry2 = doc.capabilitiesRegistry ?? {};
+          if (broker.connectorNames().some((name) => !registry2[name])) {
+            await workspace.refresh();
+            console.log("[boardstate] connector grants re-registered after a workspace replace");
+          }
+        } catch {
+        }
+      })();
+    }, 300);
+  });
   return { workspace, broker, configPath, sensitiveStrings: collectSensitiveStrings(config2) };
 }
 
