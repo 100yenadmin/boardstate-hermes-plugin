@@ -173,9 +173,11 @@ function BoardPage() {
             (SDK as { fetchJSON?: (p: string) => Promise<unknown> }).fetchJSON ??
             (async (p: string) => (await fetch(p, { headers: { "X-Hermes-Session-Token": localStorage.getItem("hermes_session_token") ?? "" } })).json());
           const ab = (await fetchJson("/api/plugins/boardstate/assets-base")) as { base?: string };
-          view.basePath = ab?.base || "/api/plugins/boardstate";
+          // No tokenized base ⇒ builtins-only ("" — iframe loads can't present the
+          // session header, so pointing at the header-authed route would just stall).
+          view.basePath = ab?.base || "";
         } catch {
-          view.basePath = "/api/plugins/boardstate";
+          view.basePath = "";
         }
         // Follow the active Hermes palette (light/dark base + `--bs-*` aliases)
         // and keep following it across live palette swaps.

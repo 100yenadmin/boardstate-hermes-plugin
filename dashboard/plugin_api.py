@@ -397,17 +397,32 @@ _WIDGET_FWD_RESP_HEADERS = (
 )
 
 
+def _safe_asset_path(asset_path: str) -> Optional[str]:
+    """Validate + re-encode an asset path for the upstream URL. Rejects traversal
+    (`.`/`..`), backslashes, and empty segments so a crafted path can never normalize
+    outside `/widgets` upstream; each accepted segment is percent-encoded."""
+    from urllib.parse import quote
+
+    segments = asset_path.split("/")
+    if not segments or any(s in ("", ".", "..") or "\\" in s for s in segments):
+        return None
+    return "/".join(quote(s, safe="") for s in segments)
+
+
 async def _proxy_widget_asset(asset_path: str) -> "Response":
     """Proxy one approved-custom-widget asset from the sidecar's `/widgets` route. The
     sidecar serves approved widgets only, with a uniform 404 for pending / rejected /
     unknown (they do not exist as far as any client can tell), and stamps the sandbox
     CSP on every asset — both properties pass through unchanged. Read-only."""
+    safe_path = _safe_asset_path(asset_path)
+    if safe_path is None:
+        return Response(status_code=http_status.HTTP_404_NOT_FOUND)
     try:
         port, _nonce = await _ensure_sidecar()
     except Exception as exc:  # defensive: never crash the dashboard worker
         log.warning("boardstate: sidecar unavailable for widget assets: %s", exc)
         return Response(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE)
-    url = f"http://127.0.0.1:{port}/widgets/{asset_path}"
+    url = f"http://127.0.0.1:{port}/widgets/{safe_path}"
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             upstream = await client.get(url)

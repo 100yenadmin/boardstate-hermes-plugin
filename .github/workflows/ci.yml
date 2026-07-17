@@ -98,5 +98,8 @@ jobs:
       - name: Router import + shape check (no Hermes host required)
         run: python test/plugin_api_check.py
 
+      - name: Tokenized asset proxy at runtime (traversal-jailed, CSP verbatim)
+        run: python test/asset_proxy.py
+
       - name: Operator gate wire-contract (plugin_api → sidecar exact param shapes)
         run: python test/operator_wire.py
