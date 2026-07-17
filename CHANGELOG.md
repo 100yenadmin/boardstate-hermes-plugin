@@ -3,6 +3,39 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.3.0
+
+### Added — the M5 operational layer
+
+The board can now **connect external MCP tools and act through operator-governed grants** —
+the agent reads live external data and takes consequential actions, each one gated.
+
+- **Connector broker.** When the operator authors `boardstate.connectors.json` in the
+  state dir, the sidecar wires `@boardstate/broker` — connect / discover / grant lifecycle
+  / pending-action engine — onto the single host. Absent config ⇒ byte-identical to before.
+  Connector command/url/env are read **only** from that operator file, never the
+  agent-writable workspace doc.
+- **Operator security gate.** Approve / confirm / deny never travel the browser WS or the
+  agent MCP proxy (both stay blocked). They flow through a new
+  `POST /api/plugins/boardstate/operator` route — dashboard-session auth **plus** a
+  `boardstate.operators.json` admin allowlist (absent ⇒ loopback-only; gated multi-user ⇒
+  denied without an allowlist) — which forwards the exact `{method, params}` to a
+  nonce-gated sidecar `/operator` endpoint that executes only the four operator verbs
+  in-process. Web + desktop approvals UIs call the gated route only.
+- **OfficeCLI preset** (detect-or-instruct, no binary bundling) + an "Office Ops" template.
+
+### Security
+
+- Agent-facing connector access is exposed **only** through the `gateCall`-protected RPCs
+  (`dashboard.connector.read` / `dashboard.action.invoke`), so a connector that changes its
+  tool manifest after a grant re-pends the grant before any call succeeds (anti-rug-pull) —
+  the raw broker fast-path is not on the agent surface. Mutating tools always park for
+  operator confirm.
+- Connector config strings + the sidecar nonce are redacted from every agent-facing MCP
+  surface (tool-call errors, tool_search); full detail is logged server-side only.
+- Verified by revert-checked regression tests (`secret-redaction`, `rugpull-repend`) and two
+  independent adversarial invariant-verification passes.
+
 ## 1.2.0
 
 ### Changed
