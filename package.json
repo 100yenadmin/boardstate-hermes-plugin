@@ -14,6 +14,7 @@
     "@boardstate/lit": "^0.9.0",
     "@boardstate/schema": "^1.8.0",
     "@boardstate/server": "^1.8.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "esbuild": "^0.24.0",
     "ws": "^8.21.1"
   }

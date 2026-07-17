@@ -24,6 +24,9 @@ jobs:
       - name: Sidecar smoke test (control plane + nonce gate)
         run: node test/sidecar-smoke.mjs
 
+      - name: MCP single-host liveness (agent tool call → live board update)
+        run: node test/mcp-liveness.mjs
+
       - name: Assert built artifacts committed and in sync
         run: |
           git diff --exit-code -- dashboard/dist dashboard/sidecar dashboard/vendor \
