@@ -30780,7 +30780,7 @@ async function createMcpEndpoint(host2, store2, options = {}) {
         return textResult({ error: `unknown tool: ${mcpName}` }, true);
       } catch (error2) {
         const raw = error2 instanceof Error ? error2.message : String(error2);
-        console.error(`[boardstate] MCP tool "${mcpName}" failed: ${raw}`);
+        console.error(`[boardstate] MCP tool "${mcpName}" failed: ${redactSecrets2(raw)}`);
         return textResult({ error: redactSecrets2(raw) }, true);
       }
     });
@@ -31009,7 +31009,14 @@ var resolveBinding3 = hermesUrl && hermesToken ? createHermesRpcResolver({
   sessionToken: hermesToken,
   fallback: nodeDeps.resolveBinding
 }) : nodeDeps.resolveBinding;
-var mutationTimeoutMs = Number(process.env.BOARDSTATE_MUTATION_TIMEOUT_MS) || 3e5;
+var rawMutationTimeout = process.env.BOARDSTATE_MUTATION_TIMEOUT_MS;
+var parsedMutationTimeout = rawMutationTimeout === void 0 ? void 0 : Number(rawMutationTimeout);
+if (parsedMutationTimeout !== void 0 && !(Number.isFinite(parsedMutationTimeout) && parsedMutationTimeout > 0)) {
+  console.error(
+    `[boardstate] BOARDSTATE_MUTATION_TIMEOUT_MS=${rawMutationTimeout} is invalid (must be a positive number of ms) \u2014 using the 300000ms default`
+  );
+}
+var mutationTimeoutMs = parsedMutationTimeout !== void 0 && Number.isFinite(parsedMutationTimeout) && parsedMutationTimeout > 0 ? parsedMutationTimeout : 3e5;
 var connectors = null;
 try {
   connectors = await installConnectorsFromConfig(host, store, { mutationTimeoutMs });

@@ -492,8 +492,18 @@ def _authorize_operator(request: "Request") -> tuple[Optional[str], Optional[Res
 
     if loopback_single_user:
         # Loopback: validate the dashboard session token exactly as the WS gate does.
+        # FAIL CLOSED when the checker is unavailable (hermes_cli unimportable or an
+        # older dashboard without _has_valid_session_token): unlike the render WS, the
+        # operator plane is consequential, so "can't verify" must not mean "allow".
+        # Tests/harnesses without hermes_cli set BOARDSTATE_OPERATOR_TEST_BYPASS=1.
         checker = getattr(_ws, "_has_valid_session_token", None) if _ws else None
-        if checker is not None and not checker(request):
+        if checker is None:
+            if os.environ.get("BOARDSTATE_OPERATOR_TEST_BYPASS") != "1":
+                return None, JSONResponse(
+                    status_code=401,
+                    content={"error": "operator auth unavailable (dashboard session gate not found)"},
+                )
+        elif not checker(request):
             return None, JSONResponse(status_code=401, content={"error": "unauthorized"})
         principal = "loopback"
     else:
