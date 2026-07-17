@@ -49,8 +49,10 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
+import httpx
 import websockets
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status as http_status
+from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect, status as http_status
+from fastapi.responses import StreamingResponse
 
 log = logging.getLogger(__name__)
 
@@ -242,6 +244,53 @@ async def health() -> dict:
         "state_dir": str(_state_dir()),
         "bundle_present": _SIDECAR_JS.exists(),
     }
+
+
+# ---------------------------------------------------------------------------
+# MCP: a stable, dashboard-authed route the Hermes agent connects to (as a
+# `url:` MCP server, StreamableHTTP) so its boardstate_* tool calls build the
+# board live. Requests are proxied to the sidecar's ephemeral-port /mcp with the
+# per-spawn nonce appended — the agent reaches a STABLE URL, the sidecar stays
+# loopback-only, and auth is the dashboard's own session-token gate on
+# /api/plugins/*. Streamed so both JSON and SSE responses pass through.
+# ---------------------------------------------------------------------------
+
+_MCP_FWD_REQ_HEADERS = ("content-type", "accept", "mcp-session-id", "mcp-protocol-version", "last-event-id")
+_MCP_FWD_RESP_HEADERS = ("content-type", "mcp-session-id")
+
+
+@router.api_route("/mcp", methods=["POST", "GET", "DELETE"])
+async def mcp_proxy(request: "Request") -> "Response":
+    try:
+        port, nonce = await _ensure_sidecar()
+    except Exception as exc:  # defensive: never crash the dashboard worker
+        log.warning("boardstate: sidecar unavailable for MCP: %s", exc)
+        return Response(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, content=b"sidecar unavailable")
+
+    body = await request.body()
+    fwd_headers = {h: request.headers[h] for h in _MCP_FWD_REQ_HEADERS if h in request.headers}
+    url = f"http://127.0.0.1:{port}/mcp?nonce={nonce}"
+
+    client = httpx.AsyncClient(timeout=None)
+    try:
+        upstream_req = client.build_request(request.method, url, content=body, headers=fwd_headers)
+        upstream = await client.send(upstream_req, stream=True)
+    except Exception as exc:
+        await client.aclose()
+        log.warning("boardstate: MCP upstream error: %s", exc)
+        return Response(status_code=http_status.HTTP_502_BAD_GATEWAY, content=b"mcp upstream error")
+
+    resp_headers = {h: upstream.headers[h] for h in _MCP_FWD_RESP_HEADERS if h in upstream.headers}
+
+    async def _iter():
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    return StreamingResponse(_iter(), status_code=upstream.status_code, headers=resp_headers)
 
 
 # ---------------------------------------------------------------------------

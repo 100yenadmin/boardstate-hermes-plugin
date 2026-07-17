@@ -32,10 +32,16 @@ def main() -> int:
         if not cond:
             failures.append(name)
 
-    # Router exposes the browser WS bridge + a health probe.
+    # Router exposes the browser WS bridge + a health probe + the MCP proxy.
     paths = {getattr(r, "path", None) for r in mod.router.routes}
     check("router mounts /ws", "/ws" in paths)
     check("router mounts /health", "/health" in paths)
+    check("router mounts /mcp (agent MCP proxy)", "/mcp" in paths)
+
+    # The MCP proxy forwards to the sidecar with the per-spawn nonce (agent reachability).
+    src2 = (DASHBOARD / "plugin_api.py").read_text()
+    check("mcp proxy forwards with nonce", "/mcp?nonce=" in src2)
+    check("mcp proxy streams the response", "StreamingResponse" in src2)
 
     # Sidecar lifecycle helpers exist.
     for fn in ("_ensure_sidecar", "_read_port", "_kill_sidecar", "_ws_upgrade_authorized"):
