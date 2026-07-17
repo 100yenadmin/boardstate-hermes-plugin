@@ -33,6 +33,9 @@ jobs:
       - name: Chat event translator (Hermes stream → §14 AgentStreamEvent)
         run: node test/chat-translate.mjs
 
+      - name: Theme adapter (Hermes palette tokens → --bs-* mapping)
+        run: node test/theme.mjs
+
       - name: Assert built artifacts committed and in sync
         run: |
           git diff --exit-code -- dashboard/dist dashboard/sidecar dashboard/vendor \
