@@ -106,8 +106,9 @@ const METHOD_NOT_ALLOWED = JSON.stringify({
   id: null,
 });
 
-/** Start the fake MCP server over Streamable HTTP (stateless JSON mode) on 127.0.0.1. */
-export async function startHttpFakeServer() {
+/** Start the fake MCP server over Streamable HTTP (stateless JSON mode) on 127.0.0.1.
+ *  `port` defaults to 0 (ephemeral); pass a fixed port for a live-verify harness. */
+export async function startHttpFakeServer({ port = 0 } = {}) {
   const { StreamableHTTPServerTransport } = await import(
     "@modelcontextprotocol/sdk/server/streamableHttp.js"
   );
@@ -137,10 +138,10 @@ export async function startHttpFakeServer() {
       });
   });
 
-  await new Promise((resolve) => http.listen(0, "127.0.0.1", resolve));
-  const { port } = http.address();
+  await new Promise((resolve) => http.listen(port, "127.0.0.1", resolve));
+  const bound = http.address().port;
   return {
-    url: `http://127.0.0.1:${port}/mcp`,
+    url: `http://127.0.0.1:${bound}/mcp`,
     close: async () => {
       await new Promise((resolve) => http.close(() => resolve()));
     },
