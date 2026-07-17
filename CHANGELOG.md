@@ -3,6 +3,17 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.3.1
+
+### Fixed
+
+- *Office Ops* template now targets the **real** OfficeCLI MCP contract (one `officecli`
+  tool taking a CLI command line) and carries the approvals widget, so request → approve →
+  run is self-contained on one board.
+- Connector grants **re-register after a workspace replace** (template apply / import) —
+  previously a replace silently wiped every grant until the next sidecar boot. Re-registered
+  grants come back as *requested* (a replace can never resurrect a grant).
+
 ## 1.3.0
 
 ### Added — the M5 operational layer
