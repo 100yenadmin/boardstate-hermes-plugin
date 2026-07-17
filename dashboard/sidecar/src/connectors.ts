@@ -132,5 +132,32 @@ export async function installConnectorsFromConfig(
       : {}),
   });
 
+  // `dashboard.workspace.replace` (templates, imports, agent workspace rewrites) carries
+  // no `capabilitiesRegistry`, so a replace silently WIPES every configured connector's
+  // grant until the next sidecar boot — the approvals widget goes blank and granted tools
+  // die mid-session. Re-register on change: when a mutation leaves a configured connector
+  // missing from the registry, `workspace.refresh()` re-pends it (status "requested" — a
+  // replace can never resurrect a GRANT, only the request; the operator re-approves).
+  // Debounced; self-terminating (the refresh's own mutation leaves nothing missing).
+  let regTimer: ReturnType<typeof setTimeout> | null = null;
+  host.addEventListener("boardstate.changed", () => {
+    if (regTimer) return;
+    regTimer = setTimeout(() => {
+      regTimer = null;
+      void (async () => {
+        try {
+          const doc = await store.read();
+          const registry = doc.capabilitiesRegistry ?? {};
+          if (broker.connectorNames().some((name) => !registry[name])) {
+            await workspace.refresh();
+            console.log("[boardstate] connector grants re-registered after a workspace replace");
+          }
+        } catch {
+          /* transient read/refresh failure — the next change retries */
+        }
+      })();
+    }, 300);
+  });
+
   return { workspace, broker, configPath, sensitiveStrings: collectSensitiveStrings(config) };
 }
