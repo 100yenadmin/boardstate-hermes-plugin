@@ -36,6 +36,9 @@ jobs:
       - name: Theme adapter (Hermes palette tokens → --bs-* mapping)
         run: node test/theme.mjs
 
+      - name: Web skin (Hermes design language in the shipped bundle)
+        run: node test/skin-web.mjs
+
       - name: Board templates (each is a schema-valid, allowlisted workspace)
         run: node test/templates.mjs
 
