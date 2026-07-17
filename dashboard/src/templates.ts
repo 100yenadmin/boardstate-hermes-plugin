@@ -140,6 +140,8 @@ export const TEMPLATES: BoardTemplate[] = [
         2,
         "# Office Ops\nDrive **OfficeCLI** (`officecli mcp`) through operator-approved tools. Author the `officecli` connector in `boardstate.connectors.json`, approve its tools in the approvals panel, then act below.",
       ),
+      // The REAL OfficeCLI MCP (v1.0.x) exposes ONE tool, `officecli`, taking a CLI
+      // command line in `command` — not per-verb tools. Probed from the live manifest.
       actionButton(
         "generate-report",
         "Quarterly report",
@@ -148,19 +150,13 @@ export const TEMPLATES: BoardTemplate[] = [
         4,
         3,
         "officecli",
-        "create_document",
+        "officecli",
         "Generate quarterly report .docx",
-        { title: "Quarterly Report", format: "docx" },
+        { command: "create quarterly-report.docx" },
       ),
-      md(
-        "artifacts",
-        "Artifacts",
-        4,
-        2,
-        8,
-        3,
-        "## Artifacts\nGenerated documents and workbooks land in your OfficeCLI working directory and are linked here as the agent produces them. A mutating action **parks for your confirm** before it runs; a read-only tool runs directly.",
-      ),
+      // Grants + parked actions live HERE — the template is self-contained: request →
+      // approve → run, all on this one board.
+      data("approvals", "builtin:approvals", "Approvals", 4, 2, 8, 3),
       md(
         "setup",
         "Setup",
