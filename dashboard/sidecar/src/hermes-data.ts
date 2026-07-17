@@ -125,20 +125,22 @@ const HANDLERS: Record<string, Handler> = {
 // `node.list` is an alias of the same presence data for the instances builtin.
 HANDLERS["node.list"] = HANDLERS["system-presence"];
 
-export function createHermesRpcResolver(config: HermesDataConfig): BindingResolver {
-  const fetchImpl = config.fetchImpl ?? fetch;
-  const base = config.baseUrl.replace(/\/+$/, "");
-
-  const get = async (path: string): Promise<unknown> => {
+/** A Hermes REST getter bound to a base URL + session token (server-side only). */
+function makeGet(baseUrl: string, sessionToken: string, fetchImpl: typeof fetch) {
+  const base = baseUrl.replace(/\/+$/, "");
+  return async (path: string): Promise<unknown> => {
     const res = await fetchImpl(`${base}${path}`, {
-      headers: { "X-Hermes-Session-Token": config.sessionToken, Accept: "application/json" },
+      headers: { "X-Hermes-Session-Token": sessionToken, Accept: "application/json" },
     });
     if (!res.ok) {
       throw new Error(`Hermes ${path} → ${res.status}`);
     }
     return res.json();
   };
+}
 
+export function createHermesRpcResolver(config: HermesDataConfig): BindingResolver {
+  const get = makeGet(config.baseUrl, config.sessionToken, config.fetchImpl ?? fetch);
   return async (binding, options) => {
     if (isRpcBinding(binding)) {
       const handler = HANDLERS[binding.method];
@@ -149,4 +151,43 @@ export function createHermesRpcResolver(config: HermesDataConfig): BindingResolv
     // Not a Hermes-mapped rpc binding — delegate (file bindings, unmapped methods).
     return config.fallback(binding, options);
   };
+}
+
+/** Minimal shape of the host's RPC registration surface we depend on. */
+type RpcHost = {
+  registerRpc: (
+    method: string,
+    handler: (opts: { params?: unknown; respond: (ok: boolean, data: unknown) => void }) => unknown,
+    options: { scope: "read" | "write" },
+  ) => void;
+};
+
+/**
+ * Register each Hermes data method as a read-scoped RPC handler on the host.
+ *
+ * THIS is the seam the browser actually uses. `<boardstate-view>` resolves a
+ * `source:"rpc"` binding by calling `transport.request(binding.method, params)`
+ * (see @boardstate/host resolveBinding) — it does NOT route rpc bindings through
+ * `dashboard.data.read` (that serves file/static only and answers rpc with
+ * `binding_client_resolved`). Without these handlers every data-bound widget
+ * renders an error cell. Read scope keeps them callable over the networked
+ * transport (operator-only/write methods are blocked there).
+ */
+export function registerHermesDataRpc(
+  host: RpcHost,
+  config: { baseUrl: string; sessionToken: string; fetchImpl?: typeof fetch },
+): string[] {
+  const get = makeGet(config.baseUrl, config.sessionToken, config.fetchImpl ?? fetch);
+  const methods = Object.keys(HANDLERS);
+  for (const method of methods) {
+    host.registerRpc(
+      method,
+      async (opts) => {
+        const data = await HANDLERS[method](get, obj(opts?.params));
+        opts.respond(true, data);
+      },
+      { scope: "read" },
+    );
+  }
+  return methods;
 }

@@ -93,10 +93,10 @@ await new Promise((r, j) => {
   ws.on("error", j);
 });
 let seq = 0;
-function readBinding(binding) {
+function rpc(method, params) {
   return new Promise((resolve, reject) => {
     const id = `r${seq++}`;
-    const t = setTimeout(() => reject(new Error("data.read timeout")), 8000);
+    const t = setTimeout(() => reject(new Error(`${method} timeout`)), 8000);
     const onMsg = (data) => {
       const m = JSON.parse(data.toString());
       if (m.id === id) {
@@ -106,9 +106,10 @@ function readBinding(binding) {
       }
     };
     ws.on("message", onMsg);
-    ws.send(JSON.stringify({ id, method: "dashboard.data.read", params: { binding } }));
+    ws.send(JSON.stringify({ id, method, params }));
   });
 }
+const readBinding = (binding) => rpc("dashboard.data.read", { binding });
 
 const failures = [];
 const check = (name, cond) => {
@@ -116,17 +117,34 @@ const check = (name, cond) => {
   if (!cond) failures.push(name);
 };
 
-const usage = (await readBinding({ source: "rpc", method: "usage.status" })).result?.data;
-check("usage.status → totals shape", usage?.totals?.totalCost === 12.5 && usage?.totals?.totalTokens === 1500);
+// ── The REAL render path: `<boardstate-view>` resolves a `source:"rpc"` binding by
+// calling the binding's METHOD directly as a networked RPC (@boardstate/host
+// resolveBinding → transport.request(method, params)), NOT via dashboard.data.read.
+// These direct-method checks are the wire contract the browser actually exercises —
+// without the registered handlers each would be an "unknown method" and every
+// data-bound widget would render an error cell.
+const usage = (await rpc("usage.status", {})).result;
+check("usage.status (direct) → totals shape", usage?.totals?.totalCost === 12.5 && usage?.totals?.totalTokens === 1500);
 
-const sessions = (await readBinding({ source: "rpc", method: "sessions.list" })).result?.data;
-check("sessions.list → rows shape", Array.isArray(sessions) && sessions[0]?.key === "s1" && sessions[1]?.hasActiveRun === true);
+const cost = (await rpc("usage.cost", {})).result;
+check("usage.cost (direct) → single number", cost === 12.5);
 
-const presence = (await readBinding({ source: "rpc", method: "system-presence" })).result?.data;
-check("system-presence → presence shape", presence?.presence?.[0]?.instanceId === "gw-1");
+const sessions = (await rpc("sessions.list", {})).result;
+check("sessions.list (direct) → rows shape", Array.isArray(sessions) && sessions[0]?.key === "s1" && sessions[1]?.hasActiveRun === true);
 
-const cron = (await readBinding({ source: "rpc", method: "cron.list" })).result?.data;
-check("cron.list → jobs shape", cron?.jobs?.[0]?.enabled === true && cron?.jobs?.[0]?.state?.lastRunStatus === "ok");
+const presence = (await rpc("system-presence", {})).result;
+check("system-presence (direct) → presence shape", presence?.presence?.[0]?.instanceId === "gw-1");
+
+const nodes = (await rpc("node.list", {})).result;
+check("node.list (direct) → aliases presence", nodes?.presence?.[0]?.instanceId === "gw-1");
+
+const cron = (await rpc("cron.list", {})).result;
+check("cron.list (direct) → jobs shape", cron?.jobs?.[0]?.enabled === true && cron?.jobs?.[0]?.state?.lastRunStatus === "ok");
+
+// The data.read WS RPC still resolves rpc bindings server-side (file/static path uses
+// the same resolver); kept as a regression guard on the injected resolveBinding.
+const usageViaRead = (await readBinding({ source: "rpc", method: "usage.status" })).result?.data;
+check("usage.status via data.read → totals shape", usageViaRead?.totals?.totalCost === 12.5);
 
 // Unmapped binding delegates to the node fallback (a static binding resolves to itself).
 const stat = (await readBinding({ source: "static", value: { hello: "world" } })).result?.data;
