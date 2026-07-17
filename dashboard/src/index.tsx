@@ -10,6 +10,7 @@
 
 import { createWsTransport, type WsTransport } from "@boardstate/core";
 import { BS_TO_HERMES, aliasChain, themeBase } from "./theme";
+import { TEMPLATES } from "./templates";
 
 const SDK = window.__HERMES_PLUGIN_SDK__!;
 const React = SDK.React;
@@ -69,8 +70,27 @@ function observeHermesTheme(view: HTMLElement): () => void {
 
 function BoardPage() {
   const hostRef = React.useRef<HTMLDivElement | null>(null);
+  const transportRef = React.useRef<WsTransport | undefined>(undefined);
   const [status, setStatus] = React.useState<"connecting" | "live" | "error">("connecting");
   const [detail, setDetail] = React.useState<string>("");
+  const [applying, setApplying] = React.useState<string>("");
+
+  // Apply a template by replacing the workspace doc through the authed bridge.
+  // `dashboard.workspace.replace` is a non-operator mutation (same RPC the Import
+  // button uses); the template's data-source builtins self-bind to live Hermes data.
+  const applyTemplate = React.useCallback(async (id: string, name: string, docValue: unknown) => {
+    const transport = transportRef.current;
+    if (!transport) return;
+    if (!window.confirm(`Replace the current board with the "${name}" template?`)) return;
+    setApplying(id);
+    try {
+      await transport.request("dashboard.workspace.replace", { doc: docValue, actor: "user" });
+    } catch (err) {
+      window.alert(`Could not apply template: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setApplying("");
+    }
+  }, []);
 
   React.useEffect(() => {
     let disposed = false;
@@ -84,6 +104,7 @@ function BoardPage() {
         const wsUrl = await SDK.buildWsUrl(WS_PATH);
         if (disposed) return;
         transport = createWsTransport(wsUrl);
+        transportRef.current = transport;
         view = document.createElement("boardstate-view") as ViewElement;
         view.transport = transport;
         view.connected = true;
@@ -118,6 +139,7 @@ function BoardPage() {
     return () => {
       disposed = true;
       disposeTheme?.();
+      transportRef.current = undefined;
       try {
         transport?.close();
       } catch {
@@ -158,6 +180,40 @@ function BoardPage() {
             : "Connecting to board…",
       ),
     ),
+    // Template quick-start: one click swaps in a live-bound board. Only offered once
+    // the board is connected (the picker needs the transport).
+    status === "live"
+      ? React.createElement(
+          "div",
+          {
+            className: "bs-template-picker",
+            style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: "6px", fontSize: "12px" },
+          },
+          React.createElement("span", { style: { opacity: 0.7, marginRight: "2px" } }, "Templates:"),
+          ...TEMPLATES.map((tpl) =>
+            React.createElement(
+              "button",
+              {
+                key: tpl.id,
+                type: "button",
+                title: tpl.summary,
+                disabled: applying !== "",
+                onClick: () => applyTemplate(tpl.id, tpl.name, tpl.doc),
+                style: {
+                  cursor: applying ? "default" : "pointer",
+                  padding: "3px 10px",
+                  borderRadius: "var(--bs-radius-md, 6px)",
+                  border: "1px solid var(--color-border, #2a2a33)",
+                  background: applying === tpl.id ? "var(--color-muted, #23232b)" : "transparent",
+                  color: "inherit",
+                  opacity: applying && applying !== tpl.id ? 0.5 : 1,
+                },
+              },
+              applying === tpl.id ? "Applying…" : tpl.name,
+            ),
+          ),
+        )
+      : null,
     React.createElement("div", { ref: hostRef, className: "bs-view-host", style: { flex: 1 } }),
   );
 }

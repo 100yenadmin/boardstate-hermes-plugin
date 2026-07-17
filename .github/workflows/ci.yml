@@ -36,6 +36,9 @@ jobs:
       - name: Theme adapter (Hermes palette tokens → --bs-* mapping)
         run: node test/theme.mjs
 
+      - name: Board templates (each is a schema-valid, allowlisted workspace)
+        run: node test/templates.mjs
+
       - name: Assert built artifacts committed and in sync
         run: |
           git diff --exit-code -- dashboard/dist dashboard/sidecar dashboard/vendor \
