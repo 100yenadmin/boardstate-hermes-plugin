@@ -47,6 +47,18 @@ def main() -> int:
     for fn in ("_ensure_sidecar", "_read_port", "_kill_sidecar", "_ws_upgrade_authorized"):
         check(f"has {fn}", hasattr(mod, fn))
 
+    # Single-sidecar-per-state-dir: a second backend (web + desktop) must ADOPT the
+    # first's sidecar via the port-file, not spawn a colliding second writer.
+    for fn in ("_try_adopt", "_spawn_sidecar", "_portfile_path", "_pid_alive", "_port_listening"):
+        check(f"has {fn}", hasattr(mod, fn))
+    ensure_src = inspect.getsource(mod._ensure_sidecar)
+    check("_ensure_sidecar adopts before spawning", "_try_adopt" in ensure_src)
+    spawn_src = inspect.getsource(mod._spawn_sidecar)
+    check("_spawn_sidecar publishes a port-file", "_portfile_path" in spawn_src and "write_text" in spawn_src)
+    check("adopted sidecar is marked not-owned", '"owned"] = False' in src2)
+    kill_src = inspect.getsource(mod._kill_sidecar)
+    check("_kill_sidecar reaps only owned sidecars", 'owned' in kill_src)
+
     # Per-spawn nonce is wired: generated, passed via env, and appended to the upstream URL.
     src = (DASHBOARD / "plugin_api.py").read_text()
     check("generates a nonce", "secrets.token_urlsafe" in src)

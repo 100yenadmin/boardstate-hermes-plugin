@@ -61,11 +61,71 @@ router = APIRouter()
 _DASHBOARD_DIR = Path(__file__).resolve().parent
 _SIDECAR_JS = _DASHBOARD_DIR / "sidecar" / "server.js"
 
-# One sidecar per dashboard process, guarded by a lock so concurrent first-connects
-# don't race two node processes into existence.
+try:
+    import fcntl  # POSIX file locking (macOS/Linux). Absent on Windows → best-effort.
+
+    _HAVE_FCNTL = True
+except ImportError:  # pragma: no cover - Windows
+    _HAVE_FCNTL = False
+
+# ONE sidecar per STATE DIR, shared across backend processes. `hermes dashboard` (web)
+# and the desktop app each run their own Python backend; without cross-process sharing
+# they would each spawn a sidecar and both `FsStorageAdapter` would read-modify-write the
+# same `workspace.json` → silent lost updates (the exact hazard fs-watch was rejected
+# over). A port-file in the state dir lets a second backend ADOPT the first's sidecar
+# (single writer). `_sidecar_lock` serializes within a process; a POSIX file lock closes
+# the cross-process first-connect race. `owned` marks whether WE spawned it (reap only
+# our own on exit).
 _sidecar_lock = asyncio.Lock()
-_sidecar: dict = {"proc": None, "port": None, "nonce": None}
+_sidecar: dict = {"proc": None, "port": None, "nonce": None, "owned": False}
 _atexit_registered = False
+
+
+def _portfile_path(state_dir: Path) -> Path:
+    return state_dir / ".boardstate-sidecar.json"
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # exists, owned by another user — treat as alive
+        return True
+    except OSError:
+        return False
+    return True
+
+
+async def _port_listening(port: int) -> bool:
+    """A live sidecar accepts a loopback TCP connection on its port."""
+    try:
+        _, writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", port), timeout=1.0)
+    except Exception:
+        return False
+    writer.close()
+    try:
+        await writer.wait_closed()
+    except Exception:
+        pass
+    return True
+
+
+async def _try_adopt(state_dir: Path) -> Optional[tuple[int, str]]:
+    """Adopt a sidecar recorded in the port-file iff its pid is alive AND its port is
+    listening — so a stale/dead record (crash, port reuse) is ignored, not adopted."""
+    try:
+        rec = json.loads(_portfile_path(state_dir).read_text())
+    except Exception:
+        return None
+    port, nonce, pid = rec.get("port"), rec.get("nonce"), rec.get("pid")
+    if not (isinstance(port, int) and isinstance(nonce, str) and nonce):
+        return None
+    if isinstance(pid, int) and not _pid_alive(pid):
+        return None
+    if not await _port_listening(port):
+        return None
+    return port, nonce
 
 
 def _state_dir() -> Path:
@@ -160,20 +220,92 @@ async def _read_port(proc: "asyncio.subprocess.Process") -> int:
 
 
 def _kill_sidecar() -> None:
+    # Reap ONLY a sidecar this process spawned (never one we adopted from another
+    # backend), and clear the port-file so the next start doesn't adopt a corpse.
+    if not _sidecar.get("owned"):
+        return
     proc = _sidecar.get("proc")
     if proc is not None and proc.returncode is None:
         try:
             proc.terminate()
         except Exception:
             pass
+    try:
+        _portfile_path(_state_dir()).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+async def _spawn_sidecar(state_dir: Path) -> tuple[int, str]:
+    """Spawn a fresh sidecar and record it in the port-file. Caller holds the locks."""
+    global _atexit_registered
+
+    # Per-spawn shared secret: the sidecar's WS gate (verifyClient) requires it as a
+    # `?nonce=` query param, so a random other local process can't drive the control
+    # plane just by finding the ephemeral loopback port. Only this bridge knows it.
+    nonce = secrets.token_urlsafe(32)
+
+    env = os.environ.copy()
+    env["BOARDSTATE_STATE_DIR"] = str(state_dir)
+    env["BOARDSTATE_SIDECAR_NONCE"] = nonce
+    env.setdefault("PORT", "0")  # ephemeral loopback port
+
+    # Inject the dashboard base URL + session token so the sidecar can resolve
+    # `source:"rpc"` data bindings (sessions/usage/status/cron) against Hermes REST.
+    # Server-side only — the credential never enters the board document or a browser.
+    # Best-effort: without it the sidecar simply serves no live Hermes data (graceful).
+    hermes_url, hermes_token = _hermes_data_credentials()
+    if hermes_url and hermes_token:
+        env["HERMES_DASHBOARD_URL"] = hermes_url
+        env["HERMES_SESSION_TOKEN"] = hermes_token
+
+    proc = await asyncio.create_subprocess_exec(
+        _node_bin(),
+        str(_SIDECAR_JS),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    try:
+        port = await _read_port(proc)
+    except Exception:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        raise
+
+    _sidecar["proc"] = proc
+    _sidecar["port"] = port
+    _sidecar["nonce"] = nonce
+    _sidecar["owned"] = True
+    # Publish for other backend processes to adopt (single writer per state dir).
+    try:
+        _portfile_path(state_dir).write_text(
+            json.dumps({"port": port, "nonce": nonce, "pid": os.getpid()})
+        )
+    except Exception as exc:  # pragma: no cover - non-fatal
+        log.warning("boardstate: could not write sidecar port-file: %s", exc)
+    # Keep draining both streams so the pipe buffers never fill and stall node.
+    asyncio.create_task(_drain(proc.stdout, "out"))
+    asyncio.create_task(_drain(proc.stderr, "err"))
+    if not _atexit_registered:
+        atexit.register(_kill_sidecar)
+        _atexit_registered = True
+    log.info("boardstate: sidecar up on 127.0.0.1:%d (state %s)", port, state_dir)
+    return port, nonce
 
 
 async def _ensure_sidecar() -> tuple[int, str]:
-    global _atexit_registered
     async with _sidecar_lock:
+        # (1) This process already owns/adopted a live sidecar.
         proc = _sidecar.get("proc")
-        if proc is not None and proc.returncode is None and _sidecar.get("port"):
-            return int(_sidecar["port"]), str(_sidecar["nonce"])
+        if _sidecar.get("port") and (proc is None or proc.returncode is None):
+            if proc is None:  # adopted (not ours) — re-confirm it's still listening
+                if await _port_listening(int(_sidecar["port"])):
+                    return int(_sidecar["port"]), str(_sidecar["nonce"])
+            else:
+                return int(_sidecar["port"]), str(_sidecar["nonce"])
 
         if not _SIDECAR_JS.exists():
             raise RuntimeError(f"boardstate sidecar bundle missing: {_SIDECAR_JS} (run the build)")
@@ -181,52 +313,33 @@ async def _ensure_sidecar() -> tuple[int, str]:
         state_dir = _state_dir()
         state_dir.mkdir(parents=True, exist_ok=True)
 
-        # Per-spawn shared secret: the sidecar's WS gate (verifyClient) requires it as a
-        # `?nonce=` query param, so a random other local process can't drive the control
-        # plane just by finding the ephemeral loopback port. Only this bridge knows it.
-        nonce = secrets.token_urlsafe(32)
-
-        env = os.environ.copy()
-        env["BOARDSTATE_STATE_DIR"] = str(state_dir)
-        env["BOARDSTATE_SIDECAR_NONCE"] = nonce
-        env.setdefault("PORT", "0")  # ephemeral loopback port
-
-        # Inject the dashboard base URL + session token so the sidecar can resolve
-        # `source:"rpc"` data bindings (sessions/usage/status/cron) against Hermes REST.
-        # Server-side only — the credential never enters the board document or a browser.
-        # Best-effort: without it the sidecar simply serves no live Hermes data (graceful).
-        hermes_url, hermes_token = _hermes_data_credentials()
-        if hermes_url and hermes_token:
-            env["HERMES_DASHBOARD_URL"] = hermes_url
-            env["HERMES_SESSION_TOKEN"] = hermes_token
-
-        proc = await asyncio.create_subprocess_exec(
-            _node_bin(),
-            str(_SIDECAR_JS),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-        )
-        try:
-            port = await _read_port(proc)
-        except Exception:
+        # (2) Cross-process critical section: under a POSIX file lock, adopt a live
+        # sidecar for this state dir, else spawn one. The lock closes the race where two
+        # backends both find no port-file and both spawn.
+        lock_fd = None
+        if _HAVE_FCNTL:
             try:
-                proc.terminate()
-            except Exception:
-                pass
-            raise
-
-        _sidecar["proc"] = proc
-        _sidecar["port"] = port
-        _sidecar["nonce"] = nonce
-        # Keep draining both streams so the pipe buffers never fill and stall node.
-        asyncio.create_task(_drain(proc.stdout, "out"))
-        asyncio.create_task(_drain(proc.stderr, "err"))
-        if not _atexit_registered:
-            atexit.register(_kill_sidecar)
-            _atexit_registered = True
-        log.info("boardstate: sidecar up on 127.0.0.1:%d (state %s)", port, state_dir)
-        return port, nonce
+                lock_fd = os.open(str(state_dir / ".boardstate-sidecar.lock"), os.O_CREAT | os.O_RDWR, 0o600)
+                await asyncio.get_running_loop().run_in_executor(None, fcntl.flock, lock_fd, fcntl.LOCK_EX)
+            except Exception:  # pragma: no cover - lock best-effort
+                if lock_fd is not None:
+                    os.close(lock_fd)
+                    lock_fd = None
+        try:
+            adopted = await _try_adopt(state_dir)
+            if adopted:
+                _sidecar["proc"] = None  # not ours: never reap it
+                _sidecar["owned"] = False
+                _sidecar["port"], _sidecar["nonce"] = adopted
+                log.info("boardstate: adopted existing sidecar on 127.0.0.1:%d (state %s)", adopted[0], state_dir)
+                return adopted
+            return await _spawn_sidecar(state_dir)
+        finally:
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
 
 
 # ---------------------------------------------------------------------------
