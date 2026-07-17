@@ -3,6 +3,27 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.2.0
+
+### Changed
+
+- **Per-frontend design skins** (owner feedback: matching the palette isn't matching the
+  design system). The board now speaks each host's own design language, not Boardstate's:
+  - **Web** (matched to the dashboard's native Kanban tiles): flat translucent cards
+    (`--color-card` @ 85%), 0.5rem radius, hairline borders, **no drop shadows**, the
+    host page font, "Rules Expanded" display-font titles, sharp-cornered buttons.
+  - **Desktop** (matched to the app's macOS language): the app's own `--radius-xl`
+    card rounding, subtle single-layer elevation, SF system font, normal-tracking
+    600-weight titles, rounded controls.
+  - Both are token overrides + a small scoped stylesheet with `var()` fallbacks, so a
+    non-Hermes host degrades to the stock Boardstate look. CI: `test/skin-web.mjs` +
+    extended desktop bundle checks; feature media refreshed to the new look.
+
+### Fixed
+
+- *Usage & Cost* template: the usage-detail widget overlapped the scheduled-jobs row by
+  one grid row (masked by the old heavy shadows, visible in the flat design).
+
 ## 1.1.0
 
 ### Added
