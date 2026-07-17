@@ -9,6 +9,9 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+// `ws` (not the global) so the test runs on Node 20 — the plugin's runtime floor —
+// where `WebSocket` isn't yet a global. The sidecar runtime needs no client global.
+import { WebSocket } from "ws";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SIDECAR = join(repo, "dashboard/sidecar/server.js");
@@ -57,7 +60,7 @@ function probe(url, timeoutMs = 4000) {
     ws.onopen = () =>
       ws.send(JSON.stringify({ id: "1", method: "dashboard.workspace.get", params: {} }));
     ws.onmessage = (ev) => {
-      const m = JSON.parse(ev.data);
+      const m = JSON.parse(ev.data.toString());
       if (m.id === "1") {
         clearTimeout(t);
         ws.close();
