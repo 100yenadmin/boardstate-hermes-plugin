@@ -48,6 +48,9 @@ jobs:
       - name: Desktop plugin bundle (loader-safe imports + contract + inlined boardstate)
         run: node test/desktop-plugin.mjs
 
+      - name: Operator UX wiring (web + desktop route approve/confirm through the gate)
+        run: node test/operator-ux.mjs
+
       - name: Assert built artifacts committed and in sync
         run: |
           git diff --exit-code -- dashboard/dist dashboard/desktop dashboard/sidecar dashboard/vendor \

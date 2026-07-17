@@ -11,6 +11,7 @@
 import { createWsTransport, type WsTransport } from "@boardstate/core";
 import { BS_TO_HERMES, aliasChain, themeBase } from "./theme";
 import { TEMPLATES } from "./templates";
+import { withOperatorGate } from "./operator-transport";
 import skinCss from "./skin-web.css"; // esbuild text loader → string
 
 const SDK = window.__HERMES_PLUGIN_SDK__!;
@@ -20,6 +21,20 @@ const React = SDK.React;
 // (`plugin_api.py`) bridges it to the loopback sidecar. `buildWsUrl` attaches the
 // correct auth query param (loopback token / gated single-use ticket).
 const WS_PATH = "/api/plugins/boardstate/ws";
+// The privileged operator endpoint (approve/confirm/deny). Same-origin authed fetch — the
+// browser WS + MCP can NOT reach the operator verbs, this route is the only path.
+const OPERATOR_PATH = "/api/plugins/boardstate/operator";
+
+// POST an operator decision through the authed plugin_api route; resolve the sidecar's raw
+// RPC result. `fetchJSON` attaches the session credential + throws on a 401/403/refusal.
+async function sendOperator(method: string, params: unknown): Promise<unknown> {
+  const res = (await SDK.fetchJSON(OPERATOR_PATH, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ method, params }),
+  })) as { result?: unknown };
+  return res?.result;
+}
 // Static asset served by the host from `dashboard/vendor/` — registers
 // `<boardstate-view>` and every built-in widget renderer.
 const BUNDLE_URL = "/dashboard-plugins/boardstate/vendor/boardstate-browser.js";
@@ -43,6 +58,7 @@ type ViewElement = HTMLElement & {
   transport?: unknown;
   connected?: boolean;
   basePath?: string;
+  operator?: boolean;
 };
 
 // Inject the Hermes web skin once (class-level rules the tokens can't express).
@@ -138,11 +154,15 @@ function BoardPage() {
         await ensureBundle();
         const wsUrl = await SDK.buildWsUrl(WS_PATH);
         if (disposed) return;
-        transport = createWsTransport(wsUrl);
+        // Wrap the live transport so the four operator verbs route to the plugin_api operator
+        // endpoint (the only privileged path), while everything else rides the WS. `operator:
+        // true` then renders the approve/confirm affordances enabled.
+        transport = withOperatorGate(createWsTransport(wsUrl), sendOperator);
         transportRef.current = transport;
         view = document.createElement("boardstate-view") as ViewElement;
         view.transport = transport;
         view.connected = true;
+        view.operator = true;
         // Built-in widgets resolve from the bundle; approved custom widgets would
         // resolve under the sidecar's own /widgets route (out of scope for v1).
         view.basePath = "";
