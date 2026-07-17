@@ -27,7 +27,7 @@ import {
   nodeRpcDeps,
   registerBoardstateRpc,
 } from "@boardstate/server/node";
-import { createHermesRpcResolver } from "./hermes-data.js";
+import { createHermesRpcResolver, registerHermesDataRpc } from "./hermes-data.js";
 import { createMcpEndpoint } from "./mcp.js";
 
 const stateDirEnv = process.env.BOARDSTATE_STATE_DIR;
@@ -121,6 +121,16 @@ registerBoardstateRpc(host, {
   ...nodeDeps,
   resolveBinding,
 });
+
+// Live Hermes data bindings. `<boardstate-view>` resolves a `source:"rpc"` binding by
+// calling the binding's METHOD as a networked RPC (usage.status / usage.cost /
+// system-presence / sessions.list / cron.list / node.list) — NOT via dashboard.data.read
+// — so those methods must be registered as read-scoped RPC handlers or every data-bound
+// widget shows an error cell. Only when plugin_api injected the Hermes credentials.
+if (hermesUrl && hermesToken) {
+  const dataMethods = registerHermesDataRpc(host, { baseUrl: hermesUrl, sessionToken: hermesToken });
+  console.log(`[boardstate] live Hermes data RPC methods: ${dataMethods.join(", ")}`);
+}
 
 // Approved custom-widget assets resolve under the sidecar's own `/widgets` route
 // (same CSP as the CLI/demo). Built-in widget renderers ship inside the browser

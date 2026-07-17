@@ -16020,18 +16020,20 @@ var HANDLERS = {
   }
 };
 HANDLERS["node.list"] = HANDLERS["system-presence"];
-function createHermesRpcResolver(config2) {
-  const fetchImpl = config2.fetchImpl ?? fetch;
-  const base = config2.baseUrl.replace(/\/+$/, "");
-  const get = async (path3) => {
+function makeGet(baseUrl, sessionToken, fetchImpl) {
+  const base = baseUrl.replace(/\/+$/, "");
+  return async (path3) => {
     const res = await fetchImpl(`${base}${path3}`, {
-      headers: { "X-Hermes-Session-Token": config2.sessionToken, Accept: "application/json" }
+      headers: { "X-Hermes-Session-Token": sessionToken, Accept: "application/json" }
     });
     if (!res.ok) {
       throw new Error(`Hermes ${path3} \u2192 ${res.status}`);
     }
     return res.json();
   };
+}
+function createHermesRpcResolver(config2) {
+  const get = makeGet(config2.baseUrl, config2.sessionToken, config2.fetchImpl ?? fetch);
   return async (binding, options) => {
     if (isRpcBinding(binding)) {
       const handler = HANDLERS[binding.method];
@@ -16041,6 +16043,21 @@ function createHermesRpcResolver(config2) {
     }
     return config2.fallback(binding, options);
   };
+}
+function registerHermesDataRpc(host2, config2) {
+  const get = makeGet(config2.baseUrl, config2.sessionToken, config2.fetchImpl ?? fetch);
+  const methods = Object.keys(HANDLERS);
+  for (const method of methods) {
+    host2.registerRpc(
+      method,
+      async (opts) => {
+        const data = await HANDLERS[method](get, obj(opts?.params));
+        opts.respond(true, data);
+      },
+      { scope: "read" }
+    );
+  }
+  return methods;
 }
 
 // dashboard/sidecar/src/mcp.ts
@@ -26020,6 +26037,10 @@ registerBoardstateRpc(host, {
   ...nodeDeps,
   resolveBinding: resolveBinding3
 });
+if (hermesUrl && hermesToken) {
+  const dataMethods = registerHermesDataRpc(host, { baseUrl: hermesUrl, sessionToken: hermesToken });
+  console.log(`[boardstate] live Hermes data RPC methods: ${dataMethods.join(", ")}`);
+}
 var widgetRoute = createWidgetHttpRouteHandler({ store });
 var sidecarNonceForMcp = process.env.BOARDSTATE_SIDECAR_NONCE;
 var mcpEndpoint = await createMcpEndpoint(host, store, { nonce: sidecarNonceForMcp });
