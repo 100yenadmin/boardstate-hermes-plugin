@@ -10,6 +10,7 @@
     "clean": "rm -rf dashboard/dist/index.js dashboard/dist/index.js.map dashboard/sidecar/server.js dashboard/sidecar/server.js.map dashboard/vendor/boardstate-browser.js dashboard/vendor/boardstate.css"
   },
   "devDependencies": {
+    "@boardstate/broker": "^0.3.4",
     "@boardstate/core": "^1.8.0",
     "@boardstate/lit": "^0.9.0",
     "@boardstate/schema": "^1.8.0",

@@ -27,6 +27,9 @@ jobs:
       - name: MCP single-host liveness (agent tool call → live board update)
         run: node test/mcp-liveness.mjs
 
+      - name: Broker wiring (config → connect → discover → request → read, headless)
+        run: node test/broker-fixture.mjs
+
       - name: Hermes data resolver wire-contract (rpc bindings → REST fixture)
         run: node test/hermes-data.mjs
 

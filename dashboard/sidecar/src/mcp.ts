@@ -23,19 +23,21 @@ import type { DashboardStore } from "@boardstate/core";
 import {
   agentToolToJsonSchema,
   createDashboardTools,
+  type AgentTool,
   type InProcessHost,
+  type ToolSearchCapability,
 } from "@boardstate/server/node";
 
 const AGENT_TOOL_PREFIX = "dashboard_";
 const MCP_TOOL_PREFIX = "boardstate_";
+// Present first-party `dashboard_*` tools under the ecosystem's `boardstate_*` prefix.
+// Tools already carrying a `boardstate_`/external namespace (`boardstate_tool_search`,
+// `connector__tool`) pass through unchanged — and the CALL path indexes by this exact
+// presented name, so the transform never has to be inverted.
 const toMcpToolName = (agentName: string): string =>
   agentName.startsWith(AGENT_TOOL_PREFIX)
     ? `${MCP_TOOL_PREFIX}${agentName.slice(AGENT_TOOL_PREFIX.length)}`
     : agentName;
-const toAgentToolName = (mcpName: string): string =>
-  mcpName.startsWith(MCP_TOOL_PREFIX)
-    ? `${AGENT_TOOL_PREFIX}${mcpName.slice(MCP_TOOL_PREFIX.length)}`
-    : mcpName;
 
 function textResult(details: unknown, isError = false) {
   return {
@@ -58,16 +60,49 @@ export type McpEndpoint = {
 export async function createMcpEndpoint(
   host: InProcessHost,
   store: DashboardStore,
-  options: { nonce?: string; path?: string } = {},
+  options: {
+    nonce?: string;
+    path?: string;
+    /** The `boardstate_tool_search` backing (from `installConnectorWorkspace`), when the
+     *  operator authored connectors. Absent ⇒ the agent gets the base build/read tools only. */
+    toolSearch?: ToolSearchCapability;
+    /** The broker's GRANTED external tools for THIS turn (host.tools()), when a connector
+     *  workspace is installed. The agent reaches an approved tool by its provider-safe name;
+     *  a mutation only PARKS (the engine gates it), a readOnly executes directly. */
+    grantedTools?: () => AgentTool[];
+  } = {},
 ): Promise<McpEndpoint> {
   const path = options.path ?? "/mcp";
   const nonce = options.nonce;
+  const { toolSearch, grantedTools } = options;
 
   // One MCP Server per session, each with tool handlers bound to the SAME host + store
   // (so single-host liveness holds regardless of how many sessions connect). The tools
-  // mutate the shared store and emit on the shared `boardstate.changed` bus.
-  const buildTools = (agentId: string) =>
-    createDashboardTools({ store, context: { agentId }, broadcast: host.broadcast });
+  // mutate the shared store and emit on the shared `boardstate.changed` bus. When the
+  // operator has connectors wired, the agent also gets `boardstate_tool_search` (via
+  // `toolSearch`) and every currently-GRANTED external tool (via `grantedTools()`), so it
+  // can search → request a grant → (operator approves) → invoke an approved tool.
+  const buildTools = (agentId: string): AgentTool[] => [
+    ...createDashboardTools({
+      store,
+      context: { agentId },
+      broadcast: host.broadcast,
+      ...(toolSearch ? { toolSearch } : {}),
+    }),
+    ...(grantedTools ? grantedTools() : []),
+  ];
+
+  // Map each turn's tools by their PRESENTED MCP name (lossless): the name→name transform
+  // is not round-trippable for tools already `boardstate_`-prefixed (`boardstate_tool_search`)
+  // or externally-namespaced (`connector__tool`), so we index by exactly the name we list
+  // rather than re-deriving the agent name from the MCP name on call.
+  const toolsByMcpName = (agentId: string): Map<string, AgentTool> => {
+    const map = new Map<string, AgentTool>();
+    for (const tool of buildTools(agentId)) {
+      map.set(toMcpToolName(agentToolToJsonSchema(tool).name), tool);
+    }
+    return map;
+  };
 
   function makeServer(): Server {
     const server = new Server(
@@ -88,8 +123,7 @@ export async function createMcpEndpoint(
       const mcpName = request.params.name;
       const args = (request.params.arguments ?? {}) as Record<string, unknown>;
       try {
-        const agentName = toAgentToolName(mcpName);
-        const tool = buildTools("agent").find((entry) => entry.name === agentName);
+        const tool = toolsByMcpName("agent").get(mcpName);
         if (!tool) {
           return textResult({ error: `unknown tool: ${mcpName}` }, true);
         }
