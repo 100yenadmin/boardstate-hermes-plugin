@@ -30,6 +30,9 @@ jobs:
       - name: Broker wiring (config → connect → discover → request → read, headless)
         run: node test/broker-fixture.mjs
 
+      - name: Operational e2e (request → approve → invoke → park → confirm → result)
+        run: node test/operational-e2e.mjs
+
       - name: Hermes data resolver wire-contract (rpc bindings → REST fixture)
         run: node test/hermes-data.mjs
 
