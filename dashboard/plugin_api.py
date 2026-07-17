@@ -44,6 +44,7 @@ import atexit
 import json
 import logging
 import os
+import secrets
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -61,7 +62,7 @@ _SIDECAR_JS = _DASHBOARD_DIR / "sidecar" / "server.js"
 # One sidecar per dashboard process, guarded by a lock so concurrent first-connects
 # don't race two node processes into existence.
 _sidecar_lock = asyncio.Lock()
-_sidecar: dict = {"proc": None, "port": None}
+_sidecar: dict = {"proc": None, "port": None, "nonce": None}
 _atexit_registered = False
 
 
@@ -144,12 +145,12 @@ def _kill_sidecar() -> None:
             pass
 
 
-async def _ensure_sidecar() -> int:
+async def _ensure_sidecar() -> tuple[int, str]:
     global _atexit_registered
     async with _sidecar_lock:
         proc = _sidecar.get("proc")
         if proc is not None and proc.returncode is None and _sidecar.get("port"):
-            return int(_sidecar["port"])
+            return int(_sidecar["port"]), str(_sidecar["nonce"])
 
         if not _SIDECAR_JS.exists():
             raise RuntimeError(f"boardstate sidecar bundle missing: {_SIDECAR_JS} (run the build)")
@@ -157,8 +158,14 @@ async def _ensure_sidecar() -> int:
         state_dir = _state_dir()
         state_dir.mkdir(parents=True, exist_ok=True)
 
+        # Per-spawn shared secret: the sidecar's WS gate (verifyClient) requires it as a
+        # `?nonce=` query param, so a random other local process can't drive the control
+        # plane just by finding the ephemeral loopback port. Only this bridge knows it.
+        nonce = secrets.token_urlsafe(32)
+
         env = os.environ.copy()
         env["BOARDSTATE_STATE_DIR"] = str(state_dir)
+        env["BOARDSTATE_SIDECAR_NONCE"] = nonce
         env.setdefault("PORT", "0")  # ephemeral loopback port
 
         proc = await asyncio.create_subprocess_exec(
@@ -179,6 +186,7 @@ async def _ensure_sidecar() -> int:
 
         _sidecar["proc"] = proc
         _sidecar["port"] = port
+        _sidecar["nonce"] = nonce
         # Keep draining both streams so the pipe buffers never fill and stall node.
         asyncio.create_task(_drain(proc.stdout, "out"))
         asyncio.create_task(_drain(proc.stderr, "err"))
@@ -186,7 +194,7 @@ async def _ensure_sidecar() -> int:
             atexit.register(_kill_sidecar)
             _atexit_registered = True
         log.info("boardstate: sidecar up on 127.0.0.1:%d (state %s)", port, state_dir)
-        return port
+        return port, nonce
 
 
 # ---------------------------------------------------------------------------
@@ -222,13 +230,13 @@ async def board_ws(ws: WebSocket) -> None:
     await ws.accept()
 
     try:
-        port = await _ensure_sidecar()
+        port, nonce = await _ensure_sidecar()
     except Exception as exc:
         log.warning("boardstate: sidecar unavailable: %s", exc)
         await ws.close(code=http_status.WS_1011_INTERNAL_ERROR)
         return
 
-    uri = f"ws://127.0.0.1:{port}/ws"
+    uri = f"ws://127.0.0.1:{port}/ws?nonce={nonce}"
     try:
         async with websockets.connect(uri, max_size=2 ** 20) as upstream:
             await _bridge(ws, upstream)

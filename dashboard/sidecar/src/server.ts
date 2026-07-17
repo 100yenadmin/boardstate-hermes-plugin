@@ -133,10 +133,27 @@ const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
     });
 });
 
-// The networked control-plane seam. Auth is the parent's job (the Hermes WS gate on
-// `/api/plugins/boardstate/ws`); this endpoint only ever receives loopback traffic
-// from `plugin_api.py`, so it accepts every upgrade on `/ws`.
-attachWsTransport(httpServer, host, { path: "/ws" });
+// The networked control-plane seam. Auth is primarily the parent's job (the Hermes WS
+// gate on `/api/plugins/boardstate/ws`), but defense-in-depth: the parent passes a
+// per-spawn nonce (`BOARDSTATE_SIDECAR_NONCE`) that the bridge appends to its upstream
+// `?nonce=` — so a random OTHER local process that scans the ephemeral loopback port
+// cannot drive the control plane. If no nonce is set (e.g. the boardstate CLI/demo
+// spawning this directly), the endpoint stays open on loopback as before.
+const sidecarNonce = process.env.BOARDSTATE_SIDECAR_NONCE;
+attachWsTransport(httpServer, host, {
+  path: "/ws",
+  verifyClient: (req: IncomingMessage): boolean => {
+    if (!sidecarNonce) {
+      return true;
+    }
+    try {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      return url.searchParams.get("nonce") === sidecarNonce;
+    } catch {
+      return false;
+    }
+  },
+});
 
 const port = Number(process.env.PORT ?? 0);
 const hostname = "127.0.0.1";

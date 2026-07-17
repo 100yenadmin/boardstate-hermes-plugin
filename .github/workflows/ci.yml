@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install (build-time @boardstate/* from npm)
+        run: npm ci
+
+      - name: Build (web tab + sidecar + vendored element bundle)
+        run: npm run build
+
+      - name: Sidecar smoke test (control plane + nonce gate)
+        run: node test/sidecar-smoke.mjs
+
+      - name: Assert built artifacts committed and in sync
+        run: |
+          git diff --exit-code -- dashboard/dist dashboard/sidecar dashboard/vendor \
+            || (echo "::error::Built artifacts are stale — run 'npm run build' and commit." && exit 1)
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend test deps
+        run: pip install fastapi websockets
+
+      - name: Byte-compile the plugin backend
+        run: python -m py_compile dashboard/plugin_api.py
+
+      - name: Router import + shape check (no Hermes host required)
+        run: python test/plugin_api_check.py
