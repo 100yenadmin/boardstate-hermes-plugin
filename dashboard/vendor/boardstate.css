@@ -419,30 +419,50 @@ select.bs-dialog__input {
 .dashboard-widget--pending {
   opacity: 0.7;
 }
+/* The landing-cell placeholder during a drag: deliberately QUIET — a neutral
+   slot outline, not a colored signal — because the dragged card itself now
+   carries the motion (Mac-style direct manipulation). Red stays reserved for
+   an invalid (colliding) drop. */
 .dashboard-ghost {
   pointer-events: none;
   border-radius: var(--bs-radius-lg, 12px);
-  border: 2px dashed color-mix(in srgb, var(--bs-accent, #6366f1) 70%, transparent);
-  background: color-mix(in srgb, var(--bs-accent, #6366f1) 12%, transparent);
+  border: 2px dashed color-mix(in srgb, var(--bs-text-muted, #9a9aa6) 45%, transparent);
+  background: color-mix(in srgb, var(--bs-text-muted, #9a9aa6) 7%, transparent);
   z-index: 5;
 }
 .dashboard-ghost--invalid {
   border-color: color-mix(in srgb, var(--bs-danger, #ef4444) 70%, transparent);
-  background: color-mix(in srgb, var(--bs-danger, #ef4444) 12%, transparent);
+  background: color-mix(in srgb, var(--bs-danger, #ef4444) 10%, transparent);
 }
 .dashboard-widget--dragging {
-  outline: 2px dashed color-mix(in srgb, var(--bs-accent, #6366f1) 60%, transparent);
-  outline-offset: 1px;
   z-index: 10;
+}
+/* The carried card: lifted and following the pointer 1:1. No transition —
+   the transform must track the pointer with zero lag; the ≤half-cell settle
+   on drop is instant and imperceptible. */
+/* Double class beats the later theme-section `.dashboard-widget { box-shadow }`. */
+.dashboard-widget.dashboard-widget--carried {
+  transition: none;
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.38),
+    0 4px 12px rgba(0, 0, 0, 0.24);
+  opacity: 0.94;
+  cursor: grabbing;
+  will-change: transform;
+}
+.dashboard-widget--carried .dashboard-widget__bar {
+  cursor: grabbing;
 }
 .dashboard-widget__bar {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 6px 4px 4px;
+  cursor: grab;
+  padding-block: 4px;
+  padding-inline: 4px 6px;
   border-bottom: 1px solid var(--bs-border, #e5e7eb);
-  border-top-left-radius: var(--bs-radius-lg, 12px);
-  border-top-right-radius: var(--bs-radius-lg, 12px);
+  border-start-start-radius: var(--bs-radius-lg, 12px);
+  border-start-end-radius: var(--bs-radius-lg, 12px);
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -500,6 +520,85 @@ select.bs-dialog__input {
   font-weight: 700;
   letter-spacing: 0.04em;
 }
+/* Per-agent provenance chip (SPEC §17.3, #59): a deterministically-coloured chip on a
+   multi-agent board. The hue comes from `--dashboard-agent-hue` (set per widget); the
+   fill + text derive from it so every agent keeps one readable colour in light + dark. */
+.dashboard-widget__agent {
+  display: inline-flex;
+  align-items: center;
+  max-width: 8rem;
+  padding: 1px 6px;
+  border-radius: var(--bs-radius-full, 999px);
+  background: hsl(var(--dashboard-agent-hue, 250) 70% 50% / 0.18);
+  color: hsl(var(--dashboard-agent-hue, 250) 65% 42%);
+  font-size: 0.68em;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (prefers-color-scheme: dark) {
+  .dashboard-widget__agent {
+    color: hsl(var(--dashboard-agent-hue, 250) 80% 72%);
+  }
+}
+.dashboard-widget__agent--dimmed {
+  opacity: 0.5;
+}
+/* Filter highlight: a non-matching widget recedes so the highlighted agent stands out. */
+.dashboard-widget--agent-dimmed {
+  opacity: 0.4;
+  filter: saturate(0.7);
+}
+/* The per-agent filter bar (SPEC §17.3, #59) — a row of agent chips above the grid. */
+.dashboard-agent-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px 8px;
+}
+.dashboard-agent-filter__label {
+  font-size: 0.72em;
+  font-weight: 600;
+  color: var(--bs-text-dim, #9ca3af);
+  margin-inline-end: 2px;
+}
+.dashboard-agent-filter__chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: var(--bs-radius-full, 999px);
+  border: 1px solid var(--bs-border, #e5e7eb);
+  background: transparent;
+  color: var(--bs-text, #111827);
+  font-size: 0.72em;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dashboard-agent-filter__chip--agent {
+  border-color: hsl(var(--dashboard-agent-hue, 250) 60% 55% / 0.5);
+  color: hsl(var(--dashboard-agent-hue, 250) 60% 40%);
+}
+.dashboard-agent-filter__chip--active {
+  background: hsl(var(--dashboard-agent-hue, 250) 70% 50% / 0.16);
+  border-color: hsl(var(--dashboard-agent-hue, 250) 65% 50%);
+}
+.dashboard-agent-filter__chip--active:not(.dashboard-agent-filter__chip--agent) {
+  background: color-mix(in srgb, var(--bs-accent, #6366f1) 16%, transparent);
+  border-color: var(--bs-accent, #6366f1);
+}
+@media (prefers-color-scheme: dark) {
+  .dashboard-agent-filter__chip--agent {
+    color: hsl(var(--dashboard-agent-hue, 250) 80% 72%);
+  }
+}
+/* Per-agent scope line in an approvals row (SPEC §17.3, #59). */
+.dashboard-approvals__scope {
+  font-size: 0.72em;
+  color: var(--bs-text-dim, #9ca3af);
+}
 .dashboard-widget__handle {
   display: inline-flex;
   align-items: center;
@@ -548,8 +647,8 @@ select.bs-dialog__input {
   min-height: 0;
   padding: 14px 16px;
   overflow: auto;
-  border-bottom-left-radius: var(--bs-radius-lg, 12px);
-  border-bottom-right-radius: var(--bs-radius-lg, 12px);
+  border-end-start-radius: var(--bs-radius-lg, 12px);
+  border-end-end-radius: var(--bs-radius-lg, 12px);
   animation: dashboard-widget-expand 160ms var(--bs-ease-out, ease-out) both;
 }
 @keyframes dashboard-widget-expand {
@@ -1150,6 +1249,63 @@ select.bs-dialog__input {
   align-self: flex-start;
 }
 
+/* --- action-button widget (M5d-1) — invoke a granted external tool -------- */
+.dashboard-action-button {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.dashboard-action-button__invoke {
+  align-self: flex-start;
+}
+.dashboard-action-button__status,
+.dashboard-action-button__hint {
+  font-size: 12px;
+  color: var(--bs-text-muted, #6b7280);
+}
+.dashboard-action-button__pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--bs-text-muted, #6b7280);
+}
+.dashboard-action-button__pending-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+.dashboard-action-button__result-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--bs-text-muted, #6b7280);
+}
+.dashboard-action-button__result-body {
+  margin: 4px 0 0;
+  max-height: 160px;
+  overflow: auto;
+  padding: 8px;
+  font: 12px/1.5 var(--bs-font-mono, ui-monospace, monospace);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--bs-text, #1a1d21);
+  background: var(--bs-surface-muted, #f3f4f6);
+  border-radius: var(--bs-radius-sm, 6px);
+}
+.dashboard-action-button__error {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--bs-danger, #b91c1c);
+}
+.dashboard-action-button__status[data-status="confirmed"] {
+  color: var(--bs-success, #15803d);
+}
+
 /* --- agent-status + approvals widgets (wave-ops) ------------------------- */
 .dashboard-agent-status,
 .dashboard-approvals {
@@ -1574,6 +1730,26 @@ select.bs-dialog__input {
   gap: 6px;
   max-height: 40vh;
   overflow: auto;
+  /* Scroll affordance (issue #4): a fade + shadow at a cut-off edge, revealed only
+     when there is more list above/below. Pure CSS — the classic scroll-shadow trick:
+     `local` cover gradients (card-colored) ride WITH the content and mask the shadow
+     at whichever edge is fully scrolled to, while the `scroll`-attached shadows stay
+     pinned to the box. No JS, no scroll listeners. */
+  background:
+    linear-gradient(var(--bs-card, #fff) 30%, transparent) top / 100% 22px no-repeat local,
+    linear-gradient(transparent, var(--bs-card, #fff) 70%) bottom / 100% 22px no-repeat local,
+    radial-gradient(
+        farthest-side at 50% 0,
+        color-mix(in srgb, var(--bs-text, #000) 14%, transparent),
+        transparent
+      )
+      top / 100% 9px no-repeat scroll,
+    radial-gradient(
+        farthest-side at 50% 100%,
+        color-mix(in srgb, var(--bs-text, #000) 14%, transparent),
+        transparent
+      )
+      bottom / 100% 9px no-repeat scroll;
 }
 .dashboard-gallery__item {
   display: flex;
@@ -1663,7 +1839,7 @@ select.bs-dialog__input {
   background: transparent;
   color: var(--bs-text, #1a1d21);
   font: inherit;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 .dashboard-history__item:hover {
@@ -1683,6 +1859,18 @@ select.bs-dialog__input {
 }
 .dashboard-history__latest {
   color: var(--bs-accent, #6366f1);
+}
+/* Per-row change summary ("+2 · 1 moved · agent") under the version label. */
+.dashboard-history__change {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+}
+.dashboard-history__change-label {
+  color: var(--bs-text, #1a1d21);
+  font-variant-numeric: tabular-nums;
 }
 .dashboard-history__detail {
   display: flex;
@@ -1725,11 +1913,24 @@ select.bs-dialog__input {
   border-radius: var(--bs-radius-sm, 6px);
   background: var(--bs-bg-muted, #f3f4f6);
 }
+.dashboard-history__cell-glyph {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--bs-text-dim, #9ca3af);
+}
 .dashboard-history__cell-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
+}
+/* Caption under the snapshot grid: "Layout at version N". */
+.dashboard-history__preview-caption {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--bs-text-dim, #9ca3af);
+  text-align: center;
 }
 .dashboard-history__diff-groups {
   display: flex;
@@ -1966,4 +2167,152 @@ select.bs-dialog__input {
 }
 [dir="rtl"] .dashboard :where(input, textarea)::placeholder {
   unicode-bidi: plaintext;
+}
+
+/* chart-detail — sparkline delta coloring + opt-in detail mode (axes/grid/tips).
+   Kept in one trailing block to minimize merge collisions with the base chart CSS
+   above; all default charts are unaffected (rules key off --sparkline / --detail). */
+.dashboard-chart--sparkline,
+.dashboard-chart--detail {
+  position: relative;
+}
+/* Sparkline: delta-colored line + trailing value badge. */
+.dashboard-chart__spark--up .dashboard-chart__line,
+.dashboard-chart__spark--up .dashboard-chart__spark-dot {
+  stroke: var(--bs-success, #27853c);
+  fill: var(--bs-success, #27853c);
+}
+.dashboard-chart__spark--down .dashboard-chart__line,
+.dashboard-chart__spark--down .dashboard-chart__spark-dot {
+  stroke: var(--bs-danger, #d92c25);
+  fill: var(--bs-danger, #d92c25);
+}
+.dashboard-chart__spark--flat .dashboard-chart__spark-dot {
+  fill: var(--bs-text-muted, #6b6b77);
+}
+.dashboard-chart__spark-value {
+  position: absolute;
+  top: 1px;
+  inset-inline-end: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--bs-text-muted, #6b6b77);
+  pointer-events: none;
+}
+.dashboard-chart__spark-value--up {
+  color: var(--bs-success, #27853c);
+}
+.dashboard-chart__spark-value--down {
+  color: var(--bs-danger, #d92c25);
+}
+/* Detail mode: faint gridlines, corner axis labels, invisible hover-tip targets. */
+.dashboard-chart__grid line {
+  stroke: var(--bs-border, #e7e7ee);
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+.dashboard-chart__tip {
+  fill: transparent;
+  stroke: none;
+}
+.dashboard-chart__axis {
+  position: absolute;
+  inset-inline-start: 3px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--bs-text-muted, #6b6b77);
+  pointer-events: none;
+}
+.dashboard-chart__axis--max {
+  top: 1px;
+}
+.dashboard-chart__axis--min {
+  bottom: 1px;
+}
+
+/* ===========================================================================
+ * Template gallery — Templates tab (#60). Appended block: the widget/recipe tab
+ * toggle and the recipe "what it needs" grant list. Reuses the existing
+ * .dashboard-gallery__* tokens above; only the new recipe surfaces are styled here.
+ * ======================================================================== */
+.dashboard-gallery__tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--bs-border, #e5e7eb);
+}
+.dashboard-gallery__tab {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 6px 12px;
+  font: inherit;
+  color: var(--bs-text-muted, #6b7280);
+  cursor: pointer;
+}
+.dashboard-gallery__tab:hover {
+  color: var(--bs-text, inherit);
+}
+.dashboard-gallery__tab.is-active {
+  color: var(--bs-text, inherit);
+  border-bottom-color: var(--bs-accent, #2563eb);
+  font-weight: 600;
+}
+.dashboard-gallery__recipe-needs {
+  color: var(--bs-text-muted, #6b7280);
+  font-size: 0.8em;
+  margin-top: 2px;
+}
+.dashboard-gallery__recipe-grants {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dashboard-gallery__recipe-connector {
+  border: 1px solid var(--bs-border, #e5e7eb);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.dashboard-gallery__recipe-connector-name {
+  font-weight: 600;
+}
+.dashboard-gallery__recipe-connector-reason {
+  color: var(--bs-text-muted, #6b7280);
+  font-size: 0.85em;
+  margin-top: 2px;
+}
+.dashboard-gallery__recipe-tools {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dashboard-gallery__recipe-tool {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 0.85em;
+}
+.dashboard-gallery__recipe-tool code {
+  font-family: var(--bs-font-mono, ui-monospace, monospace);
+  font-size: 0.9em;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--bs-bg-hover, rgba(0, 0, 0, 0.05));
+}
+.dashboard-gallery__recipe-readonly {
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--bs-border, #e5e7eb);
+  color: var(--bs-text-muted, #6b7280);
+  font-size: 0.85em;
+}
+.dashboard-gallery__recipe-nogrants {
+  color: var(--bs-text-muted, #6b7280);
+  font-size: 0.9em;
 }

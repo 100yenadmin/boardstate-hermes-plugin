@@ -1,13 +1,13 @@
 // Build the Boardstate Hermes plugin: the browser tab bundle, the Node sidecar
 // bundle, and the vendored `<boardstate-view>` element bundle + stylesheet.
 //
-// The `@boardstate/*` packages are not published yet, so this build resolves them
-// from a local Boardstate monorepo (the `feat/networked-transport-browser-bundle`
-// worktree by default). Point `BOARDSTATE_REPO` at another checkout if needed. Only
-// the BUILD needs the monorepo — the emitted artifacts (dist/index.js,
-// sidecar/server.js, vendor/*) are self-contained and are what ships.
+// `@boardstate/*` are resolved from `node_modules` (pinned in package.json —
+// core/schema/server ^1.8.x, lit ^0.9.x, all published to npm), via standard
+// Node resolution. Run `npm install` first. Only the BUILD needs these packages —
+// the emitted artifacts (dist/index.js, sidecar/server.js, vendor/*) are
+// self-contained and are what ships; the runtime needs only `node`.
 //
-//   BOARDSTATE_REPO=/path/to/boardstate npm run build
+//   npm install && npm run build
 
 import { cpSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -15,24 +15,22 @@ import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const REPO =
-  process.env.BOARDSTATE_REPO ||
-  "/Volumes/LEXAR/repos/boardstate.worktrees/net-transport";
+const dashboardDir = path.join(here, "dashboard");
 
-// pnpm's hoisted resolution root — every `@boardstate/*` (symlinked to packages/*,
-// exports maps honored), `typebox`, and `commander` resolve from here.
-const nodePaths = [path.join(REPO, "node_modules/.pnpm/node_modules")];
-
-for (const p of [REPO, ...nodePaths]) {
-  if (!existsSync(p)) {
-    throw new Error(
-      `Boardstate source not found at ${p}. Set BOARDSTATE_REPO to a built monorepo ` +
-        `(run \`pnpm install && pnpm build\` there first).`,
-    );
-  }
+// Resolve the vendored assets straight out of the installed @boardstate/lit package
+// via its exports map (./browser → dist/browser.js, ./styles.css → the stylesheet).
+// `import.meta.resolve` (not require.resolve) is required: the ./browser subpath only
+// defines an `import` condition. Fails loudly with a clear message if install missing.
+let litBrowser, litCss;
+try {
+  litBrowser = fileURLToPath(import.meta.resolve("@boardstate/lit/browser"));
+  litCss = fileURLToPath(import.meta.resolve("@boardstate/lit/styles.css"));
+} catch (err) {
+  throw new Error(
+    `Could not resolve @boardstate/lit assets — run \`npm install\` first.\n  ${err.message}`,
+  );
 }
 
-const dashboardDir = path.join(here, "dashboard");
 mkdirSync(path.join(dashboardDir, "dist"), { recursive: true });
 mkdirSync(path.join(dashboardDir, "vendor"), { recursive: true });
 
@@ -49,7 +47,6 @@ await esbuild.build({
   jsxFragment: "React.Fragment",
   // React comes from window.__HERMES_PLUGIN_SDK__, never bundled.
   external: ["react", "react-dom"],
-  nodePaths,
   sourcemap: true,
   minify: true,
   logLevel: "info",
@@ -63,22 +60,19 @@ await esbuild.build({
   format: "esm",
   platform: "node",
   target: ["node20"],
-  nodePaths,
   sourcemap: true,
   logLevel: "info",
 });
 
 // 3) Vendor the prebuilt element bundle + stylesheet (served as static assets).
-const litBrowser = path.join(REPO, "packages/lit/dist/browser.js");
-const litCss = path.join(REPO, "packages/lit/src/styles/boardstate.css");
 for (const [src, dest] of [
   [litBrowser, path.join(dashboardDir, "vendor/boardstate-browser.js")],
   [litCss, path.join(dashboardDir, "vendor/boardstate.css")],
 ]) {
   if (!existsSync(src)) {
-    throw new Error(`Vendored asset missing: ${src} (build @boardstate/lit first)`);
+    throw new Error(`Vendored asset missing: ${src}`);
   }
   cpSync(src, dest);
 }
 
-console.log("boardstate-hermes-plugin: build complete");
+console.log("boardstate-hermes-plugin: build complete (@boardstate/* from npm)");

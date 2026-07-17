@@ -566,558 +566,1172 @@ o$3?.({ LitElement: i$2 });
 (s$2.litElementVersions ??= []).push("4.2.2");
 //#endregion
 //#region ../schema/dist/index.js
+const DATA_READ_RPC_ALLOWLIST = [
+	"health",
+	"system-presence",
+	"usage.status",
+	"usage.cost",
+	"agents.list",
+	"sessions.list",
+	"sessions.resolve",
+	"sessions.get",
+	"sessions.usage",
+	"sessions.usage.timeseries",
+	"sessions.usage.logs",
+	"node.list",
+	"node.describe",
+	"cron.get",
+	"cron.list",
+	"cron.status",
+	"cron.runs",
+	"dashboard.connector.list"
+];
+const STREAM_EVENT_ALLOWLIST$1 = [
+	"presence",
+	"sessions.changed",
+	"boardstate.changed"
+];
+const COMPUTED_OPS = [
+	"sum",
+	"avg",
+	"min",
+	"max",
+	"last",
+	"count",
+	"pick",
+	"format"
+];
+var DashboardBindingResolutionError = class extends Error {
+	code;
+	constructor(code, message) {
+		super(message);
+		this.code = code;
+		this.name = "DashboardBindingResolutionError";
+	}
+};
+function hasControlCharacter(value) {
+	for (const char of value) {
+		const code = char.charCodeAt(0);
+		if (code < 32 || code === 127) return true;
+	}
+	return false;
+}
+function normalizeDashboardDataLogicalPath(value) {
+	if (value.startsWith("/") || /^([a-zA-Z]:[\\/]|[\\/])/.test(value) || hasControlCharacter(value)) throw new DashboardBindingResolutionError("binding_invalid", "file binding path is invalid");
+	const parts = value.replaceAll("\\", "/").split("/").filter(Boolean);
+	if (parts.length === 0 || parts.some((part) => part === "." || part === ".." || part.includes(":"))) throw new DashboardBindingResolutionError("binding_invalid", "file binding path is invalid");
+	return parts.join("/");
+}
+const TAB_SLUG_PATTERN = /^[a-z0-9-]{1,40}$/;
+const ACTOR_PATTERN = /^(user|system|agent:[A-Za-z0-9._-]{1,64})$/;
+const AGENT_ACTOR_PATTERN = /^agent:[A-Za-z0-9._-]{1,64}$/;
+const TAB_VISIBILITY_VALUES = /* @__PURE__ */ new Set(["shared", "private"]);
+/** Bounded opaque operator-identity string (e.g. `device:<id>`). */
+const TAB_OWNER_PATTERN = /^[A-Za-z0-9:._-]{1,128}$/;
+const WIDGET_ID_PATTERN = /^[A-Za-z0-9_-]{1,48}$/;
+const BUILTIN_KIND_PATTERN = /^builtin:(stat-card|markdown|table|iframe-embed|sessions|usage|cron|instances|activity|chart|notes|action-form|action-button|preview|agent-status|approvals|chat)$/;
+const CUSTOM_KIND_PATTERN = /^custom:[A-Za-z0-9._-]{1,64}$/;
+const CUSTOM_WIDGET_NAME_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+const CONNECTOR_NAME_PATTERN$1 = /^[A-Za-z0-9._-]{1,64}$/;
+const CONNECTOR_TOOL_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+const GRANT_TOOL_ID_PATTERN$1 = /^[A-Za-z0-9._-]{1,64}:[A-Za-z0-9._-]{1,64}$/;
+const GRANT_TOOL_ID_MAX_LENGTH$1 = 64;
+const TOOLS_HASH_PATTERN = /^[A-Za-z0-9._+/=-]{1,128}$/;
+const MAX_ARGS_BINDING_BYTES = 8 * 1024;
+const BINDING_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+const MAX_STATIC_BINDING_BYTES = 8 * 1024;
+const MAX_COMPUTED_INPUTS = 32;
+const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+const ACTION_FORM_FIELD_NAME_PATTERN = /^[A-Za-z0-9_]{1,32}$/;
+const ACTION_FORM_SLOT_PATTERN = /\{([A-Za-z0-9_]+)\}/g;
+const ACTION_FORM_MAX_TEMPLATE_CHARS = 2e3;
+const ACTION_FORM_MAX_FIELDS = 8;
+const ACTION_FORM_MAX_OPTIONS = 20;
+const ACTION_FORM_MAX_FIELD_MAX_LENGTH = 1e3;
+const ACTION_FORM_FIELD_TYPES = [
+	"text",
+	"number",
+	"select"
+];
+function isRecord$1$5(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function assertRecord$1(value, path) {
+	if (!isRecord$1$5(value)) throw new Error(`${path} must be an object`);
+	return value;
+}
+function assertKnownKeys$1(record, allowed, path) {
+	for (const key of Object.keys(record)) if (!allowed.includes(key)) throw new Error(`${path}.${key} is not allowed`);
+}
+function requireString$1(record, key, path) {
+	const value = record[key];
+	if (typeof value !== "string") throw new Error(`${path}.${key} must be a string`);
+	return value;
+}
+function optionalString$1(record, key, path) {
+	const value = record[key];
+	if (value === void 0) return;
+	if (typeof value !== "string") throw new Error(`${path}.${key} must be a string`);
+	return value;
+}
+function requireBoolean(record, key, path) {
+	const value = record[key];
+	if (typeof value !== "boolean") throw new Error(`${path}.${key} must be a boolean`);
+	return value;
+}
+function requireArray(value, path) {
+	if (!Array.isArray(value)) throw new Error(`${path} must be an array`);
+	return value;
+}
+function validateActor(value, path) {
+	if (typeof value !== "string" || !ACTOR_PATTERN.test(value)) throw new Error(`${path} createdBy is invalid`);
+	return value;
+}
+function assertIntegerRange(value, path, min, max) {
+	if (!Number.isInteger(value) || value < min || value > max) throw new Error(`${path} must be an integer from ${min} to ${max}`);
+	return value;
+}
+function validateGrid(value, path) {
+	const record = assertRecord$1(value, path);
+	assertKnownKeys$1(record, [
+		"x",
+		"y",
+		"w",
+		"h"
+	], path);
+	const grid = {
+		x: assertIntegerRange(record.x, `${path}.x`, 0, 11),
+		y: assertIntegerRange(record.y, `${path}.y`, 0, 499),
+		w: assertIntegerRange(record.w, `${path}.w`, 1, 12),
+		h: assertIntegerRange(record.h, `${path}.h`, 1, 20)
+	};
+	if (grid.x + grid.w > 12) throw new Error(`${path}.x + w must be 12 or less`);
+	return grid;
+}
+function assertJsonValue(value, path) {
+	if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number" && Number.isFinite(value)) return value;
+	if (Array.isArray(value)) return value.map((entry, index) => assertJsonValue(entry, `${path}[${index}]`));
+	if (isRecord$1$5(value)) {
+		const next = {};
+		for (const [key, entry] of Object.entries(value)) next[key] = assertJsonValue(entry, `${path}.${key}`);
+		return next;
+	}
+	throw new Error(`${path} must be JSON-serializable`);
+}
+function serializedBytes(value) {
+	return new TextEncoder().encode(JSON.stringify(value)).length;
+}
+function validateBinding(value, path) {
+	const record = assertRecord$1(value, path);
+	const source = requireString$1(record, "source", path);
+	if (source === "rpc") {
+		assertKnownKeys$1(record, ["source", "method"], path);
+		const method = requireString$1(record, "method", path);
+		if (!DATA_READ_RPC_ALLOWLIST.includes(method)) throw new Error(`${path}.method is not allowlisted`);
+		return {
+			source,
+			method
+		};
+	}
+	if (source === "file") {
+		assertKnownKeys$1(record, [
+			"source",
+			"path",
+			"pointer"
+		], path);
+		const bindingPath = requireString$1(record, "path", path);
+		normalizeDashboardDataLogicalPath(bindingPath);
+		const pointer = optionalString$1(record, "pointer", path);
+		return {
+			source,
+			path: bindingPath,
+			...pointer !== void 0 ? { pointer } : {}
+		};
+	}
+	if (source === "static") {
+		assertKnownKeys$1(record, ["source", "value"], path);
+		const jsonValue = assertJsonValue(record.value, `${path}.value`);
+		if (serializedBytes(jsonValue) > MAX_STATIC_BINDING_BYTES) throw new Error(`${path}.value must serialize to 8 KB or less`);
+		return {
+			source,
+			value: jsonValue
+		};
+	}
+	if (source === "stream") {
+		assertKnownKeys$1(record, [
+			"source",
+			"event",
+			"pointer"
+		], path);
+		const event = requireString$1(record, "event", path);
+		if (!STREAM_EVENT_ALLOWLIST$1.includes(event)) throw new Error(`${path}.event is not allowlisted`);
+		const pointer = optionalString$1(record, "pointer", path);
+		if (pointer !== void 0 && !pointer.startsWith("/")) throw new Error(`${path}.pointer must be a JSON pointer`);
+		return {
+			source,
+			event,
+			...pointer !== void 0 ? { pointer } : {}
+		};
+	}
+	if (source === "computed") {
+		assertKnownKeys$1(record, [
+			"source",
+			"op",
+			"inputs",
+			"arg"
+		], path);
+		const op = requireString$1(record, "op", path);
+		if (!COMPUTED_OPS.includes(op)) throw new Error(`${path}.op is not a valid computed op`);
+		const rawInputs = requireArray(record.inputs, `${path}.inputs`);
+		if (rawInputs.length < 1 || rawInputs.length > MAX_COMPUTED_INPUTS) throw new Error(`${path}.inputs must contain 1 to ${MAX_COMPUTED_INPUTS} entries`);
+		const inputs = rawInputs.map((entry, index) => {
+			if (typeof entry !== "string" || !BINDING_ID_PATTERN.test(entry)) throw new Error(`${path}.inputs[${index}] is invalid`);
+			return entry;
+		});
+		const needsArg = op === "pick" || op === "format";
+		const arg = optionalString$1(record, "arg", path);
+		if (needsArg && (arg === void 0 || arg.length === 0)) throw new Error(`${path}.arg is required for the ${op} op`);
+		if (!needsArg && arg !== void 0) throw new Error(`${path}.arg is not allowed for the ${op} op`);
+		if (op === "pick" && arg !== void 0 && !arg.startsWith("/")) throw new Error(`${path}.arg must be a JSON pointer for the pick op`);
+		return {
+			source,
+			op,
+			inputs,
+			...arg !== void 0 ? { arg } : {}
+		};
+	}
+	if (source === "mcp") {
+		assertKnownKeys$1(record, [
+			"source",
+			"connector",
+			"tool",
+			"args"
+		], path);
+		const connector = requireString$1(record, "connector", path);
+		if (!CONNECTOR_NAME_PATTERN$1.test(connector)) throw new Error(`${path}.connector is invalid`);
+		const tool = requireString$1(record, "tool", path);
+		if (!CONNECTOR_TOOL_PATTERN.test(tool)) throw new Error(`${path}.tool is invalid`);
+		const args = validateArgsObject(record.args, `${path}.args`);
+		return {
+			source,
+			connector,
+			tool,
+			...args !== void 0 ? { args } : {}
+		};
+	}
+	throw new Error(`${path}.source is invalid`);
+}
+/**
+* Validate an optional `args` object (mcp binding, action-button, pending action):
+* a JSON OBJECT (never a scalar/array) bounded to the 8 KB static-binding envelope.
+* Returns the frozen JSON value, or `undefined` when the key is absent.
+*/
+function validateArgsObject(value, path) {
+	if (value === void 0) return;
+	const json = assertJsonValue(value, path);
+	if (!isRecord$1$5(json)) throw new Error(`${path} must be an object`);
+	if (serializedBytes(json) > MAX_ARGS_BINDING_BYTES) throw new Error(`${path} must serialize to 8 KB or less`);
+	return json;
+}
+function validateBindingRecord(value, path) {
+	const record = assertRecord$1(value, path);
+	const bindings = {};
+	for (const [key, entry] of Object.entries(record)) {
+		if (!BINDING_ID_PATTERN.test(key)) throw new Error(`${path}.${key} binding id is invalid`);
+		bindings[key] = validateBinding(entry, `${path}.${key}`);
+	}
+	for (const [key, binding] of Object.entries(bindings)) {
+		if (binding.source !== "computed") continue;
+		for (const input of binding.inputs) {
+			const target = bindings[input];
+			if (!target) throw new Error(`${path}.${key}.inputs references unknown binding: ${input}`);
+			if (target.source === "computed") throw new Error(`${path}.${key}.inputs may not reference another computed binding: ${input}`);
+		}
+	}
+	return bindings;
+}
+function validateEphemeral(value, path) {
+	const record = assertRecord$1(value, path);
+	assertKnownKeys$1(record, ["expiresAt"], path);
+	const expiresAt = requireString$1(record, "expiresAt", path);
+	if (!ISO_TIMESTAMP_PATTERN.test(expiresAt) || Number.isNaN(Date.parse(expiresAt))) throw new Error(`${path}.expiresAt must be an ISO 8601 timestamp`);
+	return { expiresAt };
+}
+/**
+* Write-time validation for a `builtin:action-form` widget's props. The template
+* is authored here (not at click time); each `{slot}` MUST name a declared field,
+* so an operator-approved form can never interpolate an undeclared value. Field
+* values are supplied at click time and are separately typed/length-capped by the
+* renderer — this gate only bounds the authored template + field set.
+*/
+function validateActionFormProps(value, path) {
+	const record = assertRecord$1(value, path);
+	assertKnownKeys$1(record, [
+		"template",
+		"fields",
+		"buttonLabel",
+		"mode",
+		"connector",
+		"tool",
+		"argsFrom"
+	], path);
+	const template = requireString$1(record, "template", path);
+	if (template.length < 1 || template.length > ACTION_FORM_MAX_TEMPLATE_CHARS) throw new Error(`${path}.template must be 1-${ACTION_FORM_MAX_TEMPLATE_CHARS} characters`);
+	const fields = requireArray(record.fields, `${path}.fields`);
+	if (fields.length < 1 || fields.length > ACTION_FORM_MAX_FIELDS) throw new Error(`${path}.fields must contain 1 to ${ACTION_FORM_MAX_FIELDS} entries`);
+	const names = /* @__PURE__ */ new Set();
+	fields.forEach((field, index) => {
+		const fieldPath = `${path}.fields[${index}]`;
+		const fieldRecord = assertRecord$1(field, fieldPath);
+		assertKnownKeys$1(fieldRecord, [
+			"name",
+			"label",
+			"type",
+			"options",
+			"maxLength"
+		], fieldPath);
+		const name = requireString$1(fieldRecord, "name", fieldPath);
+		if (!ACTION_FORM_FIELD_NAME_PATTERN.test(name)) throw new Error(`${fieldPath}.name is invalid`);
+		if (names.has(name)) throw new Error(`${fieldPath}.name is a duplicate: ${name}`);
+		names.add(name);
+		const label = requireString$1(fieldRecord, "label", fieldPath);
+		if (label.length < 1 || label.length > 80) throw new Error(`${fieldPath}.label must be 1-80 characters`);
+		const type = requireString$1(fieldRecord, "type", fieldPath);
+		if (!ACTION_FORM_FIELD_TYPES.includes(type)) throw new Error(`${fieldPath}.type must be text, number, or select`);
+		if (type === "select") {
+			const options = requireArray(fieldRecord.options, `${fieldPath}.options`);
+			if (options.length < 1 || options.length > ACTION_FORM_MAX_OPTIONS) throw new Error(`${fieldPath}.options must contain 1 to ${ACTION_FORM_MAX_OPTIONS} entries`);
+			options.forEach((option, optionIndex) => {
+				if (typeof option !== "string" || option.length < 1 || option.length > 80) throw new Error(`${fieldPath}.options[${optionIndex}] must be a 1-80 character string`);
+			});
+		} else if (fieldRecord.options !== void 0) throw new Error(`${fieldPath}.options is only allowed for select fields`);
+		if (fieldRecord.maxLength !== void 0) assertIntegerRange(fieldRecord.maxLength, `${fieldPath}.maxLength`, 1, ACTION_FORM_MAX_FIELD_MAX_LENGTH);
+	});
+	if (record.buttonLabel !== void 0) {
+		const buttonLabel = requireString$1(record, "buttonLabel", path);
+		if (buttonLabel.length < 1 || buttonLabel.length > 40) throw new Error(`${path}.buttonLabel must be 1-40 characters`);
+	}
+	for (const match of template.matchAll(ACTION_FORM_SLOT_PATTERN)) {
+		const slot = match[1];
+		if (!names.has(slot)) throw new Error(`${path}.template references unknown field: {${slot}}`);
+	}
+	const mode = optionalString$1(record, "mode", path);
+	if (mode !== void 0 && mode !== "prompt" && mode !== "tool") throw new Error(`${path}.mode must be "prompt" or "tool"`);
+	if (mode === "tool") {
+		const connector = requireString$1(record, "connector", path);
+		if (!CONNECTOR_NAME_PATTERN$1.test(connector)) throw new Error(`${path}.connector is invalid`);
+		const tool = requireString$1(record, "tool", path);
+		if (!CONNECTOR_TOOL_PATTERN.test(tool)) throw new Error(`${path}.tool is invalid`);
+		if (record.argsFrom !== void 0) {
+			const argsFrom = assertRecord$1(record.argsFrom, `${path}.argsFrom`);
+			const mappings = Object.entries(argsFrom);
+			if (mappings.length > ACTION_FORM_MAX_FIELDS) throw new Error(`${path}.argsFrom must contain at most ${ACTION_FORM_MAX_FIELDS} entries`);
+			for (const [argName, fieldName] of mappings) {
+				if (!ACTION_FORM_FIELD_NAME_PATTERN.test(argName)) throw new Error(`${path}.argsFrom key is invalid: ${argName}`);
+				if (typeof fieldName !== "string" || !names.has(fieldName)) throw new Error(`${path}.argsFrom references unknown field: ${String(fieldName)}`);
+			}
+		}
+	} else for (const key of [
+		"connector",
+		"tool",
+		"argsFrom"
+	]) if (record[key] !== void 0) throw new Error(`${path}.${key} is only allowed when mode is "tool"`);
+}
+/**
+* Write-time validation for a `builtin:action-button` widget's props (SPEC §17 v2):
+* a one-click invocation of a granted external tool with fixed `args`. Shape-only —
+* the actual (server-gated) invocation + pending-action parking land with #44/#41.
+*/
+function validateActionButtonProps(value, path) {
+	const record = assertRecord$1(value, path);
+	assertKnownKeys$1(record, [
+		"connector",
+		"tool",
+		"args",
+		"label"
+	], path);
+	const connector = requireString$1(record, "connector", path);
+	if (!CONNECTOR_NAME_PATTERN$1.test(connector)) throw new Error(`${path}.connector is invalid`);
+	const tool = requireString$1(record, "tool", path);
+	if (!CONNECTOR_TOOL_PATTERN.test(tool)) throw new Error(`${path}.tool is invalid`);
+	validateArgsObject(record.args, `${path}.args`);
+	const label = optionalString$1(record, "label", path);
+	if (label !== void 0 && (label.length < 1 || label.length > 40)) throw new Error(`${path}.label must be 1-40 characters`);
+}
+function validateWidget(value, path) {
+	const record = assertRecord$1(value, path);
+	assertKnownKeys$1(record, [
+		"id",
+		"kind",
+		"title",
+		"grid",
+		"collapsed",
+		"hidden",
+		"bindings",
+		"props",
+		"ephemeral"
+	], path);
+	const id = requireString$1(record, "id", path);
+	if (!WIDGET_ID_PATTERN.test(id)) throw new Error(`${path}.id is invalid`);
+	const kind = requireString$1(record, "kind", path);
+	if (!BUILTIN_KIND_PATTERN.test(kind) && !CUSTOM_KIND_PATTERN.test(kind)) throw new Error(`${path}.kind is invalid`);
+	const title = optionalString$1(record, "title", path);
+	if (title !== void 0 && title.length > 80) throw new Error(`${path}.title must be 80 characters or fewer`);
+	const bindings = record.bindings === void 0 ? void 0 : validateBindingRecord(record.bindings, `${path}.bindings`);
+	const props = record.props === void 0 ? void 0 : assertJsonValue(record.props, `${path}.props`);
+	const ephemeral = record.ephemeral === void 0 ? void 0 : validateEphemeral(record.ephemeral, `${path}.ephemeral`);
+	if (kind === "builtin:action-form") validateActionFormProps(props, `${path}.props`);
+	if (kind === "builtin:action-button") validateActionButtonProps(props, `${path}.props`);
+	return {
+		id,
+		kind,
+		...title !== void 0 ? { title } : {},
+		grid: validateGrid(record.grid, `${path}.grid`),
+		collapsed: requireBoolean(record, "collapsed", path),
+		hidden: requireBoolean(record, "hidden", path),
+		...bindings !== void 0 ? { bindings } : {},
+		...props !== void 0 ? { props } : {},
+		...ephemeral !== void 0 ? { ephemeral } : {}
+	};
+}
+function validateTabLayout(value, path) {
+	if (value === void 0) return;
+	if (value !== "grid" && value !== "full") throw new Error(`${path}.layout must be "grid" or "full"`);
+	return value;
+}
+function validateVisibility(value, path) {
+	if (value === void 0) return;
+	if (typeof value !== "string" || !TAB_VISIBILITY_VALUES.has(value)) throw new Error(`${path}.visibility must be "shared" or "private"`);
+	return value;
+}
+function validateTab(value, path) {
+	const record = assertRecord$1(value, path);
+	assertKnownKeys$1(record, [
+		"slug",
+		"title",
+		"icon",
+		"hidden",
+		"layout",
+		"createdBy",
+		"visibility",
+		"owner",
+		"widgets"
+	], path);
+	const slug = requireString$1(record, "slug", path);
+	if (!TAB_SLUG_PATTERN.test(slug)) throw new Error(`${path}.slug is invalid`);
+	const title = requireString$1(record, "title", path);
+	if (title.length < 1 || title.length > 80) throw new Error(`${path}.title must be 1-80 characters`);
+	const icon = optionalString$1(record, "icon", path);
+	if (icon !== void 0 && icon.length > 40) throw new Error(`${path}.icon must be 40 characters or fewer`);
+	const layout = validateTabLayout(record.layout, path);
+	const visibility = validateVisibility(record.visibility, path);
+	const owner = optionalString$1(record, "owner", path);
+	if (owner !== void 0 && !TAB_OWNER_PATTERN.test(owner)) throw new Error(`${path}.owner is invalid`);
+	if (visibility === "private" && owner === void 0) throw new Error(`${path}.owner is required when the tab is private`);
+	const widgets = requireArray(record.widgets, `${path}.widgets`);
+	if (widgets.length > 24) throw new Error(`${path}.widgets must contain at most 24 entries`);
+	return {
+		slug,
+		title,
+		...icon !== void 0 ? { icon } : {},
+		hidden: requireBoolean(record, "hidden", path),
+		...layout !== void 0 ? { layout } : {},
+		createdBy: validateActor(record.createdBy, `${path}.createdBy`),
+		...visibility === "private" ? { visibility } : {},
+		...owner !== void 0 ? { owner } : {},
+		widgets: widgets.map((widget, index) => validateWidget(widget, `${path}.widgets[${index}]`))
+	};
+}
+function validateRegistryEntry(value, path) {
+	const record = assertRecord$1(value, path);
+	assertKnownKeys$1(record, [
+		"status",
+		"createdBy",
+		"approvedBy",
+		"approvedAt"
+	], path);
+	const status = requireString$1(record, "status", path);
+	if (status !== "pending" && status !== "approved" && status !== "rejected") throw new Error(`${path}.status is invalid`);
+	const approvedBy = record.approvedBy === void 0 ? void 0 : validateActor(record.approvedBy, `${path}.approvedBy`);
+	const approvedAt = optionalString$1(record, "approvedAt", path);
+	return {
+		status,
+		createdBy: validateActor(record.createdBy, `${path}.createdBy`),
+		...approvedBy !== void 0 ? { approvedBy } : {},
+		...approvedAt !== void 0 ? { approvedAt } : {}
+	};
+}
+function validateWidgetsRegistry(value) {
+	const record = assertRecord$1(value, "widgetsRegistry");
+	const registry = {};
+	for (const [name, entry] of Object.entries(record)) {
+		if (!CUSTOM_WIDGET_NAME_PATTERN.test(name)) throw new Error(`widgetsRegistry.${name} name is invalid`);
+		registry[name] = validateRegistryEntry(entry, `widgetsRegistry.${name}`);
+	}
+	return registry;
+}
+const CAPABILITY_STATUSES$1 = /* @__PURE__ */ new Set([
+	"requested",
+	"granted",
+	"revoked"
+]);
+function validateCapabilityGrant(value, path) {
+	const record = assertRecord$1(value, path);
+	assertKnownKeys$1(record, [
+		"status",
+		"methods",
+		"streams",
+		"tools",
+		"toolsHash",
+		"autoConfirm",
+		"expiresAt",
+		"agents",
+		"description",
+		"grantedBy",
+		"grantedAt"
+	], path);
+	const status = record.status;
+	if (typeof status !== "string" || !CAPABILITY_STATUSES$1.has(status)) throw new Error(`${path}.status must be requested, granted, or revoked`);
+	const methods = allowlistArray(record.methods, `${path}.methods`, DATA_READ_RPC_ALLOWLIST, "allowlisted read method");
+	const streams = allowlistArray(record.streams, `${path}.streams`, STREAM_EVENT_ALLOWLIST$1, "allowlisted stream channel");
+	const tools = record.tools === void 0 ? void 0 : requireArray(record.tools, `${path}.tools`).map((tool, index) => {
+		if (typeof tool !== "string" || tool.length > GRANT_TOOL_ID_MAX_LENGTH$1 || !GRANT_TOOL_ID_PATTERN$1.test(tool)) throw new Error(`${path}.tools[${index}] is not a valid connector:tool id`);
+		return tool;
+	});
+	if (tools !== void 0 && new Set(tools).size !== tools.length) throw new Error(`${path}.tools contains duplicate tool ids`);
+	const toolsHash = optionalString$1(record, "toolsHash", path);
+	if (toolsHash !== void 0 && !TOOLS_HASH_PATTERN.test(toolsHash)) throw new Error(`${path}.toolsHash is invalid`);
+	const autoConfirm = record.autoConfirm === void 0 ? void 0 : requireArray(record.autoConfirm, `${path}.autoConfirm`).map((entry, index) => {
+		if (typeof entry !== "string" || entry.length > GRANT_TOOL_ID_MAX_LENGTH$1 || !GRANT_TOOL_ID_PATTERN$1.test(entry)) throw new Error(`${path}.autoConfirm[${index}] is not a valid connector:tool id`);
+		return entry;
+	});
+	if (autoConfirm !== void 0) {
+		if (new Set(autoConfirm).size !== autoConfirm.length) throw new Error(`${path}.autoConfirm contains duplicate tool ids`);
+		const granted = new Set(tools ?? []);
+		for (const id of autoConfirm) if (!granted.has(id)) throw new Error(`${path}.autoConfirm[${id}] is not one of the grant's tools`);
+	}
+	const expiresAt = optionalString$1(record, "expiresAt", path);
+	if (expiresAt !== void 0 && (!ISO_TIMESTAMP_PATTERN.test(expiresAt) || Number.isNaN(Date.parse(expiresAt)))) throw new Error(`${path}.expiresAt must be an ISO 8601 timestamp`);
+	const agents = record.agents === void 0 ? void 0 : requireArray(record.agents, `${path}.agents`).map((entry, index) => {
+		if (typeof entry !== "string" || !AGENT_ACTOR_PATTERN.test(entry)) throw new Error(`${path}.agents[${index}] is not a valid agent actor`);
+		return entry;
+	});
+	if (agents !== void 0) {
+		if (agents.length === 0) throw new Error(`${path}.agents must be a non-empty array (omit it to allow all agents)`);
+		if (new Set(agents).size !== agents.length) throw new Error(`${path}.agents contains duplicate actors`);
+	}
+	const description = optionalString$1(record, "description", path);
+	if (description !== void 0 && description.length > 200) throw new Error(`${path}.description must be 200 characters or fewer`);
+	const grantedBy = record.grantedBy === void 0 ? void 0 : validateActor(record.grantedBy, `${path}.grantedBy`);
+	const grantedAt = optionalString$1(record, "grantedAt", path);
+	return {
+		status,
+		methods,
+		streams,
+		...tools !== void 0 ? { tools } : {},
+		...toolsHash !== void 0 ? { toolsHash } : {},
+		...autoConfirm !== void 0 ? { autoConfirm } : {},
+		...expiresAt !== void 0 ? { expiresAt } : {},
+		...agents !== void 0 ? { agents } : {},
+		...description !== void 0 ? { description } : {},
+		...grantedBy !== void 0 ? { grantedBy } : {},
+		...grantedAt !== void 0 ? { grantedAt } : {}
+	};
+}
+/**
+* A REQUIRED array of allowlisted string entries. Shared by a grant's
+* `methods`/`streams`; an absent key rejects, exactly as pre-§17 (invariant #7 —
+* verdicts on old shapes never change). Tools-only grants pass explicit [].
+*/
+function allowlistArray(value, path, allowlist, label) {
+	return requireArray(value, path).map((entry, index) => {
+		if (typeof entry !== "string" || !allowlist.includes(entry)) throw new Error(`${path}[${index}] is not an ${label}`);
+		return entry;
+	});
+}
+function validateCapabilitiesRegistry(value) {
+	if (value === void 0) return {};
+	const record = assertRecord$1(value, "capabilitiesRegistry");
+	const registry = {};
+	for (const [name, entry] of Object.entries(record)) {
+		if (!CONNECTOR_NAME_PATTERN$1.test(name)) throw new Error(`capabilitiesRegistry.${name} connector name is invalid`);
+		registry[name] = validateCapabilityGrant(entry, `capabilitiesRegistry.${name}`);
+	}
+	return registry;
+}
+function validatePrefs(value, tabSlugs) {
+	const record = assertRecord$1(value, "prefs");
+	assertKnownKeys$1(record, ["tabOrder"], "prefs");
+	const tabOrder = requireArray(record.tabOrder, "prefs.tabOrder");
+	const seen = /* @__PURE__ */ new Set();
+	return { tabOrder: tabOrder.map((entry, index) => {
+		if (typeof entry !== "string" || !TAB_SLUG_PATTERN.test(entry)) throw new Error(`prefs.tabOrder[${index}] is invalid`);
+		if (!tabSlugs.has(entry)) throw new Error(`prefs.tabOrder[${index}] is not a tab slug`);
+		if (seen.has(entry)) throw new Error(`prefs.tabOrder contains duplicate slug: ${entry}`);
+		seen.add(entry);
+		return entry;
+	}) };
+}
+function assertUniqueTabs(tabs) {
+	const slugs = /* @__PURE__ */ new Set();
+	for (const tab of tabs) {
+		if (slugs.has(tab.slug)) throw new Error(`duplicate tab slug: ${tab.slug}`);
+		slugs.add(tab.slug);
+	}
+	return slugs;
+}
+function assertUniqueWidgets(tabs) {
+	const ids = /* @__PURE__ */ new Set();
+	for (const tab of tabs) for (const widget of tab.widgets) {
+		if (ids.has(widget.id)) throw new Error(`duplicate widget id: ${widget.id}`);
+		ids.add(widget.id);
+	}
+}
+function validateWorkspaceDoc(value) {
+	const record = assertRecord$1(value, "workspace");
+	assertKnownKeys$1(record, [
+		"schemaVersion",
+		"workspaceVersion",
+		"tabs",
+		"widgetsRegistry",
+		"capabilitiesRegistry",
+		"prefs"
+	], "workspace");
+	if (record.schemaVersion !== 1) throw new Error(`schemaVersion must be 1`);
+	const workspaceVersion = assertIntegerRange(record.workspaceVersion, "workspaceVersion", 0, Number.MAX_SAFE_INTEGER);
+	const rawTabs = requireArray(record.tabs, "tabs");
+	if (rawTabs.length > 32) throw new Error("tabs must contain at most 32 entries");
+	const tabs = rawTabs.map((tab, index) => validateTab(tab, `tabs[${index}]`));
+	const tabSlugs = assertUniqueTabs(tabs);
+	assertUniqueWidgets(tabs);
+	return {
+		schemaVersion: 1,
+		workspaceVersion,
+		tabs,
+		widgetsRegistry: validateWidgetsRegistry(record.widgetsRegistry),
+		capabilitiesRegistry: validateCapabilitiesRegistry(record.capabilitiesRegistry),
+		prefs: validatePrefs(record.prefs, tabSlugs)
+	};
+}
+const RECIPE_NAME_PATTERN$1 = /^[A-Za-z0-9._-]{1,64}$/;
+const CONNECTOR_NAME_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+const GRANT_TOOL_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}:[A-Za-z0-9._-]{1,64}$/;
+const GRANT_TOOL_ID_MAX_LENGTH = 64;
+const RECIPE_TITLE_MAX = 80;
+const RECIPE_DESCRIPTION_MAX = 280;
+const GRANT_LABEL_MAX = 80;
+const GRANT_REASON_MAX = 200;
+const MAX_CONNECTORS = 16;
+const MAX_TOOLS_PER_CONNECTOR = 32;
+function isRecord$6(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function assertRecord(value, path) {
+	if (!isRecord$6(value)) throw new Error(`${path} must be an object`);
+	return value;
+}
+function assertKnownKeys(record, allowed, path) {
+	for (const key of Object.keys(record)) if (!allowed.includes(key)) throw new Error(`${path}.${key} is not allowed`);
+}
+function requireString(record, key, path) {
+	const value = record[key];
+	if (typeof value !== "string") throw new Error(`${path}.${key} must be a string`);
+	return value;
+}
+function optionalString(record, key, path) {
+	const value = record[key];
+	if (value === void 0) return;
+	if (typeof value !== "string") throw new Error(`${path}.${key} must be a string`);
+	return value;
+}
+function optionalStringArray(record, key, path) {
+	const value = record[key];
+	if (value === void 0) return;
+	if (!Array.isArray(value)) throw new Error(`${path}.${key} must be an array`);
+	return value.map((entry, index) => {
+		if (typeof entry !== "string" || entry.length === 0) throw new Error(`${path}.${key}[${index}] must be a non-empty string`);
+		return entry;
+	});
+}
+function validateGrantTool(value, connector, path) {
+	const record = assertRecord(value, path);
+	assertKnownKeys(record, [
+		"id",
+		"label",
+		"readOnly"
+	], path);
+	const id = requireString(record, "id", path);
+	if (id.length > GRANT_TOOL_ID_MAX_LENGTH || !GRANT_TOOL_ID_PATTERN.test(id)) throw new Error(`${path}.id is not a valid connector:tool id`);
+	if (id.slice(0, id.indexOf(":")) !== connector) throw new Error(`${path}.id "${id}" must be namespaced under connector "${connector}"`);
+	const label = requireString(record, "label", path);
+	if (label.length < 1 || label.length > GRANT_LABEL_MAX) throw new Error(`${path}.label must be 1-${GRANT_LABEL_MAX} characters`);
+	const readOnly = record.readOnly;
+	if (readOnly !== void 0 && typeof readOnly !== "boolean") throw new Error(`${path}.readOnly must be a boolean`);
+	return {
+		id,
+		label,
+		...readOnly !== void 0 ? { readOnly } : {}
+	};
+}
+function validateConnectorGrant(value, connector, path) {
+	const record = assertRecord(value, path);
+	assertKnownKeys(record, [
+		"label",
+		"reason",
+		"methods",
+		"streams",
+		"tools"
+	], path);
+	const label = requireString(record, "label", path);
+	if (label.length < 1 || label.length > GRANT_LABEL_MAX) throw new Error(`${path}.label must be 1-${GRANT_LABEL_MAX} characters`);
+	const reason = optionalString(record, "reason", path);
+	if (reason !== void 0 && reason.length > GRANT_REASON_MAX) throw new Error(`${path}.reason must be ${GRANT_REASON_MAX} characters or fewer`);
+	const methods = optionalStringArray(record, "methods", path);
+	const streams = optionalStringArray(record, "streams", path);
+	let tools;
+	if (record.tools !== void 0) {
+		if (!Array.isArray(record.tools)) throw new Error(`${path}.tools must be an array`);
+		if (record.tools.length > MAX_TOOLS_PER_CONNECTOR) throw new Error(`${path}.tools must contain at most ${MAX_TOOLS_PER_CONNECTOR} entries`);
+		tools = record.tools.map((tool, index) => validateGrantTool(tool, connector, `${path}.tools[${index}]`));
+		const ids = tools.map((tool) => tool.id);
+		if (new Set(ids).size !== ids.length) throw new Error(`${path}.tools contains duplicate tool ids`);
+	}
+	if (!((methods?.length ?? 0) > 0 || (streams?.length ?? 0) > 0 || (tools?.length ?? 0) > 0)) throw new Error(`${path} must request at least one tool, method, or stream`);
+	return {
+		label,
+		...reason !== void 0 ? { reason } : {},
+		...methods !== void 0 ? { methods } : {},
+		...streams !== void 0 ? { streams } : {},
+		...tools !== void 0 ? { tools } : {}
+	};
+}
+function validateGrantsManifest(value, path) {
+	if (value === void 0) return {};
+	const record = assertRecord(value, path);
+	if (Object.keys(record).length > MAX_CONNECTORS) throw new Error(`${path} must reference at most ${MAX_CONNECTORS} connectors`);
+	const manifest = {};
+	for (const [connector, entry] of Object.entries(record)) {
+		if (!CONNECTOR_NAME_PATTERN.test(connector)) throw new Error(`${path}.${connector} connector name is invalid`);
+		manifest[connector] = validateConnectorGrant(entry, connector, `${path}.${connector}`);
+	}
+	return manifest;
+}
+/**
+* Validate a template recipe (SPEC / issue #60). Throws on any malformed field so the
+* honesty gate (`pnpm build:registry` + the templates test) can trust every shipped
+* recipe. The embedded `doc` runs through the SAME `validateWorkspaceDoc` as every write
+* path — a recipe can never smuggle a doc the store would reject. This validates SHAPE;
+* the install-time re-pend (no recipe arrives pre-granted) is enforced downstream at the
+* store, not here.
+*/
+function validateRecipe(value) {
+	const record = assertRecord(value, "recipe");
+	assertKnownKeys(record, [
+		"recipeVersion",
+		"name",
+		"title",
+		"description",
+		"doc",
+		"grantsManifest"
+	], "recipe");
+	if (record.recipeVersion !== 1) throw new Error(`recipe.recipeVersion must be 1`);
+	const name = requireString(record, "name", "recipe");
+	if (!RECIPE_NAME_PATTERN$1.test(name)) throw new Error("recipe.name is invalid");
+	const title = requireString(record, "title", "recipe");
+	if (title.length < 1 || title.length > RECIPE_TITLE_MAX) throw new Error(`recipe.title must be 1-${RECIPE_TITLE_MAX} characters`);
+	const description = requireString(record, "description", "recipe");
+	if (description.length < 1 || description.length > RECIPE_DESCRIPTION_MAX) throw new Error(`recipe.description must be 1-${RECIPE_DESCRIPTION_MAX} characters`);
+	if (record.doc === void 0) throw new Error("recipe.doc is required");
+	return {
+		recipeVersion: 1,
+		name,
+		title,
+		description,
+		doc: validateWorkspaceDoc(record.doc),
+		grantsManifest: validateGrantsManifest(record.grantsManifest, "recipe.grantsManifest")
+	};
+}
 /** The broadcast event name every AgentStreamEvent travels under (SPEC §14.2). */
 const CHAT_EVENT = "boardstate.chat.event";
 //#endregion
 //#region ../core/dist/index.js
-/**
-* The tab-scoped subscription table: `tabSlug -> channel -> subscriberId ->
-* Subscription`. A publish resolves the publisher's tab bucket FIRST, so a message
-* can only ever reach same-tab subscribers — cross-tab delivery is unreachable, not
-* merely filtered out.
-*/
-const subscriptionsByTab = /* @__PURE__ */ new Map();
-/** Monotonic source of opaque, non-guessable-by-widgets subscriber identities. */
-let subscriberSeq = 0;
-/** Mint a fresh broker-assigned subscriber id. Never derived from widget input. */
-function nextSubscriberId() {
-	subscriberSeq += 1;
-	return `sub_${subscriberSeq}`;
-}
-/**
-* Register a subscription for `subscriberId` on `(tabSlug, channel)`. Idempotent
-* per `(tab, channel, subscriberId)`: re-subscribing replaces the record rather
-* than stacking duplicate deliveries. Returns an unsubscribe fn scoped to exactly
-* this `(tab, channel, subscriberId)` triple.
-*/
-function subscribe(params) {
-	const { tabSlug, channel, subscriberId, deliver } = params;
-	let byChannel = subscriptionsByTab.get(tabSlug);
-	if (!byChannel) {
-		byChannel = /* @__PURE__ */ new Map();
-		subscriptionsByTab.set(tabSlug, byChannel);
-	}
-	let bySubscriber = byChannel.get(channel);
-	if (!bySubscriber) {
-		bySubscriber = /* @__PURE__ */ new Map();
-		byChannel.set(channel, bySubscriber);
-	}
-	bySubscriber.set(subscriberId, {
-		subscriberId,
-		channel,
-		deliver
-	});
-	return () => unsubscribe({
-		tabSlug,
-		channel,
-		subscriberId
-	});
-}
-/** Remove one subscription, pruning empty channel/tab buckets so nothing leaks. */
-function unsubscribe(params) {
-	const { tabSlug, channel, subscriberId } = params;
-	const byChannel = subscriptionsByTab.get(tabSlug);
-	const bySubscriber = byChannel?.get(channel);
-	if (!bySubscriber) return;
-	bySubscriber.delete(subscriberId);
-	if (bySubscriber.size === 0) byChannel?.delete(channel);
-	if (byChannel && byChannel.size === 0) subscriptionsByTab.delete(tabSlug);
-}
-/**
-* Remove EVERY subscription owned by `subscriberId` on `tabSlug` (unmount teardown).
-* The bridge tracks its own channels, but this is the belt-and-suspenders sweep so a
-* disposed widget can never receive a dangling delivery.
-*/
-function unsubscribeAll(tabSlug, subscriberId) {
-	const byChannel = subscriptionsByTab.get(tabSlug);
-	if (!byChannel) return;
-	for (const [channel, bySubscriber] of byChannel) if (bySubscriber.delete(subscriberId) && bySubscriber.size === 0) byChannel.delete(channel);
-	if (byChannel.size === 0) subscriptionsByTab.delete(tabSlug);
-}
-/**
-* Broker a publish: deliver `payload` on `channel` to every OTHER same-tab
-* subscriber (the publisher, identified by `fromSubscriberId`, is excluded from its
-* own broadcast). Cross-tab delivery is impossible — only the publisher's own tab
-* bucket is ever consulted. Returns the number of subscribers reached (for tests).
-*/
-function publish(params) {
-	const { tabSlug, channel, fromSubscriberId, payload } = params;
-	const bySubscriber = subscriptionsByTab.get(tabSlug)?.get(channel);
-	if (!bySubscriber) return 0;
-	let delivered = 0;
-	for (const subscription of Array.from(bySubscriber.values())) {
-		if (subscription.subscriberId === fromSubscriberId) continue;
-		subscription.deliver(channel, payload);
-		delivered += 1;
-	}
-	return delivered;
-}
-/** Provenance is an agent authorship when the stamp is prefixed `agent:`. */
-function dashboardAgentProvenance(createdBy) {
-	if (typeof createdBy !== "string") return null;
-	const trimmed = createdBy.trim();
-	return trimmed.startsWith("agent:") ? trimmed.slice(6) || "agent" : null;
-}
-/** Column width in pixels given the grid content width. Gaps sit between cells. */
-function columnWidth(metrics) {
-	return Math.max(1, (metrics.width - 132) / 12);
-}
-function clamp(value, min, max) {
-	return Math.min(max, Math.max(min, value));
-}
-/** Snap a fractional column delta to whole grid units. */
-function snapCells(deltaPx, unitPx) {
-	if (unitPx <= 0) return 0;
-	return Math.round(deltaPx / (unitPx + 12));
-}
-/** Clamp a rect so it stays inside the 12-column grid; height/y are unbounded below. */
-function clampRect(rect) {
-	const w = clamp(rect.w, 1, 12);
-	const h = Math.max(1, rect.h);
+/** A small grid rect helper so the examples read uniformly. */
+function grid(x, y, w, h) {
 	return {
-		x: clamp(rect.x, 0, 12 - w),
-		y: Math.max(0, rect.y),
+		x,
+		y,
 		w,
 		h
 	};
 }
-/** Do two grid rects share any cell? Touching edges do NOT overlap. */
-function rectsOverlap(a, b) {
-	return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-}
-/** Rects of every widget except the one identified by `exceptId`. */
-function otherRects(widgets, exceptId) {
-	return widgets.filter((widget) => widget.id !== exceptId).map((widget) => widget.grid);
-}
-/** Does `rect` overlap any widget other than `exceptId`? */
-function collides(rect, widgets, exceptId) {
-	return otherRects(widgets, exceptId).some((other) => rectsOverlap(rect, other));
-}
-/** Begin a drag/resize gesture from a pointer-down on a widget's chrome. */
-function beginDrag(params) {
-	return {
-		widgetId: params.widget.id,
-		mode: params.mode,
-		originRect: { ...params.widget.grid },
-		originClientX: params.clientX,
-		originClientY: params.clientY,
-		ghostRect: { ...params.widget.grid },
-		columnWidth: columnWidth(params.metrics)
-	};
-}
-/** Advance a drag with the current pointer position; returns the snapped ghost rect. */
-function updateDrag(drag, clientX, clientY) {
-	const rowUnit = 56;
-	const deltaCols = snapCells(clientX - drag.originClientX, drag.columnWidth);
-	const deltaRows = snapCells(clientY - drag.originClientY, rowUnit);
-	const clamped = clampRect(drag.mode === "move" ? {
-		x: drag.originRect.x + deltaCols,
-		y: drag.originRect.y + deltaRows,
-		w: drag.originRect.w,
-		h: drag.originRect.h
-	} : {
-		x: drag.originRect.x,
-		y: drag.originRect.y,
-		w: drag.originRect.w + deltaCols,
-		h: drag.originRect.h + deltaRows
-	});
-	drag.ghostRect = clamped;
-	return clamped;
-}
-/**
-* Resolve where a dropped widget lands. Overlapping drops are rejected; the
-* nearest collision-free slot to the requested position is returned instead.
-* Returns null only if the grid genuinely has no free slot for the widget's size
-* (defensive; the grid is unbounded downward so this is unreachable in practice).
-*/
-function resolveDrop(params) {
-	const requested = clampRect(params.requested);
-	if (!collides(requested, params.widgets, params.widgetId)) return requested;
-	return nearestFreeSlot(requested, params.widgets, params.widgetId);
-}
-/**
-* Search outward from the requested position for the closest slot that fits
-* `requested`'s size without colliding. The grid grows downward, so a fit is
-* always found within a bounded number of rows.
-*/
-function nearestFreeSlot(requested, widgets, widgetId) {
-	const w = clamp(requested.w, 1, 12);
-	const h = Math.max(1, requested.h);
-	const maxX = 12 - w;
-	const occupiedRows = otherRects(widgets, widgetId).reduce((max, rect) => Math.max(max, rect.y + rect.h), 0);
-	const maxY = Math.max(requested.y, occupiedRows) + h;
-	let best = null;
-	for (let y = 0; y <= maxY; y += 1) {
-		for (let x = 0; x <= maxX; x += 1) {
-			const candidate = {
-				x,
-				y,
-				w,
-				h
-			};
-			if (collides(candidate, widgets, widgetId)) continue;
-			const distance = Math.abs(x - requested.x) + Math.abs(y - requested.y);
-			if (!best || distance < best.distance) best = {
-				rect: candidate,
-				distance
-			};
+const WIDGET_CATALOG = [
+	{
+		kind: "builtin:stat-card",
+		summary: "One number that matters — a KPI with a label.",
+		bindings: [{
+			key: "value",
+			shape: "number | string, or a structured payload + props.metric"
+		}],
+		props: {
+			format: "\"usd\" | \"int\" | \"percent\" | \"raw\" (how the number renders)",
+			metric: "when the binding resolves an object, the field name to display",
+			label: "inner label (omit if it would just repeat the title)"
+		},
+		example: {
+			id: "mrr",
+			kind: "builtin:stat-card",
+			title: "MRR",
+			grid: grid(0, 0, 3, 2),
+			collapsed: false,
+			hidden: false,
+			bindings: { value: {
+				source: "static",
+				value: 128400
+			} },
+			props: {
+				format: "usd",
+				label: "Monthly recurring revenue"
+			}
 		}
-		if (best && y >= requested.y) break;
-	}
-	return best?.rect ?? null;
-}
-/** CSS grid-column/grid-row shorthand for a rect (1-based grid lines). */
-function gridPlacementStyle(rect) {
-	return [`grid-column: ${rect.x + 1} / span ${rect.w}`, `grid-row: ${rect.y + 1} / span ${rect.h}`].join("; ");
-}
-/** Total rows a set of widgets spans (for sizing the grid's min-height). */
-function gridRowCount(widgets) {
-	return widgets.reduce((max, widget) => Math.max(max, widget.grid.y + widget.grid.h), 0);
-}
-/** Nudge a rect by keyboard for the a11y move/resize fallback. */
-function nudgeRect(rect, mode, direction) {
-	const step = 1;
-	if (mode === "move") {
-		const dx = direction === "left" ? -1 : direction === "right" ? step : 0;
-		const dy = direction === "up" ? -1 : direction === "down" ? step : 0;
-		return clampRect({
-			...rect,
-			x: rect.x + dx,
-			y: rect.y + dy
-		});
-	}
-	const dw = direction === "left" ? -1 : direction === "right" ? step : 0;
-	const dh = direction === "up" ? -1 : direction === "down" ? step : 0;
-	return clampRect({
-		...rect,
-		w: rect.w + dw,
-		h: rect.h + dh
-	});
-}
-const PENDING_STATUS = "pending";
-function isRecord$4(value) {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-/**
-* Pull the strict workspace doc out of a `dashboard.workspace.get` payload. The
-* host responds `{ doc, workspaceVersion }`; `.workspace` and the bare payload are
-* accepted as fallbacks so export is robust to the response envelope.
-*/
-function workspaceDocFromPayload(payload) {
-	if (isRecord$4(payload)) {
-		if (isRecord$4(payload.doc)) return payload.doc;
-		if (isRecord$4(payload.workspace)) return payload.workspace;
-		return payload;
-	}
-	return {};
-}
-/** Timestamped download filename, e.g. `dashboard-workspace-2026-07-08T12-00-00-000Z.json`. */
-function workspaceExportFilename(now = /* @__PURE__ */ new Date()) {
-	return `dashboard-workspace-${now.toISOString().replace(/[:.]/g, "-")}.json`;
-}
-/** The `custom:<name>` name for a widget kind, or null for builtin/unknown kinds. */
-function customName(kind) {
-	if (typeof kind !== "string" || !kind.startsWith("custom:")) return null;
-	return kind.slice(7) || null;
-}
-/** Every custom-widget name referenced by the tabs' widgets. */
-function customWidgetNames(tabs) {
-	const names = /* @__PURE__ */ new Set();
-	if (!Array.isArray(tabs)) return names;
-	for (const tab of tabs) {
-		const widgets = isRecord$4(tab) && Array.isArray(tab.widgets) ? tab.widgets : [];
-		for (const widget of widgets) {
-			const name = isRecord$4(widget) ? customName(widget.kind) : null;
-			if (name) names.add(name);
+	},
+	{
+		kind: "builtin:chart",
+		summary: "Trends, comparisons, budgets — a small inline chart.",
+		bindings: [{
+			key: "value",
+			shape: "number[] (or labeled points {label,value}[])"
+		}],
+		props: {
+			type: "\"line\" | \"bar\" | \"area\" | \"sparkline\" | \"gauge\" (default line)",
+			detail: "true adds labeled axes, gridlines, and value tooltips (line/bar/area)",
+			label: "sparkline only: true shows the trailing value as an end label"
+		},
+		example: {
+			id: "revenue-trend",
+			kind: "builtin:chart",
+			title: "Revenue (14d)",
+			grid: grid(0, 2, 8, 5),
+			collapsed: false,
+			hidden: false,
+			bindings: { value: {
+				source: "static",
+				value: [
+					8,
+					12,
+					10,
+					18,
+					24,
+					21,
+					30,
+					35,
+					41,
+					52
+				]
+			} },
+			props: { type: "area" }
+		},
+		examples: [{
+			id: "signups-spark",
+			kind: "builtin:chart",
+			title: "Signups",
+			grid: grid(0, 7, 3, 2),
+			collapsed: false,
+			hidden: false,
+			bindings: { value: {
+				source: "static",
+				value: [
+					12,
+					9,
+					14,
+					11,
+					17,
+					15,
+					22
+				]
+			} },
+			props: {
+				type: "sparkline",
+				label: true
+			}
+		}, {
+			id: "latency-detail",
+			kind: "builtin:chart",
+			title: "p95 latency (ms)",
+			grid: grid(0, 9, 8, 5),
+			collapsed: false,
+			hidden: false,
+			bindings: { value: {
+				source: "static",
+				value: [
+					180,
+					220,
+					190,
+					240,
+					210,
+					260,
+					230
+				]
+			} },
+			props: {
+				type: "line",
+				detail: true
+			}
+		}]
+	},
+	{
+		kind: "builtin:table",
+		summary: "Rows and columns — a compact table (keep ~10 visible rows).",
+		bindings: [{
+			key: "rows",
+			shape: "Array<Record<string, unknown>> — NOT `value`"
+		}],
+		props: {
+			columns: "string[] of keys to show (defaults to the first row's keys)",
+			limit: "max visible rows before a “+N more” count"
+		},
+		example: {
+			id: "recent-runs",
+			kind: "builtin:table",
+			title: "Recent runs",
+			grid: grid(0, 7, 8, 4),
+			collapsed: false,
+			hidden: false,
+			bindings: { rows: {
+				source: "static",
+				value: [{
+					agent: "finance",
+					task: "Q3 rollup",
+					status: "done"
+				}, {
+					agent: "ops",
+					task: "Log sweep",
+					status: "running"
+				}]
+			} },
+			props: { columns: [
+				"agent",
+				"task",
+				"status"
+			] }
 		}
-	}
-	return names;
-}
-/** Keep only the registry entries whose custom widget still appears in `tabs`. */
-function pruneRegistry(tabs, registry) {
-	if (!isRecord$4(registry)) return {};
-	const referenced = customWidgetNames(tabs);
-	const pruned = {};
-	for (const [name, entry] of Object.entries(registry)) if (referenced.has(name)) pruned[name] = entry;
-	return pruned;
-}
-/**
-* Build the export doc: the full workspace, or a subset filtered to `slugs`. A
-* subset prunes `prefs.tabOrder` to the kept slugs and the registry to the custom
-* widgets those tabs still reference, so the result stays a valid WorkspaceDoc.
-*/
-function buildWorkspaceExportDoc(doc, options = {}) {
-	const clone = structuredClone(doc);
-	const slugs = options.slugs;
-	if (!slugs || slugs.length === 0) return clone;
-	const keep = new Set(slugs);
-	const tabs = Array.isArray(clone.tabs) ? clone.tabs.filter((tab) => isRecord$4(tab) && keep.has(tab.slug)) : [];
-	clone.tabs = tabs;
-	const prefs = isRecord$4(clone.prefs) ? clone.prefs : {};
-	const tabOrder = Array.isArray(prefs.tabOrder) ? prefs.tabOrder : [];
-	clone.prefs = {
-		...prefs,
-		tabOrder: tabOrder.filter((slug) => typeof slug === "string" && keep.has(slug))
-	};
-	clone.widgetsRegistry = pruneRegistry(tabs, clone.widgetsRegistry);
-	return clone;
-}
-/** Serialize the export doc as pretty JSON with a trailing newline (matches the store). */
-function serializeWorkspaceExport(doc, options = {}) {
-	return `${JSON.stringify(buildWorkspaceExportDoc(doc, options), null, 2)}\n`;
-}
-/** Parse an imported file into JSON, surfacing a friendly error on malformed input. */
-function parseWorkspaceImport(text) {
-	try {
-		return JSON.parse(text);
-	} catch {
-		throw new Error("Import file is not valid JSON.");
-	}
-}
-function toPendingEntry(entry) {
-	const createdBy = isRecord$4(entry) && typeof entry.createdBy === "string" ? entry.createdBy : "user";
-	return {
-		status: PENDING_STATUS,
-		createdBy
-	};
-}
-/**
-* Coerce every custom widget referenced by an imported doc to `pending` so the
-* approval gate runs before it can mount — an import NEVER auto-approves a custom
-* widget. Forces pending unconditionally because an imported workspace is foreign,
-* untrusted authoring. Structural validation is left to the server
-* (`dashboard.workspace.replace`).
-*/
-function sanitizeImportedWorkspace(parsed) {
-	if (!isRecord$4(parsed)) throw new Error("Import file must be a workspace object.");
-	const doc = structuredClone(parsed);
-	const registryInput = isRecord$4(doc.widgetsRegistry) ? doc.widgetsRegistry : {};
-	const registry = {};
-	for (const [name, entry] of Object.entries(registryInput)) registry[name] = toPendingEntry(entry);
-	for (const name of customWidgetNames(doc.tabs)) registry[name] ??= {
-		status: PENDING_STATUS,
-		createdBy: "user"
-	};
-	doc.widgetsRegistry = registry;
-	return doc;
-}
-function isRecord$3$1(value) {
-	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-function readString(value, fallback = "") {
-	return typeof value === "string" ? value : fallback;
-}
-function readNumber$1(value, fallback = 0) {
-	return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-function normalizeRect(value) {
-	const record = isRecord$3$1(value) ? value : {};
-	const w = Math.min(12, Math.max(1, Math.trunc(readNumber$1(record.w, 4))));
-	const h = Math.max(1, Math.trunc(readNumber$1(record.h, 2)));
-	return {
-		x: Math.min(12 - w, Math.max(0, Math.trunc(readNumber$1(record.x, 0)))),
-		y: Math.max(0, Math.trunc(readNumber$1(record.y, 0))),
-		w,
-		h
-	};
-}
-function normalizeBinding(value) {
-	if (!isRecord$3$1(value)) return null;
-	const source = value.source;
-	if (source !== "rpc" && source !== "file" && source !== "static" && source !== "stream" && source !== "computed") return null;
-	return {
-		source,
-		...typeof value.method === "string" ? { method: value.method } : {},
-		...typeof value.path === "string" ? { path: value.path } : {},
-		...typeof value.pointer === "string" ? { pointer: value.pointer } : {},
-		...isRecord$3$1(value.params) ? { params: value.params } : {},
-		..."value" in value ? { value: value.value } : {},
-		...typeof value.event === "string" ? { event: value.event } : {},
-		...typeof value.op === "string" ? { op: value.op } : {},
-		...Array.isArray(value.inputs) ? { inputs: value.inputs.filter((input) => typeof input === "string") } : {},
-		...typeof value.arg === "string" ? { arg: value.arg } : {}
-	};
-}
-function normalizeBindings(value) {
-	if (!isRecord$3$1(value)) return;
-	const bindings = {};
-	for (const [key, raw] of Object.entries(value)) {
-		const binding = normalizeBinding(raw);
-		if (binding) bindings[key] = binding;
-	}
-	return Object.keys(bindings).length ? bindings : void 0;
-}
-function normalizeWidget(value) {
-	if (!isRecord$3$1(value)) return null;
-	const id = readString(value.id).trim();
-	const kind = readString(value.kind).trim();
-	if (!id || !kind) return null;
-	const ephemeral = normalizeEphemeral(value.ephemeral);
-	return {
-		id,
-		kind,
-		title: readString(value.title),
-		grid: normalizeRect(value.grid),
-		collapsed: value.collapsed === true,
-		...typeof value.createdBy === "string" ? { createdBy: value.createdBy } : {},
-		...normalizeBindings(value.bindings) ? { bindings: normalizeBindings(value.bindings) } : {},
-		...isRecord$3$1(value.props) ? { props: value.props } : {},
-		...ephemeral ? { ephemeral } : {}
-	};
-}
-/** Read the ephemeral marker if present and well-formed (`{ expiresAt: string }`). */
-function normalizeEphemeral(value) {
-	if (!isRecord$3$1(value) || typeof value.expiresAt !== "string" || !value.expiresAt.trim()) return null;
-	return { expiresAt: value.expiresAt };
-}
-function normalizeTab(value) {
-	if (!isRecord$3$1(value)) return null;
-	const slug = readString(value.slug).trim();
-	if (!slug) return null;
-	const widgets = Array.isArray(value.widgets) ? value.widgets.map(normalizeWidget).filter((w) => w !== null) : [];
-	return {
-		slug,
-		title: readString(value.title, slug),
-		hidden: value.hidden === true,
-		widgets,
-		...value.layout === "full" || value.layout === "grid" ? { layout: value.layout } : {},
-		...value.visibility === "private" ? { visibility: "private" } : {},
-		...typeof value.owner === "string" ? { owner: value.owner } : {},
-		...typeof value.icon === "string" ? { icon: value.icon } : {},
-		...typeof value.createdBy === "string" ? { createdBy: value.createdBy } : {}
-	};
-}
-const WIDGET_STATUSES = /* @__PURE__ */ new Set([
-	"pending",
-	"approved",
-	"rejected"
-]);
-function normalizeRegistryEntry(value) {
-	if (!isRecord$3$1(value)) return null;
-	const status = value.status;
-	if (typeof status !== "string" || !WIDGET_STATUSES.has(status)) return null;
-	return {
-		status,
-		...typeof value.createdBy === "string" ? { createdBy: value.createdBy } : {},
-		...typeof value.approvedBy === "string" ? { approvedBy: value.approvedBy } : {},
-		...typeof value.approvedAt === "string" ? { approvedAt: value.approvedAt } : {}
-	};
-}
-function normalizeWidgetsRegistry(value) {
-	if (!isRecord$3$1(value)) return {};
-	const registry = {};
-	for (const [name, raw] of Object.entries(value)) {
-		const entry = normalizeRegistryEntry(raw);
-		if (entry) registry[name] = entry;
-	}
-	return registry;
-}
-function normalizeWorkspace(payload) {
-	const record = isRecord$3$1(payload) ? payload : {};
-	const tabs = Array.isArray(record.tabs) ? record.tabs.map(normalizeTab).filter((tab) => tab !== null) : [];
-	const prefsRecord = isRecord$3$1(record.prefs) ? record.prefs : {};
-	const tabOrder = Array.isArray(prefsRecord.tabOrder) ? prefsRecord.tabOrder.filter((slug) => typeof slug === "string") : [];
-	return {
-		schemaVersion: readNumber$1(record.schemaVersion, 1),
-		workspaceVersion: readNumber$1(record.workspaceVersion, 0),
-		tabs,
-		prefs: { tabOrder },
-		widgetsRegistry: normalizeWidgetsRegistry(record.widgetsRegistry)
-	};
-}
-/** The `custom:<name>` widget name, or null for builtin/unknown kinds. */
-function customWidgetName(kind) {
-	return kind.startsWith("custom:") ? kind.slice(7) || null : null;
-}
-/** Registry status for a custom widget kind, or null when not a tracked custom widget. */
-function customWidgetStatus(workspace, kind) {
-	const name = customWidgetName(kind);
-	if (!name) return null;
-	return workspace.widgetsRegistry[name]?.status ?? null;
-}
-/**
-* Tabs in display order: honor `prefs.tabOrder` first, then any doc-order tabs the
-* ordering omits, so a partial `tabOrder` still shows every tab.
-*/
-function orderedTabs(workspace) {
-	const bySlug = new Map(workspace.tabs.map((tab) => [tab.slug, tab]));
-	const ordered = [];
-	const seen = /* @__PURE__ */ new Set();
-	for (const slug of workspace.prefs.tabOrder) {
-		const tab = bySlug.get(slug);
-		if (tab && !seen.has(slug)) {
-			ordered.push(tab);
-			seen.add(slug);
+	},
+	{
+		kind: "builtin:markdown",
+		summary: "Prose, explanations, small markdown tables (sanitized).",
+		bindings: [{
+			key: "content",
+			shape: "markdown string — NOT `value`"
+		}],
+		props: {
+			markdown: "inline markdown source (used when there is no `content` binding)",
+			text: "alias for `markdown`"
+		},
+		example: {
+			id: "summary",
+			kind: "builtin:markdown",
+			title: "Summary",
+			grid: grid(8, 2, 4, 5),
+			collapsed: false,
+			hidden: false,
+			props: { markdown: "## Insights\n\n- Signal up **6.5×** across 14 days.\n- Momentum late." }
+		}
+	},
+	{
+		kind: "builtin:notes",
+		summary: "Operator scratch text (persisted via widget state).",
+		bindings: [],
+		props: { text: "starter content" },
+		example: {
+			id: "scratchpad",
+			kind: "builtin:notes",
+			title: "Notes",
+			grid: grid(8, 7, 4, 4),
+			collapsed: false,
+			hidden: false,
+			props: { text: "Jot findings here…" }
+		}
+	},
+	{
+		kind: "builtin:activity",
+		summary: "An event feed — recent things that happened.",
+		bindings: [{
+			key: "value",
+			shape: "{ entries: [{ ts, jobName, status, summary }] }"
+		}],
+		props: { limit: "max entries shown" },
+		example: {
+			id: "agent-events",
+			kind: "builtin:activity",
+			title: "Agent events",
+			grid: grid(0, 11, 6, 4),
+			collapsed: false,
+			hidden: false,
+			bindings: { value: {
+				source: "static",
+				value: { entries: [{
+					ts: 17836e8,
+					jobName: "finance",
+					status: "ok",
+					summary: "Rollup posted"
+				}] }
+			} }
+		}
+	},
+	{
+		kind: "builtin:action-form",
+		summary: "The chat↔dashboard loop — a form that submits through the control plane.",
+		bindings: [],
+		props: {
+			template: "the message sent on submit; `{{fieldName}}` interpolates a field (single pass)",
+			fields: "array of { name, label, type: \"text\"|\"number\"|\"select\", options?, maxLength? }",
+			buttonLabel: "the submit button text (optional)",
+			mode: "\"prompt\" (default: submit the template to the agent) or \"tool\" (invoke a granted external tool)",
+			connector: "tool mode only: the granted connector name (SPEC §17 v2)",
+			tool: "tool mode only: the tool to invoke on that connector",
+			argsFrom: "tool mode only: map of tool-arg name → declared field name"
+		},
+		example: {
+			id: "ask-agent",
+			kind: "builtin:action-form",
+			title: "Ask the agent",
+			grid: grid(0, 0, 4, 3),
+			collapsed: false,
+			hidden: false,
+			props: {
+				template: "Summarize {{topic}} for the board.",
+				fields: [{
+					name: "topic",
+					label: "Topic",
+					type: "text"
+				}],
+				buttonLabel: "Ask"
+			}
+		},
+		examples: [{
+			id: "file-ticket",
+			kind: "builtin:action-form",
+			title: "File a ticket",
+			grid: grid(0, 0, 4, 4),
+			collapsed: false,
+			hidden: false,
+			props: {
+				mode: "tool",
+				connector: "linear",
+				tool: "create_issue",
+				template: "Create issue: {title}",
+				fields: [{
+					name: "title",
+					label: "Title",
+					type: "text",
+					maxLength: 120
+				}, {
+					name: "priority",
+					label: "Priority",
+					type: "select",
+					options: [
+						"low",
+						"med",
+						"high"
+					]
+				}],
+				argsFrom: {
+					title: "title",
+					priority: "priority"
+				},
+				buttonLabel: "Create"
+			}
+		}]
+	},
+	{
+		kind: "builtin:action-button",
+		summary: "One click → invoke a granted external tool with fixed args (operator-confirmed).",
+		bindings: [],
+		props: {
+			connector: "the granted connector name (SPEC §17 v2)",
+			tool: "the tool to invoke on that connector",
+			args: "fixed argument object passed on click (optional)",
+			label: "button text (optional)"
+		},
+		example: {
+			id: "restart-worker",
+			kind: "builtin:action-button",
+			title: "Restart worker",
+			grid: grid(0, 0, 3, 2),
+			collapsed: false,
+			hidden: false,
+			props: {
+				connector: "officecli",
+				tool: "restart_service",
+				args: { service: "worker" },
+				label: "Restart"
+			}
+		}
+	},
+	{
+		kind: "builtin:chat",
+		summary: "Talk to the agent and watch it work (ignores bindings).",
+		bindings: [],
+		props: { placeholder: "empty-input hint text" },
+		example: {
+			id: "assistant",
+			kind: "builtin:chat",
+			title: "Assistant",
+			grid: grid(0, 0, 6, 8),
+			collapsed: false,
+			hidden: false,
+			props: { placeholder: "Ask me to build a view…" }
 		}
 	}
-	for (const tab of workspace.tabs) if (!seen.has(tab.slug)) {
-		ordered.push(tab);
-		seen.add(tab.slug);
-	}
-	return ordered;
-}
-function visibleTabs(workspace) {
-	return orderedTabs(workspace).filter((tab) => !tab.hidden);
-}
-function hiddenTabs(workspace) {
-	return orderedTabs(workspace).filter((tab) => tab.hidden);
-}
+];
 /**
-* Bucket tabs by their `createdBy` provenance for the per-agent nesting strip: a
-* `user` group (also the default for an unstamped tab), a `system` group, and one
-* group per distinct `agent:<id>`. Group order follows each actor's first
-* appearance in the input and tab order within a group is preserved, so callers
-* pass already-ordered (visible) tabs.
+* Data-source builtins: these render a fixed shape fed by an allowlisted `rpc` read
+* method or a `stream` binding a host wires up (not typically hand-authored with static
+* data). Listed by kind + the value shape they consume; a host that has the connector
+* binds them, e.g. `{ source: "rpc", method: "usage.cost" }`.
 */
-function groupTabsByActor(tabs) {
-	const groups = [];
-	const byKey = /* @__PURE__ */ new Map();
-	for (const tab of tabs) {
-		const agentId = dashboardAgentProvenance(tab.createdBy);
-		const kind = agentId ? "agent" : tab.createdBy === "system" ? "system" : "user";
-		const key = kind === "agent" ? `agent:${agentId}` : kind;
-		let group = byKey.get(key);
-		if (!group) {
-			group = {
-				key,
-				kind,
-				agentId: kind === "agent" ? agentId : null,
-				tabs: []
-			};
-			byKey.set(key, group);
-			groups.push(group);
-		}
-		group.tabs.push(tab);
+const DATA_SOURCE_WIDGET_KINDS = [
+	{
+		kind: "builtin:sessions",
+		summary: "Who/what is running.",
+		valueShape: "rows { key, label, status, hasActiveRun, updatedAt }; props.limit"
+	},
+	{
+		kind: "builtin:agent-status",
+		summary: "Agents + goals/progress.",
+		valueShape: "sessions shape + goal { objective, tokensUsed, tokenBudget }"
+	},
+	{
+		kind: "builtin:usage",
+		summary: "Cost/token totals.",
+		valueShape: "{ totals: { totalCost, totalTokens }, days? }"
+	},
+	{
+		kind: "builtin:cron",
+		summary: "Scheduled jobs.",
+		valueShape: "{ jobs: [{ id, name, enabled, state: { nextRunAtMs, lastRunStatus } }] }"
+	},
+	{
+		kind: "builtin:instances",
+		summary: "Fleet presence.",
+		valueShape: "{ presence: [{ instanceId, platform, version, lastInputSeconds }] }"
+	},
+	{
+		kind: "builtin:approvals",
+		summary: "Pending widget approvals (reads the live registry; ignores bindings).",
+		valueShape: "none — reads the registry"
+	},
+	{
+		kind: "builtin:preview",
+		summary: "A live page preview.",
+		valueShape: "props.url (same-origin ok; cross-origin needs host opt-in)"
+	},
+	{
+		kind: "builtin:iframe-embed",
+		summary: "An embedded live page.",
+		valueShape: "props.url (same-origin ok; cross-origin needs host opt-in)"
 	}
-	return groups;
-}
-function findTab(workspace, slug) {
-	if (!slug) return;
-	return workspace.tabs.find((tab) => tab.slug === slug);
-}
-/**
-* Resolve which tab is active: prefer the requested slug if it exists and is not
-* hidden; otherwise fall back to the first visible tab (or first tab of any kind).
-*/
-function resolveActiveSlug(workspace, requested) {
-	const requestedTab = findTab(workspace, requested);
-	if (requestedTab) return requestedTab.slug;
-	const visible = visibleTabs(workspace);
-	if (visible.length > 0) return visible[0].slug;
-	return orderedTabs(workspace)[0]?.slug ?? null;
-}
-/** Apply a JSON pointer (RFC 6901 subset) to a value; returns the value if empty. */
-function applyPointer(value, pointer) {
-	if (!pointer) return value;
-	const segments = pointer.split("/").slice(1).map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"));
-	let current = value;
-	for (const segment of segments) if (Array.isArray(current)) {
-		const index = Number(segment);
-		current = Number.isInteger(index) ? current[index] : void 0;
-	} else if (isRecord$3$1(current)) current = current[segment];
-	else return;
-	return current;
-}
+];
+[...WIDGET_CATALOG.map((entry) => entry.kind), ...DATA_SOURCE_WIDGET_KINDS.map((entry) => entry.kind)];
 function indexWidgets(workspace) {
 	const index = /* @__PURE__ */ new Map();
 	for (const tab of workspace.tabs) for (const widget of tab.widgets) index.set(widget.id, {
@@ -1231,8 +1845,651 @@ function firstSeenVersion(widgetId, snapshots) {
 	const earliest = containing[0];
 	return snapshots.some((snapshot) => snapshot.version < earliest) ? earliest : void 0;
 }
+/** Provenance is an agent authorship when the stamp is prefixed `agent:`. */
+function dashboardAgentProvenance(createdBy) {
+	if (typeof createdBy !== "string") return null;
+	const trimmed = createdBy.trim();
+	return trimmed.startsWith("agent:") ? trimmed.slice(6) || "agent" : null;
+}
+function isRecord$5(value) {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function readString(value, fallback = "") {
+	return typeof value === "string" ? value : fallback;
+}
+function readNumber$1(value, fallback = 0) {
+	return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+function normalizeRect(value) {
+	const record = isRecord$5(value) ? value : {};
+	const w = Math.min(12, Math.max(1, Math.trunc(readNumber$1(record.w, 4))));
+	const h = Math.max(1, Math.trunc(readNumber$1(record.h, 2)));
+	return {
+		x: Math.min(12 - w, Math.max(0, Math.trunc(readNumber$1(record.x, 0)))),
+		y: Math.max(0, Math.trunc(readNumber$1(record.y, 0))),
+		w,
+		h
+	};
+}
+function normalizeBinding(value) {
+	if (!isRecord$5(value)) return null;
+	const source = value.source;
+	if (source !== "rpc" && source !== "file" && source !== "static" && source !== "stream" && source !== "computed" && source !== "mcp") return null;
+	return {
+		source,
+		...typeof value.method === "string" ? { method: value.method } : {},
+		...typeof value.path === "string" ? { path: value.path } : {},
+		...typeof value.pointer === "string" ? { pointer: value.pointer } : {},
+		...isRecord$5(value.params) ? { params: value.params } : {},
+		..."value" in value ? { value: value.value } : {},
+		...typeof value.event === "string" ? { event: value.event } : {},
+		...typeof value.op === "string" ? { op: value.op } : {},
+		...Array.isArray(value.inputs) ? { inputs: value.inputs.filter((input) => typeof input === "string") } : {},
+		...typeof value.arg === "string" ? { arg: value.arg } : {},
+		...typeof value.connector === "string" ? { connector: value.connector } : {},
+		...typeof value.tool === "string" ? { tool: value.tool } : {},
+		...isRecord$5(value.args) ? { args: value.args } : {}
+	};
+}
+function normalizeBindings(value) {
+	if (!isRecord$5(value)) return;
+	const bindings = {};
+	for (const [key, raw] of Object.entries(value)) {
+		const binding = normalizeBinding(raw);
+		if (binding) bindings[key] = binding;
+	}
+	return Object.keys(bindings).length ? bindings : void 0;
+}
+function normalizeWidget(value) {
+	if (!isRecord$5(value)) return null;
+	const id = readString(value.id).trim();
+	const kind = readString(value.kind).trim();
+	if (!id || !kind) return null;
+	const ephemeral = normalizeEphemeral(value.ephemeral);
+	return {
+		id,
+		kind,
+		title: readString(value.title),
+		grid: normalizeRect(value.grid),
+		collapsed: value.collapsed === true,
+		...typeof value.createdBy === "string" ? { createdBy: value.createdBy } : {},
+		...normalizeBindings(value.bindings) ? { bindings: normalizeBindings(value.bindings) } : {},
+		...isRecord$5(value.props) ? { props: value.props } : {},
+		...ephemeral ? { ephemeral } : {}
+	};
+}
+/** Read the ephemeral marker if present and well-formed (`{ expiresAt: string }`). */
+function normalizeEphemeral(value) {
+	if (!isRecord$5(value) || typeof value.expiresAt !== "string" || !value.expiresAt.trim()) return null;
+	return { expiresAt: value.expiresAt };
+}
+function normalizeTab(value) {
+	if (!isRecord$5(value)) return null;
+	const slug = readString(value.slug).trim();
+	if (!slug) return null;
+	const widgets = Array.isArray(value.widgets) ? value.widgets.map(normalizeWidget).filter((w) => w !== null) : [];
+	return {
+		slug,
+		title: readString(value.title, slug),
+		hidden: value.hidden === true,
+		widgets,
+		...value.layout === "full" || value.layout === "grid" ? { layout: value.layout } : {},
+		...value.visibility === "private" ? { visibility: "private" } : {},
+		...typeof value.owner === "string" ? { owner: value.owner } : {},
+		...typeof value.icon === "string" ? { icon: value.icon } : {},
+		...typeof value.createdBy === "string" ? { createdBy: value.createdBy } : {}
+	};
+}
+const WIDGET_STATUSES = /* @__PURE__ */ new Set([
+	"pending",
+	"approved",
+	"rejected"
+]);
+function normalizeRegistryEntry(value) {
+	if (!isRecord$5(value)) return null;
+	const status = value.status;
+	if (typeof status !== "string" || !WIDGET_STATUSES.has(status)) return null;
+	return {
+		status,
+		...typeof value.createdBy === "string" ? { createdBy: value.createdBy } : {},
+		...typeof value.approvedBy === "string" ? { approvedBy: value.approvedBy } : {},
+		...typeof value.approvedAt === "string" ? { approvedAt: value.approvedAt } : {}
+	};
+}
+function normalizeWidgetsRegistry(value) {
+	if (!isRecord$5(value)) return {};
+	const registry = {};
+	for (const [name, raw] of Object.entries(value)) {
+		const entry = normalizeRegistryEntry(raw);
+		if (entry) registry[name] = entry;
+	}
+	return registry;
+}
+const CAPABILITY_STATUSES = /* @__PURE__ */ new Set([
+	"requested",
+	"granted",
+	"revoked"
+]);
+/** Read one capability grant defensively; drops a malformed entry (returns null). */
+function normalizeCapabilityGrant(value) {
+	if (!isRecord$5(value)) return null;
+	const status = value.status;
+	if (typeof status !== "string" || !CAPABILITY_STATUSES.has(status)) return null;
+	const strings = (raw) => Array.isArray(raw) ? raw.filter((entry) => typeof entry === "string") : [];
+	return {
+		status,
+		methods: strings(value.methods),
+		streams: strings(value.streams),
+		...Array.isArray(value.tools) ? { tools: strings(value.tools) } : {},
+		...typeof value.toolsHash === "string" ? { toolsHash: value.toolsHash } : {},
+		...Array.isArray(value.autoConfirm) ? { autoConfirm: strings(value.autoConfirm) } : {},
+		...typeof value.expiresAt === "string" ? { expiresAt: value.expiresAt } : {},
+		...Array.isArray(value.agents) ? { agents: strings(value.agents) } : {},
+		...typeof value.description === "string" ? { description: value.description } : {},
+		...typeof value.grantedBy === "string" ? { grantedBy: value.grantedBy } : {},
+		...typeof value.grantedAt === "string" ? { grantedAt: value.grantedAt } : {}
+	};
+}
+function normalizeCapabilitiesRegistry(value) {
+	if (!isRecord$5(value)) return {};
+	const registry = {};
+	for (const [name, raw] of Object.entries(value)) {
+		const grant = normalizeCapabilityGrant(raw);
+		if (grant) registry[name] = grant;
+	}
+	return registry;
+}
+function normalizeWorkspace(payload) {
+	const record = isRecord$5(payload) ? payload : {};
+	const tabs = Array.isArray(record.tabs) ? record.tabs.map(normalizeTab).filter((tab) => tab !== null) : [];
+	const prefsRecord = isRecord$5(record.prefs) ? record.prefs : {};
+	const tabOrder = Array.isArray(prefsRecord.tabOrder) ? prefsRecord.tabOrder.filter((slug) => typeof slug === "string") : [];
+	return {
+		schemaVersion: readNumber$1(record.schemaVersion, 1),
+		workspaceVersion: readNumber$1(record.workspaceVersion, 0),
+		tabs,
+		prefs: { tabOrder },
+		widgetsRegistry: normalizeWidgetsRegistry(record.widgetsRegistry),
+		capabilitiesRegistry: normalizeCapabilitiesRegistry(record.capabilitiesRegistry)
+	};
+}
+/** The `custom:<name>` widget name, or null for builtin/unknown kinds. */
+function customWidgetName(kind) {
+	return kind.startsWith("custom:") ? kind.slice(7) || null : null;
+}
+/** Registry status for a custom widget kind, or null when not a tracked custom widget. */
+function customWidgetStatus(workspace, kind) {
+	const name = customWidgetName(kind);
+	if (!name) return null;
+	return workspace.widgetsRegistry[name]?.status ?? null;
+}
+/**
+* Tabs in display order: honor `prefs.tabOrder` first, then any doc-order tabs the
+* ordering omits, so a partial `tabOrder` still shows every tab.
+*/
+function orderedTabs(workspace) {
+	const bySlug = new Map(workspace.tabs.map((tab) => [tab.slug, tab]));
+	const ordered = [];
+	const seen = /* @__PURE__ */ new Set();
+	for (const slug of workspace.prefs.tabOrder) {
+		const tab = bySlug.get(slug);
+		if (tab && !seen.has(slug)) {
+			ordered.push(tab);
+			seen.add(slug);
+		}
+	}
+	for (const tab of workspace.tabs) if (!seen.has(tab.slug)) {
+		ordered.push(tab);
+		seen.add(tab.slug);
+	}
+	return ordered;
+}
+function visibleTabs(workspace) {
+	return orderedTabs(workspace).filter((tab) => !tab.hidden);
+}
+function hiddenTabs(workspace) {
+	return orderedTabs(workspace).filter((tab) => tab.hidden);
+}
+/**
+* Bucket tabs by their `createdBy` provenance for the per-agent nesting strip: a
+* `user` group (also the default for an unstamped tab), a `system` group, and one
+* group per distinct `agent:<id>`. Group order follows each actor's first
+* appearance in the input and tab order within a group is preserved, so callers
+* pass already-ordered (visible) tabs.
+*/
+function groupTabsByActor(tabs) {
+	const groups = [];
+	const byKey = /* @__PURE__ */ new Map();
+	for (const tab of tabs) {
+		const agentId = dashboardAgentProvenance(tab.createdBy);
+		const kind = agentId ? "agent" : tab.createdBy === "system" ? "system" : "user";
+		const key = kind === "agent" ? `agent:${agentId}` : kind;
+		let group = byKey.get(key);
+		if (!group) {
+			group = {
+				key,
+				kind,
+				agentId: kind === "agent" ? agentId : null,
+				tabs: []
+			};
+			byKey.set(key, group);
+			groups.push(group);
+		}
+		group.tabs.push(tab);
+	}
+	return groups;
+}
+function findTab(workspace, slug) {
+	if (!slug) return;
+	return workspace.tabs.find((tab) => tab.slug === slug);
+}
+/**
+* Resolve which tab is active: prefer the requested slug if it exists and is not
+* hidden; otherwise fall back to the first visible tab (or first tab of any kind).
+*/
+function resolveActiveSlug(workspace, requested) {
+	const requestedTab = findTab(workspace, requested);
+	if (requestedTab) return requestedTab.slug;
+	const visible = visibleTabs(workspace);
+	if (visible.length > 0) return visible[0].slug;
+	return orderedTabs(workspace)[0]?.slug ?? null;
+}
+/** Apply a JSON pointer (RFC 6901 subset) to a value; returns the value if empty. */
+function applyPointer(value, pointer) {
+	if (!pointer) return value;
+	const segments = pointer.split("/").slice(1).map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"));
+	let current = value;
+	for (const segment of segments) if (Array.isArray(current)) {
+		const index = Number(segment);
+		current = Number.isInteger(index) ? current[index] : void 0;
+	} else if (isRecord$5(current)) current = current[segment];
+	else return;
+	return current;
+}
+/**
+* The tab-scoped subscription table: `tabSlug -> channel -> subscriberId ->
+* Subscription`. A publish resolves the publisher's tab bucket FIRST, so a message
+* can only ever reach same-tab subscribers — cross-tab delivery is unreachable, not
+* merely filtered out.
+*/
+const subscriptionsByTab = /* @__PURE__ */ new Map();
+/** Monotonic source of opaque, non-guessable-by-widgets subscriber identities. */
+let subscriberSeq = 0;
+/** Mint a fresh broker-assigned subscriber id. Never derived from widget input. */
+function nextSubscriberId() {
+	subscriberSeq += 1;
+	return `sub_${subscriberSeq}`;
+}
+/**
+* Register a subscription for `subscriberId` on `(tabSlug, channel)`. Idempotent
+* per `(tab, channel, subscriberId)`: re-subscribing replaces the record rather
+* than stacking duplicate deliveries. Returns an unsubscribe fn scoped to exactly
+* this `(tab, channel, subscriberId)` triple.
+*/
+function subscribe(params) {
+	const { tabSlug, channel, subscriberId, deliver } = params;
+	let byChannel = subscriptionsByTab.get(tabSlug);
+	if (!byChannel) {
+		byChannel = /* @__PURE__ */ new Map();
+		subscriptionsByTab.set(tabSlug, byChannel);
+	}
+	let bySubscriber = byChannel.get(channel);
+	if (!bySubscriber) {
+		bySubscriber = /* @__PURE__ */ new Map();
+		byChannel.set(channel, bySubscriber);
+	}
+	bySubscriber.set(subscriberId, {
+		subscriberId,
+		channel,
+		deliver
+	});
+	return () => unsubscribe({
+		tabSlug,
+		channel,
+		subscriberId
+	});
+}
+/** Remove one subscription, pruning empty channel/tab buckets so nothing leaks. */
+function unsubscribe(params) {
+	const { tabSlug, channel, subscriberId } = params;
+	const byChannel = subscriptionsByTab.get(tabSlug);
+	const bySubscriber = byChannel?.get(channel);
+	if (!bySubscriber) return;
+	bySubscriber.delete(subscriberId);
+	if (bySubscriber.size === 0) byChannel?.delete(channel);
+	if (byChannel && byChannel.size === 0) subscriptionsByTab.delete(tabSlug);
+}
+/**
+* Remove EVERY subscription owned by `subscriberId` on `tabSlug` (unmount teardown).
+* The bridge tracks its own channels, but this is the belt-and-suspenders sweep so a
+* disposed widget can never receive a dangling delivery.
+*/
+function unsubscribeAll(tabSlug, subscriberId) {
+	const byChannel = subscriptionsByTab.get(tabSlug);
+	if (!byChannel) return;
+	for (const [channel, bySubscriber] of byChannel) if (bySubscriber.delete(subscriberId) && bySubscriber.size === 0) byChannel.delete(channel);
+	if (byChannel.size === 0) subscriptionsByTab.delete(tabSlug);
+}
+/**
+* Broker a publish: deliver `payload` on `channel` to every OTHER same-tab
+* subscriber (the publisher, identified by `fromSubscriberId`, is excluded from its
+* own broadcast). Cross-tab delivery is impossible — only the publisher's own tab
+* bucket is ever consulted. Returns the number of subscribers reached (for tests).
+*/
+function publish(params) {
+	const { tabSlug, channel, fromSubscriberId, payload } = params;
+	const bySubscriber = subscriptionsByTab.get(tabSlug)?.get(channel);
+	if (!bySubscriber) return 0;
+	let delivered = 0;
+	for (const subscription of Array.from(bySubscriber.values())) {
+		if (subscription.subscriberId === fromSubscriberId) continue;
+		subscription.deliver(channel, payload);
+		delivered += 1;
+	}
+	return delivered;
+}
+/** Column width in pixels given the grid content width. Gaps sit between cells. */
+function columnWidth(metrics) {
+	return Math.max(1, (metrics.width - 132) / 12);
+}
+function clamp(value, min, max) {
+	return Math.min(max, Math.max(min, value));
+}
+/** Snap a fractional column delta to whole grid units. */
+function snapCells(deltaPx, unitPx) {
+	if (unitPx <= 0) return 0;
+	return Math.round(deltaPx / (unitPx + 12));
+}
+/** Clamp a rect so it stays inside the 12-column grid; height/y are unbounded below. */
+function clampRect(rect) {
+	const w = clamp(rect.w, 1, 12);
+	const h = Math.max(1, rect.h);
+	return {
+		x: clamp(rect.x, 0, 12 - w),
+		y: Math.max(0, rect.y),
+		w,
+		h
+	};
+}
+/** Do two grid rects share any cell? Touching edges do NOT overlap. */
+function rectsOverlap(a, b) {
+	return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+/** Rects of every widget except the one identified by `exceptId`. */
+function otherRects(widgets, exceptId) {
+	return widgets.filter((widget) => widget.id !== exceptId).map((widget) => widget.grid);
+}
+/** Does `rect` overlap any widget other than `exceptId`? */
+function collides(rect, widgets, exceptId) {
+	return otherRects(widgets, exceptId).some((other) => rectsOverlap(rect, other));
+}
+/** Begin a drag/resize gesture from a pointer-down on a widget's chrome. */
+function beginDrag(params) {
+	return {
+		widgetId: params.widget.id,
+		mode: params.mode,
+		originRect: { ...params.widget.grid },
+		originClientX: params.clientX,
+		originClientY: params.clientY,
+		ghostRect: { ...params.widget.grid },
+		pointerDx: 0,
+		pointerDy: 0,
+		columnWidth: columnWidth(params.metrics)
+	};
+}
+/** Advance a drag with the current pointer position; returns the snapped ghost rect. */
+function updateDrag(drag, clientX, clientY) {
+	drag.pointerDx = clientX - drag.originClientX;
+	drag.pointerDy = clientY - drag.originClientY;
+	const rowUnit = 56;
+	const deltaCols = snapCells(clientX - drag.originClientX, drag.columnWidth);
+	const deltaRows = snapCells(clientY - drag.originClientY, rowUnit);
+	const clamped = clampRect(drag.mode === "move" ? {
+		x: drag.originRect.x + deltaCols,
+		y: drag.originRect.y + deltaRows,
+		w: drag.originRect.w,
+		h: drag.originRect.h
+	} : {
+		x: drag.originRect.x,
+		y: drag.originRect.y,
+		w: drag.originRect.w + deltaCols,
+		h: drag.originRect.h + deltaRows
+	});
+	drag.ghostRect = clamped;
+	return clamped;
+}
+/**
+* Resolve where a dropped widget lands. Overlapping drops are rejected; the
+* nearest collision-free slot to the requested position is returned instead.
+* Returns null only if the grid genuinely has no free slot for the widget's size
+* (defensive; the grid is unbounded downward so this is unreachable in practice).
+*/
+function resolveDrop(params) {
+	const requested = clampRect(params.requested);
+	if (!collides(requested, params.widgets, params.widgetId)) return requested;
+	return nearestFreeSlot(requested, params.widgets, params.widgetId);
+}
+/**
+* Search outward from the requested position for the closest slot that fits
+* `requested`'s size without colliding. The grid grows downward, so a fit is
+* always found within a bounded number of rows.
+*/
+function nearestFreeSlot(requested, widgets, widgetId) {
+	const w = clamp(requested.w, 1, 12);
+	const h = Math.max(1, requested.h);
+	const maxX = 12 - w;
+	const occupiedRows = otherRects(widgets, widgetId).reduce((max, rect) => Math.max(max, rect.y + rect.h), 0);
+	const maxY = Math.max(requested.y, occupiedRows) + h;
+	let best = null;
+	for (let y = 0; y <= maxY; y += 1) {
+		for (let x = 0; x <= maxX; x += 1) {
+			const candidate = {
+				x,
+				y,
+				w,
+				h
+			};
+			if (collides(candidate, widgets, widgetId)) continue;
+			const distance = Math.abs(x - requested.x) + Math.abs(y - requested.y);
+			if (!best || distance < best.distance) best = {
+				rect: candidate,
+				distance
+			};
+		}
+		if (best && y >= requested.y) break;
+	}
+	return best?.rect ?? null;
+}
+/** CSS grid-column/grid-row shorthand for a rect (1-based grid lines). */
+function gridPlacementStyle(rect) {
+	return [`grid-column: ${rect.x + 1} / span ${rect.w}`, `grid-row: ${rect.y + 1} / span ${rect.h}`].join("; ");
+}
+/** Total rows a set of widgets spans (for sizing the grid's min-height). */
+function gridRowCount(widgets) {
+	return widgets.reduce((max, widget) => Math.max(max, widget.grid.y + widget.grid.h), 0);
+}
+/** Nudge a rect by keyboard for the a11y move/resize fallback. */
+function nudgeRect(rect, mode, direction) {
+	const step = 1;
+	if (mode === "move") {
+		const dx = direction === "left" ? -1 : direction === "right" ? step : 0;
+		const dy = direction === "up" ? -1 : direction === "down" ? step : 0;
+		return clampRect({
+			...rect,
+			x: rect.x + dx,
+			y: rect.y + dy
+		});
+	}
+	const dw = direction === "left" ? -1 : direction === "right" ? step : 0;
+	const dh = direction === "up" ? -1 : direction === "down" ? step : 0;
+	return clampRect({
+		...rect,
+		w: rect.w + dw,
+		h: rect.h + dh
+	});
+}
+const PENDING_STATUS = "pending";
+function isRecord$3$1(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+/**
+* Pull the strict workspace doc out of a `dashboard.workspace.get` payload. The
+* host responds `{ doc, workspaceVersion }`; `.workspace` and the bare payload are
+* accepted as fallbacks so export is robust to the response envelope.
+*/
+function workspaceDocFromPayload(payload) {
+	if (isRecord$3$1(payload)) {
+		if (isRecord$3$1(payload.doc)) return payload.doc;
+		if (isRecord$3$1(payload.workspace)) return payload.workspace;
+		return payload;
+	}
+	return {};
+}
+/** Timestamped download filename, e.g. `dashboard-workspace-2026-07-08T12-00-00-000Z.json`. */
+function workspaceExportFilename(now = /* @__PURE__ */ new Date()) {
+	return `dashboard-workspace-${now.toISOString().replace(/[:.]/g, "-")}.json`;
+}
+/** The `custom:<name>` name for a widget kind, or null for builtin/unknown kinds. */
+function customName(kind) {
+	if (typeof kind !== "string" || !kind.startsWith("custom:")) return null;
+	return kind.slice(7) || null;
+}
+/** Every custom-widget name referenced by the tabs' widgets. */
+function customWidgetNames(tabs) {
+	const names = /* @__PURE__ */ new Set();
+	if (!Array.isArray(tabs)) return names;
+	for (const tab of tabs) {
+		const widgets = isRecord$3$1(tab) && Array.isArray(tab.widgets) ? tab.widgets : [];
+		for (const widget of widgets) {
+			const name = isRecord$3$1(widget) ? customName(widget.kind) : null;
+			if (name) names.add(name);
+		}
+	}
+	return names;
+}
+/** Keep only the registry entries whose custom widget still appears in `tabs`. */
+function pruneRegistry(tabs, registry) {
+	if (!isRecord$3$1(registry)) return {};
+	const referenced = customWidgetNames(tabs);
+	const pruned = {};
+	for (const [name, entry] of Object.entries(registry)) if (referenced.has(name)) pruned[name] = entry;
+	return pruned;
+}
+/**
+* Build the export doc: the full workspace, or a subset filtered to `slugs`. A
+* subset prunes `prefs.tabOrder` to the kept slugs and the registry to the custom
+* widgets those tabs still reference, so the result stays a valid WorkspaceDoc.
+*/
+function buildWorkspaceExportDoc(doc, options = {}) {
+	const clone = structuredClone(doc);
+	const slugs = options.slugs;
+	if (!slugs || slugs.length === 0) return clone;
+	const keep = new Set(slugs);
+	const tabs = Array.isArray(clone.tabs) ? clone.tabs.filter((tab) => isRecord$3$1(tab) && keep.has(tab.slug)) : [];
+	clone.tabs = tabs;
+	const prefs = isRecord$3$1(clone.prefs) ? clone.prefs : {};
+	const tabOrder = Array.isArray(prefs.tabOrder) ? prefs.tabOrder : [];
+	clone.prefs = {
+		...prefs,
+		tabOrder: tabOrder.filter((slug) => typeof slug === "string" && keep.has(slug))
+	};
+	clone.widgetsRegistry = pruneRegistry(tabs, clone.widgetsRegistry);
+	return clone;
+}
+/** Serialize the export doc as pretty JSON with a trailing newline (matches the store). */
+function serializeWorkspaceExport(doc, options = {}) {
+	return `${JSON.stringify(buildWorkspaceExportDoc(doc, options), null, 2)}\n`;
+}
+/** Parse an imported file into JSON, surfacing a friendly error on malformed input. */
+function parseWorkspaceImport(text) {
+	try {
+		return JSON.parse(text);
+	} catch {
+		throw new Error("Import file is not valid JSON.");
+	}
+}
+function toPendingEntry(entry) {
+	const createdBy = isRecord$3$1(entry) && typeof entry.createdBy === "string" ? entry.createdBy : "user";
+	return {
+		status: PENDING_STATUS,
+		createdBy
+	};
+}
+/**
+* Coerce every custom widget referenced by an imported doc to `pending` so the
+* approval gate runs before it can mount — an import NEVER auto-approves a custom
+* widget. Forces pending unconditionally because an imported workspace is foreign,
+* untrusted authoring. Structural validation is left to the server
+* (`dashboard.workspace.replace`).
+*/
+function sanitizeImportedWorkspace(parsed) {
+	if (!isRecord$3$1(parsed)) throw new Error("Import file must be a workspace object.");
+	const doc = structuredClone(parsed);
+	const registryInput = isRecord$3$1(doc.widgetsRegistry) ? doc.widgetsRegistry : {};
+	const registry = {};
+	for (const [name, entry] of Object.entries(registryInput)) registry[name] = toPendingEntry(entry);
+	for (const name of customWidgetNames(doc.tabs)) registry[name] ??= {
+		status: PENDING_STATUS,
+		createdBy: "user"
+	};
+	doc.widgetsRegistry = registry;
+	const capsInput = isRecord$3$1(doc.capabilitiesRegistry) ? doc.capabilitiesRegistry : {};
+	const caps = {};
+	for (const [name, entry] of Object.entries(capsInput)) if (isRecord$3$1(entry)) {
+		const { grantedBy: _grantedBy, grantedAt: _grantedAt, autoConfirm: _autoConfirm, expiresAt: _expiresAt, agents: _agents, ...rest } = entry;
+		caps[name] = {
+			...rest,
+			status: "requested"
+		};
+	}
+	doc.capabilitiesRegistry = caps;
+	return doc;
+}
+/** The one-liner (grant `description`) for a connector's approval card. */
+function recipeGrantDescription(grant) {
+	const reason = grant.reason?.trim();
+	return reason && reason.length > 0 ? reason.slice(0, 200) : void 0;
+}
+/**
+* Build the workspace doc a recipe installs: the recipe's `doc` with its
+* `capabilitiesRegistry` REPLACED by the grants the `grantsManifest` declares, each
+* `requested`. The result is NOT yet re-pended — pass it through
+* `sanitizeImportedWorkspace` (as `buildRecipeImportDoc` does) so it travels the same
+* seam every imported board does. `toolsHash` is deliberately omitted: the broker
+* reconciles a `requested` grant's tool surface to the connector's live manifest on its
+* next refresh, so the recipe declares INTENT and the host owns the authoritative hash.
+*/
+function buildRecipeInstallDoc(recipe) {
+	const doc = structuredClone(recipe.doc);
+	const caps = {};
+	for (const [connector, grant] of Object.entries(recipe.grantsManifest)) {
+		const description = recipeGrantDescription(grant);
+		const tools = (grant.tools ?? []).map((tool) => tool.id);
+		caps[connector] = {
+			status: "requested",
+			methods: grant.methods ?? [],
+			streams: grant.streams ?? [],
+			...tools.length > 0 ? { tools } : {},
+			...description !== void 0 ? { description } : {}
+		};
+	}
+	doc.capabilitiesRegistry = caps;
+	return doc;
+}
+/**
+* The doc to hand `dashboard.workspace.replace` when installing a recipe: the recipe's
+* board with its manifest grants merged in, then run through the SAME
+* `sanitizeImportedWorkspace` re-pend as any imported workspace. Install therefore
+* inherits every import guarantee — pending widgets, requested grants, stripped
+* auto-run/TTL — for free, and can never grant.
+*/
+function buildRecipeImportDoc(recipe) {
+	return sanitizeImportedWorkspace(buildRecipeInstallDoc(recipe));
+}
 /** Hard client-side cap on a fetched bundle; the host re-checks server-side. */
 const GALLERY_BUNDLE_MAX_BYTES = 512 * 1024;
+/** Hard client-side cap on a fetched recipe bundle (a doc can be large but bounded). */
+const GALLERY_RECIPE_MAX_BYTES = 512 * 1024;
 /** Hard client-side cap on a fetched registry index. */
 const GALLERY_INDEX_MAX_BYTES = 256 * 1024;
 const CUSTOM_WIDGET_NAME_PATTERN$1 = /^[A-Za-z0-9._-]{1,64}$/;
@@ -1316,10 +2573,68 @@ function parseWidgetBundle(text) {
 		files
 	};
 }
+const RECIPE_NAME_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+/**
+* Parse a registry `index.json` text's `recipes` array (CLIENT-fetched), sibling of the
+* widget entries. Relative `manifestUrl`s resolve against `indexUrl`; malformed entries
+* are dropped rather than throwing. An index with no `recipes` key yields `[]`.
+*/
+function parseRecipeIndex(text, indexUrl) {
+	let parsed;
+	try {
+		parsed = JSON.parse(text);
+	} catch {
+		throw new Error("The gallery index is not valid JSON.");
+	}
+	const rawList = isRecord$1$4(parsed) && Array.isArray(parsed.recipes) ? parsed.recipes : null;
+	if (!rawList) return [];
+	const entries = [];
+	for (const raw of rawList) {
+		if (!isRecord$1$4(raw)) continue;
+		const name = typeof raw.name === "string" ? raw.name.trim() : "";
+		const manifestUrlRaw = typeof raw.manifestUrl === "string" ? raw.manifestUrl.trim() : "";
+		if (!RECIPE_NAME_PATTERN.test(name) || !manifestUrlRaw) continue;
+		let manifestUrl;
+		try {
+			manifestUrl = new URL(manifestUrlRaw, indexUrl).toString();
+		} catch {
+			continue;
+		}
+		const connectors = Array.isArray(raw.connectors) ? raw.connectors.filter((c) => typeof c === "string") : [];
+		entries.push({
+			name,
+			title: typeof raw.title === "string" && raw.title ? raw.title : name,
+			description: typeof raw.description === "string" ? raw.description : "",
+			manifestUrl,
+			connectors
+		});
+	}
+	return entries;
+}
+/**
+* Parse + fully validate a recipe bundle text (CLIENT-fetched). Unlike a widget bundle
+* (whose manifest is authoritatively validated server-side on install), a recipe is pure
+* data applied through `dashboard.workspace.replace`, so it is validated in full HERE with
+* the shared `validateRecipe` — the same guard the honesty gate runs over every shipped
+* recipe. Throws a friendly error on malformed input.
+*/
+function parseRecipeBundle(text) {
+	let parsed;
+	try {
+		parsed = JSON.parse(text);
+	} catch {
+		throw new Error("The recipe bundle is not valid JSON.");
+	}
+	try {
+		return validateRecipe(parsed);
+	} catch (err) {
+		throw new Error(`The recipe bundle is invalid: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
 function widgetProps(widget) {
 	return widget.props ?? {};
 }
-function isRecord$5(value) {
+function isRecord$4(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 /** Coerce a possibly-string numeric field to a finite number, else undefined. */
@@ -1332,8 +2647,8 @@ function toFiniteNumber(value) {
 }
 /** Named metrics selectable from a structured binding payload via `props.metric`. */
 function selectMetric(value, metric) {
-	if (!isRecord$5(value)) return;
-	const totals = isRecord$5(value.totals) ? value.totals : void 0;
+	if (!isRecord$4(value)) return;
+	const totals = isRecord$4(value.totals) ? value.totals : void 0;
 	switch (metric) {
 		case "todayCost": return totals?.totalCost ?? value.totalCost;
 		case "todayTokens": return totals?.totalTokens ?? value.totalTokens;
@@ -1378,7 +2693,7 @@ function mapMarkdownSource(widget, value) {
 const DEFAULT_ROW_LIMIT = 8;
 /** Pull an array of row records out of the binding value or `props.rows`. */
 function resolveRows(widget, value) {
-	return (Array.isArray(value) ? value : isRecord$5(value) && Array.isArray(value.rows) ? value.rows : Array.isArray(widgetProps(widget).rows) ? widgetProps(widget).rows : []).filter(isRecord$5);
+	return (Array.isArray(value) ? value : isRecord$4(value) && Array.isArray(value.rows) ? value.rows : Array.isArray(widgetProps(widget).rows) ? widgetProps(widget).rows : []).filter(isRecord$4);
 }
 function resolveColumns(widget, rows) {
 	const declared = widgetProps(widget).columns;
@@ -1415,10 +2730,10 @@ function rowLabel$1(row, key) {
 	return typeof display === "string" && display.trim() ? display : key;
 }
 function mapSessions(widget, value) {
-	const raw = Array.isArray(value) ? value : isRecord$5(value) && Array.isArray(value.sessions) ? value.sessions : [];
+	const raw = Array.isArray(value) ? value : isRecord$4(value) && Array.isArray(value.sessions) ? value.sessions : [];
 	const limitProp = toFiniteNumber(widgetProps(widget).limit);
 	const limit = limitProp && limitProp > 0 ? Math.trunc(limitProp) : DEFAULT_LIMIT$5;
-	const records = raw.filter(isRecord$5);
+	const records = raw.filter(isRecord$4);
 	return {
 		rows: records.map((row) => {
 			const key = typeof row.key === "string" ? row.key : "";
@@ -1436,11 +2751,11 @@ function mapSessions(widget, value) {
 	};
 }
 function mapUsage(_widget, value) {
-	const totals = isRecord$5(value) && isRecord$5(value.totals) ? value.totals : {};
+	const totals = isRecord$4(value) && isRecord$4(value.totals) ? value.totals : {};
 	return {
 		cost: toFiniteNumber(totals.totalCost) ?? 0,
 		tokens: toFiniteNumber(totals.totalTokens) ?? 0,
-		days: isRecord$5(value) ? toFiniteNumber(value.days) ?? null : null
+		days: isRecord$4(value) ? toFiniteNumber(value.days) ?? null : null
 	};
 }
 const DEFAULT_LIMIT$4 = 8;
@@ -1450,13 +2765,13 @@ function jobStatus(state) {
 	return typeof status === "string" ? status : null;
 }
 function mapCron(widget, value) {
-	const raw = isRecord$5(value) && Array.isArray(value.jobs) ? value.jobs : [];
+	const raw = isRecord$4(value) && Array.isArray(value.jobs) ? value.jobs : [];
 	const limitProp = toFiniteNumber(widgetProps(widget).limit);
 	const limit = limitProp && limitProp > 0 ? Math.trunc(limitProp) : DEFAULT_LIMIT$4;
-	const records = raw.filter(isRecord$5);
+	const records = raw.filter(isRecord$4);
 	return {
 		jobs: records.map((job) => {
-			const state = isRecord$5(job.state) ? job.state : void 0;
+			const state = isRecord$4(job.state) ? job.state : void 0;
 			return {
 				id: typeof job.id === "string" ? job.id : "",
 				name: typeof job.name === "string" && job.name.trim() ? job.name : job.id || "",
@@ -1483,10 +2798,10 @@ function instanceDetail(entry) {
 	return parts.length > 0 ? parts.join(" · ") : null;
 }
 function mapInstances(widget, value) {
-	const raw = Array.isArray(value) ? value : isRecord$5(value) && Array.isArray(value.presence) ? value.presence : isRecord$5(value) && Array.isArray(value.nodes) ? value.nodes : [];
+	const raw = Array.isArray(value) ? value : isRecord$4(value) && Array.isArray(value.presence) ? value.presence : isRecord$4(value) && Array.isArray(value.nodes) ? value.nodes : [];
 	const limitProp = toFiniteNumber(widgetProps(widget).limit);
 	const limit = limitProp && limitProp > 0 ? Math.trunc(limitProp) : DEFAULT_LIMIT$3;
-	const records = raw.filter(isRecord$5);
+	const records = raw.filter(isRecord$4);
 	return {
 		instances: records.map((entry) => {
 			const lastInputSeconds = toFiniteNumber(entry.lastInputSeconds);
@@ -1511,10 +2826,10 @@ function entryTitle(entry) {
 	return typeof name === "string" && name.trim() ? name : "run";
 }
 function mapActivity(widget, value) {
-	const raw = isRecord$5(value) && Array.isArray(value.entries) ? value.entries : [];
+	const raw = isRecord$4(value) && Array.isArray(value.entries) ? value.entries : [];
 	const limitProp = toFiniteNumber(widgetProps(widget).limit);
 	const limit = limitProp && limitProp > 0 ? Math.trunc(limitProp) : DEFAULT_LIMIT$2;
-	const records = raw.filter(isRecord$5);
+	const records = raw.filter(isRecord$4);
 	return {
 		entries: records.map((entry) => ({
 			ts: toFiniteNumber(entry.ts) ?? null,
@@ -1574,11 +2889,11 @@ const DEFAULT_TYPE = "line";
 /** Pull a numeric y from a point-like entry (`y`, else `value`). */
 function pointValue(entry) {
 	if (typeof entry === "number") return Number.isFinite(entry) ? entry : void 0;
-	if (isRecord$5(entry)) return toFiniteNumber(entry.y) ?? toFiniteNumber(entry.value);
+	if (isRecord$4(entry)) return toFiniteNumber(entry.y) ?? toFiniteNumber(entry.value);
 }
 /** Coerce the tolerant binding value into a plain, finite `number[]`. */
 function normalizeSeries(value) {
-	const raw = Array.isArray(value) ? value : isRecord$5(value) && Array.isArray(value.points) ? value.points : [];
+	const raw = Array.isArray(value) ? value : isRecord$4(value) && Array.isArray(value.points) ? value.points : [];
 	const out = [];
 	for (const entry of raw) {
 		const n = pointValue(entry);
@@ -1599,7 +2914,9 @@ function mapChart(widget, value) {
 		type: resolveType(props),
 		values,
 		min,
-		max
+		max,
+		detail: props.detail === true,
+		label: props.label === true
 	};
 }
 /** Coerce a persisted state blob to the editable text. Stored blob is the raw string. */
@@ -1615,7 +2932,7 @@ const FIELD_TYPES = /* @__PURE__ */ new Set([
 ]);
 /** Defensively parse one field descriptor from untyped props, or null when malformed. */
 function mapField(value) {
-	if (!isRecord$5(value)) return null;
+	if (!isRecord$4(value)) return null;
 	const { name, label, type } = value;
 	if (typeof name !== "string" || !name || typeof label !== "string" || !label) return null;
 	if (typeof type !== "string" || !FIELD_TYPES.has(type)) return null;
@@ -1630,13 +2947,36 @@ function mapField(value) {
 		...maxLength !== void 0 ? { maxLength } : {}
 	};
 }
+/** Read one string→string mapping defensively (tool-mode `argsFrom`); drops non-string values. */
+function mapArgsFrom(value) {
+	if (!isRecord$4(value)) return {};
+	const out = {};
+	for (const [argName, fieldName] of Object.entries(value)) if (typeof fieldName === "string") out[argName] = fieldName;
+	return out;
+}
 /** Read the action-form view model from a widget's props (defensive; schema is the gate). */
 function mapActionForm(widget) {
 	const props = widgetProps(widget);
+	const template = typeof props.template === "string" ? props.template : "";
+	const fields = Array.isArray(props.fields) ? props.fields.map(mapField).filter((field) => field !== null) : [];
+	const buttonLabel = typeof props.buttonLabel === "string" ? props.buttonLabel : null;
+	if ((props.mode === "tool" ? "tool" : "prompt") !== "tool") return {
+		template,
+		fields,
+		buttonLabel,
+		mode: "prompt",
+		connector: null,
+		tool: null,
+		argsFrom: null
+	};
 	return {
-		template: typeof props.template === "string" ? props.template : "",
-		fields: Array.isArray(props.fields) ? props.fields.map(mapField).filter((field) => field !== null) : [],
-		buttonLabel: typeof props.buttonLabel === "string" ? props.buttonLabel : null
+		template,
+		fields,
+		buttonLabel,
+		mode: "tool",
+		connector: typeof props.connector === "string" ? props.connector : null,
+		tool: typeof props.tool === "string" ? props.tool : null,
+		argsFrom: mapArgsFrom(props.argsFrom)
 	};
 }
 /** Type + length cap for one field's raw string value. Non-numeric numbers and out-of-set selects collapse to "". */
@@ -1662,6 +3002,38 @@ function buildActionFormPrompt(model, values) {
 		if (!field) return match;
 		return coerceFieldValue(field, values[name] ?? "");
 	});
+}
+/**
+* Build the tool-mode argument object from a `tool`-mode form's submitted field values.
+* Each `argsFrom` entry maps a tool ARGUMENT name to a declared FIELD name; the field's
+* raw value is typed + length-capped (`coerceFieldValue`) before it lands as an argument.
+* There is NO template interpolation here — the fields ARE the args (the prompt path is
+* unrelated). An entry naming an undeclared field, or a non-`tool` model, is skipped, so
+* an argument can never carry an undeclared value.
+*/
+function buildActionToolArgs(model, values) {
+	const byName = new Map(model.fields.map((field) => [field.name, field]));
+	const args = {};
+	for (const [argName, fieldName] of Object.entries(model.argsFrom ?? {})) {
+		const field = byName.get(fieldName);
+		if (field) args[argName] = coerceFieldValue(field, values[fieldName] ?? "");
+	}
+	return args;
+}
+/**
+* Read the action-button view model from a widget's props (defensive; the schema
+* `validateActionButtonProps` gate is the real bound). A malformed connector/tool
+* yields empty strings so the renderer degrades to an inert placeholder rather than
+* invoking against a bad ref.
+*/
+function mapActionButton(widget) {
+	const props = widgetProps(widget);
+	return {
+		connector: typeof props.connector === "string" ? props.connector : "",
+		tool: typeof props.tool === "string" ? props.tool : "",
+		args: isRecord$4(props.args) ? props.args : null,
+		label: typeof props.label === "string" ? props.label : null
+	};
 }
 const PREVIEW_VIEWPORTS$1 = [
 	"desktop",
@@ -1690,13 +3062,13 @@ function rowLabel(row, key) {
 }
 /** Current task/objective for the row: the active goal objective, if any. */
 function rowTask(row) {
-	const goal = isRecord$5(row.goal) ? row.goal : void 0;
+	const goal = isRecord$4(row.goal) ? row.goal : void 0;
 	const objective = goal && typeof goal.objective === "string" ? goal.objective.trim() : "";
 	return objective ? clampText(objective, 100) : null;
 }
 /** Fractional run progress from a goal's token budget, clamped to [0,1]. */
 function rowProgress(row) {
-	const goal = isRecord$5(row.goal) ? row.goal : void 0;
+	const goal = isRecord$4(row.goal) ? row.goal : void 0;
 	if (!goal) return null;
 	const used = toFiniteNumber(goal.tokensUsed);
 	const budget = toFiniteNumber(goal.tokenBudget);
@@ -1704,10 +3076,10 @@ function rowProgress(row) {
 	return Math.min(1, Math.max(0, used / budget));
 }
 function mapAgentStatus(widget, value) {
-	const raw = Array.isArray(value) ? value : isRecord$5(value) && Array.isArray(value.sessions) ? value.sessions : [];
+	const raw = Array.isArray(value) ? value : isRecord$4(value) && Array.isArray(value.sessions) ? value.sessions : [];
 	const limitProp = toFiniteNumber(widgetProps(widget).limit);
 	const limit = limitProp && limitProp > 0 ? Math.trunc(limitProp) : DEFAULT_LIMIT$1;
-	const mapped = raw.filter(isRecord$5).map((row) => {
+	const mapped = raw.filter(isRecord$4).map((row) => {
 		const key = typeof row.key === "string" ? row.key : "";
 		return {
 			key,
@@ -1748,8 +3120,69 @@ function buildWidgetApprovalsSource(workspace, resolve) {
 		onDecide: (item, decision) => resolve(item.id, toWidgetApprovalDecision(decision))
 	};
 }
+/**
+* The combined pending-approval source: agent-authored WIDGETS, data/tool CAPABILITY
+* requests (SPEC §17), and server-enforced pending ACTIONS (SPEC §18). Widget
+* decisions route through `resolveWidget` (`approveWidget`); capability decisions
+* through `resolveCapability` (`approveCapability`) — carrying the operator's partial
+* `tools` subset when they ticked one (§17.1); action decisions through the optional
+* `actions.resolve` (`dashboard.action.confirm`/`deny`). Any board with an `approvals`
+* widget then surfaces all three — the single operator queue.
+*/
+function buildApprovalsSource(workspace, resolveWidget, resolveCapability, actions) {
+	const widgets = buildWidgetApprovalsSource(workspace, resolveWidget).pending;
+	const grants = Object.entries(workspace.capabilitiesRegistry ?? {});
+	const reachOf = (grant) => {
+		const tools = grant.tools ?? [];
+		const reach = [
+			grant.methods.length ? `${grant.methods.length} read${grant.methods.length === 1 ? "" : "s"}` : null,
+			grant.streams.length ? `${grant.streams.length} stream${grant.streams.length === 1 ? "" : "s"}` : null,
+			tools.length ? `${tools.length} tool${tools.length === 1 ? "" : "s"}` : null
+		].filter(Boolean);
+		return grant.description ?? (reach.length ? `wants ${reach.join(" + ")}` : "data access");
+	};
+	const requested = grants.filter(([, grant]) => grant.status === "requested").map(([name, grant]) => ({
+		id: name,
+		kind: "capability",
+		title: name,
+		requestedBy: null,
+		detail: reachOf(grant),
+		...(grant.tools ?? []).length ? { tools: grant.tools } : {}
+	}));
+	const granted = grants.filter(([, grant]) => grant.status === "granted" && ((grant.tools ?? []).length > 0 || grant.expiresAt)).map(([name, grant]) => ({
+		id: name,
+		kind: "capability",
+		title: name,
+		requestedBy: null,
+		granted: true,
+		detail: reachOf(grant),
+		...(grant.tools ?? []).length ? { tools: grant.tools } : {},
+		...(grant.autoConfirm ?? []).length ? { autoConfirm: grant.autoConfirm } : {},
+		...grant.expiresAt ? { expiresAt: grant.expiresAt } : {},
+		...(grant.agents ?? []).length ? { agents: grant.agents } : {}
+	}));
+	return {
+		pending: [
+			...(actions?.pending ?? []).map((action) => ({
+				id: action.id,
+				kind: "action",
+				title: `${action.connector}:${action.tool}`,
+				requestedBy: action.requestedBy ?? null,
+				detail: "awaiting confirm"
+			})),
+			...requested,
+			...widgets,
+			...granted
+		],
+		onDecide: (item, decision, options) => {
+			if (item.kind === "action") actions?.resolve(item.id, decision === "approve" ? "confirm" : "deny");
+			else if (item.kind === "capability") resolveCapability(item.id, decision === "approve" ? "granted" : "revoked", options);
+			else resolveWidget(item.id, toWidgetApprovalDecision(decision));
+		}
+	};
+}
 function mapApprovals(widget, source) {
-	const pending = source?.pending.filter((item) => isRecord$5(item) && item.id) ?? [];
+	const pending = source?.pending.filter((item) => isRecord$4(item) && item.id) ?? [];
 	const limitProp = toFiniteNumber(widgetProps(widget).limit);
 	const limit = limitProp && limitProp > 0 ? Math.trunc(limitProp) : DEFAULT_LIMIT;
 	return {
@@ -2594,6 +4027,28 @@ async function approveWidget(state, transport, params) {
 	}
 }
 /**
+* Operator grant/revoke of a connector's data/tool capability (SPEC §17). A partial
+* grant (§17.1) passes the SUBSET of `connector:tool` ids the operator ticked; omitted
+* ⇒ approve-all (the full requested set).
+*/
+async function approveCapability(state, transport, params) {
+	if (!transport) return;
+	state.actionError = null;
+	notify(state);
+	try {
+		await transport.request("dashboard.capability.approve", {
+			name: params.name,
+			decision: params.decision,
+			...params.tools !== void 0 ? { tools: params.tools } : {},
+			...params.autoConfirm !== void 0 ? { autoConfirm: params.autoConfirm } : {},
+			...params.expiresAt !== void 0 ? { expiresAt: params.expiresAt } : {}
+		});
+	} catch (err) {
+		state.actionError = formatError(err);
+		notify(state);
+	}
+}
+/**
 * Fetch the strict workspace doc and serialize it (optionally a chosen tab subset)
 * for download. Reads the canonical `workspace.json` from the gateway so the export
 * round-trips through the write-time validator on re-import (the UI read model is
@@ -2630,6 +4085,30 @@ async function importWorkspace(state, transport, text) {
 	}
 }
 /**
+* Install a template recipe (issue #60): INSTALL = IMPORT. The recipe's board is merged
+* with the grants its `grantsManifest` declares (each `requested`) and run through the
+* SAME `sanitizeImportedWorkspace` re-pend as any imported workspace
+* (`buildRecipeImportDoc`), then applied via `dashboard.workspace.replace` (which the
+* store re-validates AND re-pends via `reconcileReplaceApproval`). So installing can
+* never grant: every manifest grant lands `requested`, every custom widget `pending`.
+* A validation failure surfaces as an `actionError` toast; returns whether it applied.
+*/
+async function installRecipe(state, transport, recipe) {
+	if (!transport) return false;
+	state.actionError = null;
+	notify(state);
+	try {
+		const doc = buildRecipeImportDoc(recipe);
+		await transport.request("dashboard.workspace.replace", { doc });
+		await loadWorkspace(state, transport, { silent: true });
+		return true;
+	} catch (err) {
+		state.actionError = formatError(err);
+		notify(state);
+		return false;
+	}
+}
+/**
 * Resolve a widget binding into a value the builtin renderers consume. Wire is:
 * - `static`: literal value from the binding.
 * - `rpc`: resolved CLIENT-SIDE on the page's own transport.
@@ -2637,6 +4116,8 @@ async function importWorkspace(state, transport, text) {
 * - `stream`/`computed`: never a one-shot read (see `subscribeToStreamBinding` /
 *   `resolveComputedBinding`); guarded so a stream binding can never be mistaken for
 *   a `file` read against an empty path.
+* - `mcp`: resolved host-side through the connector broker's readOnly action path
+*   (`resolveMcpBinding` → `dashboard.action.invoke`); NEVER routed to `data.read`.
 *
 * `dashboard.data.read` serves file/static only and answers rpc bindings with
 * `{ code: "binding_client_resolved" }`, so rpc never routes through it.
@@ -2651,11 +4132,46 @@ async function resolveBinding(transport, binding) {
 		}
 		if (binding.source === "stream") return { error: "Stream bindings resolve via subscription, not a one-shot read." };
 		if (binding.source === "computed") return { error: "Computed bindings resolve from sibling values, not a one-shot read." };
+		if (binding.source === "mcp") return await resolveMcpBinding(transport, binding);
 		const payload = await transport.request("dashboard.data.read", { binding });
 		return { value: isRecord$1(payload) && "data" in payload ? payload.data : payload };
 	} catch (err) {
 		return { error: formatError(err) };
 	}
+}
+/**
+* Resolve an `mcp` read binding (SPEC §18 / #45) through the connector broker via
+* the PURE-READ verb `dashboard.connector.read`, which AND-gates the tool (granted +
+* connector-configured + manifest-hash unchanged) and executes a `readOnly` granted
+* tool DIRECTLY, returning its result.
+*
+* readOnly-ONLY, fail-safe (epic invariant #5): a binding may only READ. `connector.read`
+* REFUSES a non-readOnly tool outright — it never parks a pending action. This matters
+* because a read binding re-resolves on every refresh: routing through `action.invoke`
+* would have PARKED a pending mutation into the operator queue on each refresh (queue
+* spam, and an operator confirm would then fire the mutation). An ungranted / re-pended
+* tool surfaces the engine's `capability_pending` through the standard binding-error card.
+*/
+async function resolveMcpBinding(transport, binding) {
+	if (!binding.connector || !binding.tool) return { error: "mcp binding is missing a connector or tool." };
+	return { value: applyPointer(mcpReadValue(await transport.request("dashboard.connector.read", {
+		connector: binding.connector,
+		tool: binding.tool,
+		...binding.args ? { args: binding.args } : {}
+	})), binding.pointer) };
+}
+/**
+* Extract the value a readOnly tool returns from `dashboard.action.invoke`'s
+* `{ content, structuredContent? }` result. Prefer the parsed `structuredContent`
+* (the machine-shaped payload) when present, else the raw `content`, else the whole
+* result — so a widget binds the useful data, not the MCP envelope.
+*/
+function mcpReadValue(result) {
+	if (isRecord$1(result)) {
+		if ("structuredContent" in result && result.structuredContent !== void 0) return result.structuredContent;
+		if ("content" in result) return result.content;
+	}
+	return result;
 }
 /** Recursively collect finite numbers from a value (numbers + nested arrays). */
 function collectNumbers(value, out) {
@@ -2843,15 +4359,39 @@ async function loadWidgetManifestView(basePath, name) {
 function isRecord$3(value) {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
+function count(value) {
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+/**
+* Re-hydrate the per-entry change summary the store computed (SPEC: history list
+* rows). It crosses the wire as plain JSON, so re-normalize it defensively here —
+* a pre-summary host (or a malformed entry) simply yields no summary and the row
+* falls back to version + time. Kept in lock-step with `DashboardHistorySummary`.
+*/
+function normalizeSummary(value) {
+	if (!isRecord$3(value)) return;
+	return {
+		added: count(value.added),
+		removed: count(value.removed),
+		moved: count(value.moved),
+		retitled: count(value.retitled),
+		tabsChanged: count(value.tabsChanged),
+		total: count(value.total)
+	};
+}
 /** Fetch the ring metadata (newest-first) via the read-only history.list RPC. */
 async function loadHistoryList(transport) {
 	if (!transport) return [];
 	const payload = await transport.request("dashboard.workspace.history.list", {});
-	return (isRecord$3(payload) && Array.isArray(payload.entries) ? payload.entries : []).filter(isRecord$3).map((entry) => ({
-		version: typeof entry.version === "number" ? entry.version : 0,
-		savedAt: typeof entry.savedAt === "string" ? entry.savedAt : "",
-		bytes: typeof entry.bytes === "number" ? entry.bytes : 0
-	})).filter((entry) => entry.version > 0);
+	return (isRecord$3(payload) && Array.isArray(payload.entries) ? payload.entries : []).filter(isRecord$3).map((entry) => {
+		const summary = normalizeSummary(entry.summary);
+		return {
+			version: typeof entry.version === "number" ? entry.version : 0,
+			savedAt: typeof entry.savedAt === "string" ? entry.savedAt : "",
+			bytes: typeof entry.bytes === "number" ? entry.bytes : 0,
+			...summary ? { summary } : {}
+		};
+	}).filter((entry) => entry.version > 0);
 }
 /** Fetch one full snapshot doc via the read-only history.get RPC. */
 async function loadHistorySnapshot(transport, version) {
@@ -2884,6 +4424,21 @@ async function fetchGalleryIndex(indexUrl) {
 */
 async function fetchWidgetBundle(bundleUrl) {
 	return parseWidgetBundle(await fetchTextCapped(bundleUrl, GALLERY_BUNDLE_MAX_BYTES, "The widget bundle"));
+}
+/**
+* Fetch the `recipes` half of a registry `index.json` (CLIENT fetch), sibling of the
+* widget entries. An index with no `recipes` key yields `[]`; malformed entries drop.
+*/
+async function fetchGalleryRecipes(indexUrl) {
+	return parseRecipeIndex(await fetchTextCapped(indexUrl, GALLERY_INDEX_MAX_BYTES, "The gallery index"), indexUrl);
+}
+/**
+* Fetch a recipe bundle (CLIENT fetch) and fully validate it with the shared
+* `validateRecipe`. Enforces the 512 KB cap before parsing. A recipe is pure data
+* applied through `dashboard.workspace.replace`, so it is validated in full here.
+*/
+async function fetchRecipe(recipeUrl) {
+	return parseRecipeBundle(await fetchTextCapped(recipeUrl, GALLERY_RECIPE_MAX_BYTES, "The recipe bundle"));
 }
 /**
 * Install a fetched bundle via the transport. Writes a `pending` registry entry
@@ -3146,6 +4701,39 @@ const icons = {
 	minimize: glyph(w`<path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3" />`)
 };
 //#endregion
+//#region ../../node_modules/.pnpm/lit-html@3.3.3/node_modules/lit-html/directives/ref.js
+/**
+* @license
+* Copyright 2020 Google LLC
+* SPDX-License-Identifier: BSD-3-Clause
+*/ const e$1 = () => new h();
+var h = class {};
+const o$1 = /* @__PURE__ */ new WeakMap(), n = e$2(class extends f {
+	render(i) {
+		return A;
+	}
+	update(i, [s]) {
+		const e = s !== this.G;
+		return e && this.rt(void 0), (e || this.lt !== this.ct) && (this.G = s, this.ht = i.options?.host, this.rt(this.ct = i.element)), A;
+	}
+	rt(t) {
+		if (void 0 !== this.G) if (this.isConnected || (t = void 0), "function" == typeof this.G) {
+			const i = this.ht ?? globalThis;
+			let s = o$1.get(i);
+			void 0 === s && (s = /* @__PURE__ */ new WeakMap(), o$1.set(i, s)), void 0 !== s.get(this.G) && this.G.call(this.ht, void 0), s.set(this.G, t), void 0 !== t && this.G.call(this.ht, t);
+		} else this.G.value = t;
+	}
+	get lt() {
+		return "function" == typeof this.G ? o$1.get(this.ht ?? globalThis)?.get(this.G) : this.G?.value;
+	}
+	disconnected() {
+		this.lt === this.ct && this.rt(void 0);
+	}
+	reconnected() {
+		this.rt(this.ct);
+	}
+});
+//#endregion
 //#region src/strings.ts
 /** Full English string table. Its keys define the `BoardstateStrings` surface. */
 const en = {
@@ -3179,6 +4767,7 @@ const en = {
 	"dashboard.widget.menu.remove": "Remove",
 	"dashboard.widget.provenanceChip": "AI",
 	"dashboard.widget.provenanceTooltip": "Created by {agent}",
+	"dashboard.widget.agentChipTooltip": "Built by {agent}",
 	"dashboard.widget.expand": "Expand widget",
 	"dashboard.widget.collapse": "Collapse widget",
 	"dashboard.widget.moveHandle": "Move widget",
@@ -3218,6 +4807,20 @@ const en = {
 	"dashboard.widget.notes.readonlyHint": "Connect to the gateway to edit and save notes.",
 	"dashboard.widget.actionForm.empty": "This action form has no fields yet.",
 	"dashboard.widget.actionForm.submit": "Send",
+	"dashboard.widget.actionForm.toolPending": "Submitted — waiting for operator confirmation.",
+	"dashboard.widget.actionButton.run": "Run",
+	"dashboard.widget.actionButton.invoking": "Invoking…",
+	"dashboard.widget.actionButton.pending": "Waiting for operator confirmation…",
+	"dashboard.widget.actionButton.confirm": "Confirm",
+	"dashboard.widget.actionButton.deny": "Deny",
+	"dashboard.widget.actionButton.operatorOnly": "Only the local operator can confirm this action.",
+	"dashboard.widget.actionButton.confirmed": "Confirmed.",
+	"dashboard.widget.actionButton.denied": "Denied by the operator.",
+	"dashboard.widget.actionButton.expired": "The confirmation window expired.",
+	"dashboard.widget.actionButton.resultLabel": "Result",
+	"dashboard.widget.actionButton.errorLabel": "Error",
+	"dashboard.widget.actionButton.disconnected": "Connect to the gateway to run this action.",
+	"dashboard.widget.actionButton.misconfigured": "This action is missing a connector or tool.",
 	"dashboard.widget.preview.missing": "This preview has no URL yet.",
 	"dashboard.widget.preview.blockedExternal": "External previews are disabled by your gateway policy.",
 	"dashboard.widget.preview.blockedScheme": "This preview URL uses an unsupported scheme.",
@@ -3232,8 +4835,21 @@ const en = {
 	"dashboard.widget.approvals.empty": "No pending approvals.",
 	"dashboard.widget.approvals.approve": "Approve",
 	"dashboard.widget.approvals.deny": "Deny",
+	"dashboard.widget.approvals.confirm": "Confirm",
 	"dashboard.widget.approvals.requestedBy": "Requested by {agent}",
 	"dashboard.widget.approvals.kind.widget": "Widget",
+	"dashboard.widget.approvals.kind.capability": "Data source",
+	"dashboard.widget.approvals.kind.action": "Action",
+	"dashboard.widget.approvals.autoConfirm": "Auto-run",
+	"dashboard.widget.approvals.autoConfirmHint": "Runs without confirmation each time",
+	"dashboard.widget.approvals.scopeLabel": "Agents",
+	"dashboard.widget.approvals.scopeAll": "All agents",
+	"dashboard.widget.approvals.scopedTo": "Scoped to {agents}",
+	"dashboard.widget.approvals.ttlLabel": "Expires in (min)",
+	"dashboard.widget.approvals.expiresIn": "Expires in {duration}",
+	"dashboard.widget.approvals.expiresSoon": "Expiring…",
+	"dashboard.widget.approvals.save": "Save",
+	"dashboard.widget.approvals.revoke": "Revoke",
 	"dashboard.widget.chat.empty": "Ask the agent to build or change this board…",
 	"dashboard.widget.chat.placeholder": "Message the agent…",
 	"dashboard.widget.chat.send": "Send",
@@ -3265,6 +4881,8 @@ const en = {
 	"dashboard.tabs.expandGroup": "Expand {group} tabs",
 	"dashboard.header.fullBleedEnter": "Full-bleed",
 	"dashboard.header.fullBleedExit": "Exit full-bleed",
+	"dashboard.agentFilter.label": "Agents",
+	"dashboard.agentFilter.all": "All",
 	"dashboard.widget.ephemeralBadge": "Temporary",
 	"dashboard.widget.ephemeralTooltip": "Temporary answer — pin it to keep it here.",
 	"dashboard.widget.menu.pin": "Pin",
@@ -3293,6 +4911,13 @@ const en = {
 	"dashboard.history.kind.tab-added": "Tab added",
 	"dashboard.history.kind.tab-removed": "Tab removed",
 	"dashboard.history.kind.tab-retitled": "Tab retitled",
+	"dashboard.history.summary.added": "+{count}",
+	"dashboard.history.summary.removed": "−{count}",
+	"dashboard.history.summary.moved": "{count} moved",
+	"dashboard.history.summary.retitled": "{count} renamed",
+	"dashboard.history.summary.tabs": "{count} tabs",
+	"dashboard.history.summary.minor": "Other edit",
+	"dashboard.history.previewCaption": "Layout at version {version}",
 	"dashboard.gallery.open": "Widget gallery",
 	"dashboard.gallery.title": "Widget gallery",
 	"dashboard.gallery.subtitle": "Browse a widget registry and install a widget from its URL.",
@@ -3305,6 +4930,16 @@ const en = {
 	"dashboard.gallery.capabilities": "Requested capabilities",
 	"dashboard.gallery.noCapabilities": "No special capabilities requested.",
 	"dashboard.gallery.pendingNote": "Installed widgets stay pending until you approve them, then run sandboxed.",
+	"dashboard.gallery.tabWidgets": "Widgets",
+	"dashboard.gallery.tabTemplates": "Templates",
+	"dashboard.gallery.recipesEmpty": "No templates found at this registry.",
+	"dashboard.gallery.recipeNeedsNothing": "Works out of the box — no grants required.",
+	"dashboard.gallery.recipeNeedsConnectors": "Needs: {connectors}",
+	"dashboard.gallery.recipeNeedsLabel": "This board will ask for these tools",
+	"dashboard.gallery.recipeNoGrants": "No external tools — installs ready to use.",
+	"dashboard.gallery.recipeReadOnly": "read-only",
+	"dashboard.gallery.recipeInstall": "Install template",
+	"dashboard.gallery.recipeInstallNote": "Installing imports the board with its grants requested — approve them in the approvals widget to light it up.",
 	"dashboard.distribution.export": "Export",
 	"dashboard.distribution.exportTitle": "Download this workspace as a JSON file",
 	"dashboard.distribution.import": "Import",
@@ -3328,6 +4963,258 @@ function t(key, params) {
 	return interpolate(activeStrings[key] ?? en[key] ?? key, params);
 }
 //#endregion
+//#region src/renderers/action-button.ts
+/** Stringify a tool result for INERT display (never markup). Objects pretty-print as JSON. */
+function formatResult(value) {
+	if (value === void 0) return "";
+	if (typeof value === "string") return value;
+	try {
+		return JSON.stringify(value, null, 2);
+	} catch {
+		return String(value);
+	}
+}
+/**
+* The per-widget interactive island. One instance per widget id (keyed in the module
+* map below); it holds the invocation phase + the live action subscription and
+* re-renders its own subtree with lit's `render()`.
+*/
+var ActionButtonController = class {
+	constructor(widgetId) {
+		this.widgetId = widgetId;
+		this.root = null;
+		this.ctx = null;
+		this.widget = null;
+		this.phase = { kind: "idle" };
+		this.unsubscribe = null;
+		this.rootRef = (element) => {
+			if (element instanceof HTMLElement) this.mount(element);
+			else this.destroy();
+		};
+		this.onInvoke = () => {
+			const actions = this.ctx?.actions;
+			if (!actions || !this.widget) return;
+			const model = mapActionButton(this.widget);
+			if (!model.connector || !model.tool) {
+				this.setPhase({
+					kind: "error",
+					message: t("dashboard.widget.actionButton.misconfigured")
+				});
+				return;
+			}
+			this.setPhase({ kind: "running" });
+			actions.invoke({
+				connector: model.connector,
+				tool: model.tool,
+				...model.args ? { args: model.args } : {}
+			}).then((outcome) => {
+				this.setPhase(outcome.kind === "pending" ? {
+					kind: "pending",
+					id: outcome.id,
+					expiresAt: outcome.expiresAt
+				} : {
+					kind: "result",
+					value: outcome.result
+				});
+			}).catch((err) => {
+				this.setPhase({
+					kind: "error",
+					message: err instanceof Error ? err.message : String(err)
+				});
+			});
+		};
+		this.onConfirm = (id) => {
+			const confirm = this.ctx?.actions?.confirm;
+			if (!confirm) return;
+			this.setPhase({ kind: "running" });
+			confirm(id).then(({ result }) => this.setPhase({
+				kind: "result",
+				value: result
+			})).catch((err) => {
+				this.setPhase({
+					kind: "error",
+					message: err instanceof Error ? err.message : String(err)
+				});
+			});
+		};
+		this.onDeny = (id) => {
+			const deny = this.ctx?.actions?.deny;
+			if (!deny) return;
+			deny(id).then(() => this.setPhase({ kind: "denied" })).catch((err) => {
+				this.setPhase({
+					kind: "error",
+					message: err instanceof Error ? err.message : String(err)
+				});
+			});
+		};
+	}
+	/** Absorb the latest render context/widget (parent re-render) and refresh the island. */
+	setContext(ctx, widget) {
+		this.ctx = ctx;
+		this.widget = widget;
+		if (this.root) this.renderIsland();
+	}
+	mount(element) {
+		this.root = element;
+		this.unsubscribe?.();
+		this.unsubscribe = null;
+		this.phase = { kind: "idle" };
+		this.renderIsland();
+		const actions = this.ctx?.actions;
+		if (actions) this.unsubscribe = actions.subscribe((change) => this.onActionChange(change));
+	}
+	destroy() {
+		this.unsubscribe?.();
+		this.unsubscribe = null;
+		this.root = null;
+		controllers$1.delete(this.widgetId);
+	}
+	/** React to a pending-action lifecycle change that concerns THIS button's parked action. */
+	onActionChange(change) {
+		if (this.phase.kind !== "pending" || change.id !== this.phase.id) return;
+		if (change.status === "confirmed") this.phase = { kind: "confirmed" };
+		else if (change.status === "denied") this.phase = { kind: "denied" };
+		else if (change.status === "expired") this.phase = { kind: "expired" };
+		else return;
+		this.renderIsland();
+	}
+	setPhase(phase) {
+		this.phase = phase;
+		this.renderIsland();
+	}
+	renderIsland() {
+		if (!this.root) return;
+		D(this.template(), this.root);
+	}
+	template() {
+		const actions = this.ctx?.actions;
+		const label = (this.widget ? mapActionButton(this.widget) : null)?.label ?? t("dashboard.widget.actionButton.run");
+		const busy = this.phase.kind === "running" || this.phase.kind === "pending";
+		return b`
+      <div class="dashboard-action-button" data-test-id="dashboard-action-button">
+        <button
+          class="bs-btn bs-btn--small bs-btn--primary dashboard-action-button__invoke"
+          type="button"
+          data-test-id="dashboard-action-button-invoke"
+          ?disabled=${!actions || busy}
+          @click=${this.onInvoke}
+        >
+          ${label}
+        </button>
+        ${!actions ? b`<div
+                class="dashboard-action-button__hint"
+                data-test-id="dashboard-action-button-disconnected"
+              >
+                ${t("dashboard.widget.actionButton.disconnected")}
+              </div>` : this.renderStatus()}
+      </div>
+    `;
+	}
+	renderStatus() {
+		switch (this.phase.kind) {
+			case "idle": return A;
+			case "running": return b`<div class="dashboard-action-button__status" data-status="running">
+          ${t("dashboard.widget.actionButton.invoking")}
+        </div>`;
+			case "pending": return this.renderPending(this.phase.id);
+			case "confirmed": return b`<div
+          class="dashboard-action-button__status"
+          data-status="confirmed"
+          data-test-id="dashboard-action-button-confirmed"
+        >
+          ${t("dashboard.widget.actionButton.confirmed")}
+        </div>`;
+			case "denied": return b`<div
+          class="dashboard-action-button__status"
+          data-status="denied"
+          data-test-id="dashboard-action-button-denied"
+        >
+          ${t("dashboard.widget.actionButton.denied")}
+        </div>`;
+			case "expired": return b`<div
+          class="dashboard-action-button__status"
+          data-status="expired"
+          data-test-id="dashboard-action-button-expired"
+        >
+          ${t("dashboard.widget.actionButton.expired")}
+        </div>`;
+			case "result": return b`<div class="dashboard-action-button__result" data-status="result">
+          <div class="dashboard-action-button__result-label">
+            ${t("dashboard.widget.actionButton.resultLabel")}
+          </div>
+          <pre
+            class="dashboard-action-button__result-body"
+            data-test-id="dashboard-action-button-result"
+          >
+${formatResult(this.phase.value)}</pre>
+        </div>`;
+			case "error": return b`<div
+          class="dashboard-action-button__error"
+          role="alert"
+          data-test-id="dashboard-action-button-error"
+        >
+          <span class="dashboard-action-button__result-label"
+            >${t("dashboard.widget.actionButton.errorLabel")}</span
+          >
+          <span class="dashboard-action-button__error-message">${this.phase.message}</span>
+        </div>`;
+		}
+	}
+	/** The parked-mutation row: "waiting for operator" + confirm/deny (operator only). */
+	renderPending(id) {
+		const canConfirm = Boolean(this.ctx?.actions?.confirm && this.ctx?.actions?.deny);
+		return b`
+      <div
+        class="dashboard-action-button__pending"
+        data-status="pending"
+        data-test-id="dashboard-action-button-pending"
+      >
+        <span class="dashboard-action-button__status-text"
+          >${t("dashboard.widget.actionButton.pending")}</span
+        >
+        ${canConfirm ? b`<span class="dashboard-action-button__pending-actions">
+                <button
+                  class="bs-btn bs-btn--small bs-btn--primary"
+                  type="button"
+                  data-test-id="dashboard-action-button-confirm"
+                  @click=${() => this.onConfirm(id)}
+                >
+                  ${t("dashboard.widget.actionButton.confirm")}
+                </button>
+                <button
+                  class="bs-btn bs-btn--small"
+                  type="button"
+                  data-test-id="dashboard-action-button-deny"
+                  @click=${() => this.onDeny(id)}
+                >
+                  ${t("dashboard.widget.actionButton.deny")}
+                </button>
+              </span>` : b`<span
+                class="dashboard-action-button__operator-only"
+                data-test-id="dashboard-action-button-operator-only"
+                >${t("dashboard.widget.actionButton.operatorOnly")}</span
+              >`}
+      </div>
+    `;
+	}
+};
+/** One live controller per widget id. Created lazily; removed on the widget's unmount. */
+const controllers$1 = /* @__PURE__ */ new Map();
+/**
+* Renders builtin:action-button. The renderer stays a pure function returning the
+* island's container; the `ActionButtonController` (keyed by widget id) owns the
+* invocation lifecycle and its own render loop, hydrated via the `ref` callback.
+*/
+function renderActionButton(widget, _value, ctx) {
+	let controller = controllers$1.get(widget.id);
+	if (!controller) {
+		controller = new ActionButtonController(widget.id);
+		controllers$1.set(widget.id, controller);
+	}
+	controller.setContext(ctx, widget);
+	return b`<div class="dashboard-action-button-host" ${n(controller.rootRef)}></div>`;
+}
+//#endregion
 //#region src/renderers/action-form.ts
 function renderField(field) {
 	const control = field.type === "select" ? b`<select class="dashboard-action-form__control" name=${field.name}>
@@ -3343,19 +5230,48 @@ function renderField(field) {
     ${control}
   </label>`;
 }
+/**
+* Submit a `tool`-mode form: the coerced field values become the tool ARGS (via
+* `argsFrom`) and go through the SAME `dashboard.action.invoke` seam the action-button
+* uses — no template interpolation, no new dispatch privilege. A readOnly tool executes
+* (the form resets); a mutation PARKS as an operator-confirmed pending action, surfaced
+* on the shared toast; a rejection (ungranted/revoked/rate-limited) surfaces there too.
+*/
+function submitTool(model, widget, values, ctx, form) {
+	if (!ctx.actions || !model.connector || !model.tool) return;
+	const args = buildActionToolArgs(model, values);
+	ctx.actions.invoke({
+		connector: model.connector,
+		tool: model.tool,
+		args
+	}).then((outcome) => {
+		if (outcome.kind === "pending") ctx.onActionError?.(t("dashboard.widget.actionForm.toolPending"));
+		form.reset();
+	}).catch((err) => {
+		ctx.onActionError?.(err instanceof Error ? err.message : String(err));
+	});
+}
 /** Renders the action-form builtin. Submit interpolates + dispatches through the shared gate. */
 function renderActionForm(widget, _value, ctx) {
 	const model = mapActionForm(widget);
 	if (model.fields.length === 0 || !model.template) return b`<div class="dashboard-widget__placeholder">
       ${t("dashboard.widget.actionForm.empty")}
     </div>`;
-	const onSubmit = (event) => {
-		event.preventDefault();
-		const form = event.currentTarget;
+	const readValues = (form) => {
 		const values = {};
 		for (const field of model.fields) {
 			const control = form.elements.namedItem(field.name);
 			values[field.name] = control && "value" in control ? String(control.value ?? "") : "";
+		}
+		return values;
+	};
+	const onSubmit = (event) => {
+		event.preventDefault();
+		const form = event.currentTarget;
+		const values = readValues(form);
+		if (model.mode === "tool") {
+			submitTool(model, widget, values, ctx, form);
+			return;
 		}
 		const text = buildActionFormPrompt(model, values);
 		if (!text.trim() || !ctx.dispatchPrompt) return;
@@ -3378,7 +5294,7 @@ function renderActionForm(widget, _value, ctx) {
         ${model.buttonLabel ?? t("dashboard.widget.actionForm.submit")}
       </button>
     </form>
-    ${ctx.dispatchPrompt ? A : b`<span hidden data-test-id="dashboard-action-form-inert"></span>`}
+    ${(model.mode === "tool" ? ctx.actions : ctx.dispatchPrompt) ? A : b`<span hidden data-test-id="dashboard-action-form-inert"></span>`}
   `;
 }
 //#endregion
@@ -3486,6 +5402,88 @@ function renderAgentStatus(widget, value) {
 }
 //#endregion
 //#region src/renderers/approvals.ts
+/** The badge label for an approval row's kind (widget / data source / action). */
+function kindLabel(kind) {
+	if (kind === "capability") return t("dashboard.widget.approvals.kind.capability");
+	if (kind === "action") return t("dashboard.widget.approvals.kind.action");
+	return t("dashboard.widget.approvals.kind.widget");
+}
+/** Collect the values of the ticked checkboxes matching `selector` inside THIS row. */
+function checkedValues(event, selector) {
+	const row = event.currentTarget?.closest("li");
+	if (!row) return [];
+	return [...row.querySelectorAll(selector)].filter((box) => box.checked).map((box) => box.value);
+}
+/** Read the row's optional TTL input (minutes) and turn it into a future ISO instant. */
+function readTtl(event) {
+	const input = (event.currentTarget?.closest("li"))?.querySelector("input.dashboard-approvals__ttl");
+	const minutes = input && input.value.trim() !== "" ? Number(input.value) : NaN;
+	if (!Number.isFinite(minutes) || minutes <= 0) return;
+	return new Date(Date.now() + minutes * 6e4).toISOString();
+}
+/**
+* Build the operator's decision options from a capability row's controls (#62/#64). For a
+* row WITH tool ticks, `tools` is always present (even empty — unticking all grants
+* nothing, never approve-all); a data-only row carries just the optional TTL.
+*/
+function collectCapabilityOptions(event, hasTools) {
+	const expiresAt = readTtl(event);
+	if (!hasTools) return expiresAt !== void 0 ? { expiresAt } : {};
+	const tools = checkedValues(event, "input.dashboard-approvals__grant");
+	const autoConfirm = checkedValues(event, "input.dashboard-approvals__auto");
+	return {
+		tools,
+		...autoConfirm.length ? { autoConfirm: autoConfirm.filter((id) => tools.includes(id)) } : {},
+		...expiresAt !== void 0 ? { expiresAt } : {}
+	};
+}
+/** A coarse "expires in 2h 5m" label from an ISO instant (refreshed on each re-render). */
+function expiresLabel(expiresAt) {
+	const remaining = Date.parse(expiresAt) - Date.now();
+	if (Number.isNaN(remaining) || remaining <= 0) return t("dashboard.widget.approvals.expiresSoon");
+	const minutes = Math.round(remaining / 6e4);
+	const hours = Math.floor(minutes / 60);
+	return t("dashboard.widget.approvals.expiresIn", { duration: hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m` });
+}
+/**
+* The per-agent scope line for a capability row (SPEC §17.3, #59). A scoped grant shows
+* exactly which agents may use its tools; an unscoped grant reads "All agents" so the
+* operator sees the (permissive) default plainly rather than an ambiguous blank.
+*/
+function renderScope(item) {
+	const agents = item.agents ?? [];
+	const summary = agents.length > 0 ? t("dashboard.widget.approvals.scopedTo", { agents: agents.join(", ") }) : t("dashboard.widget.approvals.scopeAll");
+	return b`<span
+    class="dashboard-approvals__scope"
+    data-test-id="dashboard-approvals-scope"
+    data-agents=${agents.join(",")}
+    >${t("dashboard.widget.approvals.scopeLabel")}: ${summary}</span
+  >`;
+}
+/** The per-tool grant + auto-confirm control list for a capability row. */
+function renderToolControls(item) {
+	const tools = item.tools ?? [];
+	const auto = new Set(item.autoConfirm ?? []);
+	return b`<ul class="dashboard-approvals__tools" data-test-id="dashboard-approvals-tools">
+    ${tools.map((tool) => b`<li>
+          <label class="dashboard-approvals__grant-label"
+            ><input type="checkbox" class="dashboard-approvals__grant" value=${tool} checked /><span
+              >${tool}</span
+            ></label
+          >
+          <label
+            class="dashboard-approvals__auto-label"
+            title=${t("dashboard.widget.approvals.autoConfirmHint")}
+            ><input
+              type="checkbox"
+              class="dashboard-approvals__auto"
+              value=${tool}
+              ?checked=${auto.has(tool)}
+            /><span>${t("dashboard.widget.approvals.autoConfirm")}</span></label
+          >
+        </li>`)}
+  </ul>`;
+}
 function renderApprovals(widget, _value, ctx) {
 	const source = ctx.approvals;
 	const model = mapApprovals(widget, source);
@@ -3494,23 +5492,52 @@ function renderApprovals(widget, _value, ctx) {
     </div>`;
 	return b`
     <ul class="dashboard-list dashboard-approvals" data-test-id="dashboard-approvals">
-      ${model.items.map((item) => b`
-          <li class="dashboard-list__row">
-            <span class="dashboard-badge dashboard-badge--muted"
-              >${t("dashboard.widget.approvals.kind.widget")}</span
-            >
+      ${model.items.map((item) => {
+		const isCapability = item.kind === "capability";
+		const hasTools = isCapability && (item.tools ?? []).length > 0;
+		const affirmLabel = item.granted ? t("dashboard.widget.approvals.save") : item.kind === "action" ? t("dashboard.widget.approvals.confirm") : t("dashboard.widget.approvals.approve");
+		const affirm = (event) => {
+			if (!isCapability) {
+				source?.onDecide(item, "approve");
+				return;
+			}
+			const options = collectCapabilityOptions(event, hasTools);
+			if (Object.keys(options).length > 0) source?.onDecide(item, "approve", options);
+			else source?.onDecide(item, "approve");
+		};
+		const denyLabel = item.granted ? t("dashboard.widget.approvals.revoke") : t("dashboard.widget.approvals.deny");
+		return b`
+          <li
+            class="dashboard-list__row ${item.granted ? "dashboard-approvals__row--granted" : ""}"
+          >
+            <span class="dashboard-badge dashboard-badge--muted">${kindLabel(item.kind)}</span>
             <span class="dashboard-list__label">${item.title}</span>
-            ${item.requestedBy ? b`<span class="dashboard-list__meta"
-                    >${t("dashboard.widget.approvals.requestedBy", { agent: item.requestedBy })}</span
+            ${item.detail ? b`<span class="dashboard-list__meta">${item.detail}</span>` : item.requestedBy ? b`<span class="dashboard-list__meta"
+                      >${t("dashboard.widget.approvals.requestedBy", { agent: item.requestedBy })}</span
+                    >` : A}
+            ${item.expiresAt ? b`<span
+                    class="dashboard-approvals__countdown"
+                    data-test-id="dashboard-approvals-countdown"
+                    >${expiresLabel(item.expiresAt)}</span
                   >` : A}
+            ${hasTools ? renderToolControls(item) : A}
+            ${isCapability ? renderScope(item) : A}
+            ${isCapability ? b`<label class="dashboard-approvals__ttl-label"
+                    >${t("dashboard.widget.approvals.ttlLabel")}
+                    <input
+                      type="number"
+                      min="1"
+                      class="dashboard-approvals__ttl"
+                      data-test-id="dashboard-approvals-ttl"
+                  /></label>` : A}
             <span class="dashboard-approvals__actions">
               <button
                 class="bs-btn bs-btn--small bs-btn--primary"
                 type="button"
                 data-test-id="dashboard-approvals-approve"
-                @click=${() => source?.onDecide(item, "approve")}
+                @click=${affirm}
               >
-                ${t("dashboard.widget.approvals.approve")}
+                ${affirmLabel}
               </button>
               <button
                 class="bs-btn bs-btn--small"
@@ -3518,11 +5545,12 @@ function renderApprovals(widget, _value, ctx) {
                 data-test-id="dashboard-approvals-deny"
                 @click=${() => source?.onDecide(item, "reject")}
               >
-                ${t("dashboard.widget.approvals.deny")}
+                ${denyLabel}
               </button>
             </span>
           </li>
-        `)}
+        `;
+	})}
     </ul>
   `;
 }
@@ -3545,6 +5573,19 @@ function xScale(i, n) {
 }
 function linePoints(values, min, max) {
 	return values.map((v, i) => `${xScale(i, values.length)},${yScale(v, min, max)}`).join(" ");
+}
+const numberFormat = new Intl.NumberFormat("en-US", {
+	notation: "compact",
+	maximumFractionDigits: 1
+});
+function formatValue(v) {
+	return Number.isFinite(v) ? numberFormat.format(v) : "";
+}
+function sparkTrend(values) {
+	if (values.length < 2) return "flat";
+	const first = values[0];
+	const last = values[values.length - 1];
+	return last > first ? "up" : last < first ? "down" : "flat";
 }
 function drawLine(model) {
 	return w`<polyline
@@ -3601,13 +5642,65 @@ function drawGauge(model, props) {
     <line class="dashboard-chart__gauge-needle" x1=${cx} y1=${cy} x2=${value.x} y2=${value.y} />
   </g>`;
 }
-function drawChart(model, props) {
+function drawSparkline(model) {
+	const n = model.values.length;
+	const trend = sparkTrend(model.values);
+	if (n < 2) return w`<g class="dashboard-chart__spark dashboard-chart__spark--${trend}">
+      <circle class="dashboard-chart__spark-dot" cx=${xScale(0, n)} cy=${yScale(model.values[0] ?? 0, model.min, model.max)} r="1.5" />
+    </g>`;
+	return w`<g class="dashboard-chart__spark dashboard-chart__spark--${trend}">
+    <polyline class="dashboard-chart__line" fill="none" points=${linePoints(model.values, model.min, model.max)} />
+  </g>`;
+}
+/** Only the cartesian types carry a y-axis; gauge and sparkline never do. */
+function hasAxes(type) {
+	return type === "line" || type === "area" || type === "bar";
+}
+/** Detail-mode gridlines — three faint horizontals at the min/mid/max bands. */
+function drawGrid() {
+	return w`<g class="dashboard-chart__grid">
+    ${[
+		PAD,
+		VIEW_H / 2,
+		VIEW_H - PAD
+	].map((y) => w`<line x1=${PAD} y1=${y} x2=${VIEW_W - PAD} y2=${y} />`)}
+  </g>`;
+}
+function drawTips(model) {
+	const n = model.values.length;
+	if (model.type === "bar") {
+		const slot = (VIEW_W - PAD * 2) / n;
+		return w`<g class="dashboard-chart__tips">
+      ${model.values.map((v, i) => w`<rect class="dashboard-chart__tip" x=${PAD + i * slot} y=${PAD} width=${slot} height=${VIEW_H - PAD * 2}><title>${formatValue(v)}</title></rect>`)}
+    </g>`;
+	}
+	if (model.type === "gauge") {
+		const current = n ? model.values[n - 1] : 0;
+		return w`<g class="dashboard-chart__tips">
+      <rect class="dashboard-chart__tip" x=${PAD} y=${PAD} width=${VIEW_W - PAD * 2} height=${VIEW_H - PAD * 2}><title>${formatValue(current)}</title></rect>
+    </g>`;
+	}
+	return w`<g class="dashboard-chart__tips">
+    ${model.values.map((v, i) => w`<circle class="dashboard-chart__tip" cx=${xScale(i, n)} cy=${yScale(v, model.min, model.max)} r="2.5"><title>${formatValue(v)}</title></circle>`)}
+  </g>`;
+}
+function drawBase(model, props) {
 	switch (model.type) {
 		case "bar": return drawBars(model);
 		case "area": return drawArea(model);
 		case "gauge": return drawGauge(model, props);
+		case "sparkline": return drawSparkline(model);
 		default: return drawLine(model);
 	}
+}
+function drawChart(model, props) {
+	const base = drawBase(model, props);
+	if (!model.detail || model.type === "sparkline") return base;
+	return w`<g>
+    ${hasAxes(model.type) ? drawGrid() : A}
+    ${base}
+    ${drawTips(model)}
+  </g>`;
 }
 function renderChart(widget, value) {
 	const model = mapChart(widget, value);
@@ -3615,8 +5708,12 @@ function renderChart(widget, value) {
       ${t("dashboard.widget.chart.empty")}
     </div>`;
 	const props = widgetProps(widget);
+	const detail = model.detail && model.type !== "sparkline";
+	const axes = detail && hasAxes(model.type);
+	const sparkValue = model.type === "sparkline" && model.label;
+	const detailClass = detail ? " dashboard-chart--detail" : "";
 	return b`
-    <div class="dashboard-chart dashboard-chart--${model.type}">
+    <div class="dashboard-chart dashboard-chart--${model.type}${detailClass}">
       <svg
         class="dashboard-chart__svg"
         viewBox="0 0 ${VIEW_W} ${VIEW_H}"
@@ -3627,42 +5724,18 @@ function renderChart(widget, value) {
       >
         ${drawChart(model, props)}
       </svg>
+      ${axes ? b`<span class="dashboard-chart__axis dashboard-chart__axis--max"
+                >${formatValue(model.max)}</span
+              ><span class="dashboard-chart__axis dashboard-chart__axis--min"
+                >${formatValue(model.min)}</span
+              >` : A}
+      ${sparkValue ? b`<span
+              class="dashboard-chart__spark-value dashboard-chart__spark-value--${sparkTrend(model.values)}"
+              >${formatValue(model.values[model.values.length - 1] ?? 0)}</span
+            >` : A}
     </div>
   `;
 }
-//#endregion
-//#region ../../node_modules/.pnpm/lit-html@3.3.3/node_modules/lit-html/directives/ref.js
-/**
-* @license
-* Copyright 2020 Google LLC
-* SPDX-License-Identifier: BSD-3-Clause
-*/ const e$1 = () => new h();
-var h = class {};
-const o$1 = /* @__PURE__ */ new WeakMap(), n = e$2(class extends f {
-	render(i) {
-		return A;
-	}
-	update(i, [s]) {
-		const e = s !== this.G;
-		return e && this.rt(void 0), (e || this.lt !== this.ct) && (this.G = s, this.ht = i.options?.host, this.rt(this.ct = i.element)), A;
-	}
-	rt(t) {
-		if (void 0 !== this.G) if (this.isConnected || (t = void 0), "function" == typeof this.G) {
-			const i = this.ht ?? globalThis;
-			let s = o$1.get(i);
-			void 0 === s && (s = /* @__PURE__ */ new WeakMap(), o$1.set(i, s)), void 0 !== s.get(this.G) && this.G.call(this.ht, void 0), s.set(this.G, t), void 0 !== t && this.G.call(this.ht, t);
-		} else this.G.value = t;
-	}
-	get lt() {
-		return "function" == typeof this.G ? o$1.get(this.ht ?? globalThis)?.get(this.G) : this.G?.value;
-	}
-	disconnected() {
-		this.lt === this.ct && this.rt(void 0);
-	}
-	reconnected() {
-		this.rt(this.ct);
-	}
-});
 //#endregion
 //#region ../../node_modules/.pnpm/lit-html@3.3.3/node_modules/lit-html/directives/unsafe-html.js
 /**
@@ -3754,11 +5827,11 @@ function toSanitizedMarkdownHtml(source) {
 	};
 	for (let i = 0; i < rawLines.length; i += 1) {
 		const line = rawLines[i];
-		if (/^```/.test(line)) {
+		if (line.startsWith("```")) {
 			flushParagraph();
 			const fence = [];
 			i += 1;
-			while (i < rawLines.length && !/^```/.test(rawLines[i])) {
+			while (i < rawLines.length && !rawLines[i].startsWith("```")) {
 				fence.push(rawLines[i]);
 				i += 1;
 			}
@@ -4662,6 +6735,7 @@ const BUILTIN_WIDGET_RENDERERS = {
 	chart: (widget, value) => renderChart(widget, value),
 	notes: renderNotes,
 	"action-form": renderActionForm,
+	"action-button": renderActionButton,
 	"agent-status": (widget, value) => renderAgentStatus(widget, value),
 	approvals: renderApprovals,
 	chat: renderChat
@@ -4680,10 +6754,23 @@ function getBuiltinRenderer(kind) {
 function displayWidgetTitle(title) {
 	return title.replace(/\s*\(custom\)\s*$/iu, "").trim() || title;
 }
-/** Renders the provenance chip when a widget was authored by an agent. */
-function renderProvenanceChip(widget) {
+/**
+* Renders the provenance chip when a widget was authored by an agent. On a MULTI-AGENT
+* board the view passes an `agentChip` and this renders the per-agent COLOURED chip
+* (short id, full actor on hover, deterministic hue) — the distinguishing affordance of
+* SPEC §17.3 (#59). Otherwise it falls back to the plain "AI" chip.
+*/
+function renderProvenanceChip(widget, agentChip) {
 	const agentId = dashboardAgentProvenance(widget.createdBy);
 	if (!agentId) return A;
+	if (agentChip) return b`<span
+      class=${agentChip.dimmed ? "dashboard-widget__agent dashboard-widget__agent--dimmed" : "dashboard-widget__agent"}
+      style="--dashboard-agent-hue: ${agentChip.hue}"
+      data-test-id="dashboard-widget-agent-chip"
+      data-agent=${agentChip.actor}
+      title=${t("dashboard.widget.agentChipTooltip", { agent: agentChip.actor })}
+      >${agentChip.short}</span
+    >`;
 	return b`<span
     class="dashboard-widget__provenance"
     title=${t("dashboard.widget.provenanceTooltip", { agent: agentId })}
@@ -4879,15 +6966,19 @@ function renderWidgetBody(widget, binding, ctx, callbacks, custom) {
 }
 function renderWidgetCell(props) {
 	const { widget, callbacks } = props;
-	return b`
-    <section
-      class=${[
+	const classes = [
 		"dashboard-widget",
 		widget.collapsed ? "dashboard-widget--collapsed" : "",
 		props.pending ? "dashboard-widget--pending" : "",
-		props.dragging ? "dashboard-widget--dragging" : ""
-	].filter(Boolean).join(" ")}
-      style=${gridPlacementStyle(widget.grid)}
+		props.dragging ? "dashboard-widget--dragging" : "",
+		props.dragging && props.dragTransform ? "dashboard-widget--carried" : "",
+		props.agentChip?.dimmed ? "dashboard-widget--agent-dimmed" : ""
+	].filter(Boolean).join(" ");
+	const placement = gridPlacementStyle(widget.grid);
+	return b`
+    <section
+      class=${classes}
+      style=${props.dragging && props.dragTransform ? `${placement}; transform: ${props.dragTransform}` : placement}
       data-widget-id=${widget.id}
       data-test-id="dashboard-widget"
     >
@@ -4908,7 +6999,7 @@ function renderWidgetCell(props) {
         <span class="dashboard-widget__title" title=${widget.title}
           >${displayWidgetTitle(widget.title)}</span
         >
-        ${renderProvenanceChip(widget)} ${renderEphemeralBadge(widget)}
+        ${renderProvenanceChip(widget, props.agentChip)} ${renderEphemeralBadge(widget)}
         <span
           class="dashboard-widget__handle"
           role="button"
@@ -4952,6 +7043,55 @@ function handleNudgeKey(event, widget, mode, callbacks) {
 	if (!direction) return;
 	event.preventDefault();
 	callbacks.onKeyboardNudge(widget, mode, direction);
+}
+//#endregion
+//#region src/agent-provenance.ts
+const SHORT_ID_MAX = 10;
+/**
+* A stable 32-bit FNV-1a hash of a string → a hue in [0, 360). Deterministic and
+* reload-stable (no `Math.random`, no insertion order), so an agent keeps one colour
+* everywhere it appears. Not cryptographic — only a spread for visual distinction.
+*/
+function agentHue(actor) {
+	let hash = 2166136261;
+	for (let i = 0; i < actor.length; i++) {
+		hash ^= actor.charCodeAt(i);
+		hash = Math.imul(hash, 16777619);
+	}
+	return (hash >>> 0) % 360;
+}
+/** Cap an agent id to a header-safe length, ellipsizing when it overflows. */
+function shortAgentId(agentId) {
+	return agentId.length <= SHORT_ID_MAX ? agentId : `${agentId.slice(0, SHORT_ID_MAX - 1)}…`;
+}
+/**
+* The distinct agent actors that authored a widget anywhere on the board, in stable
+* (sorted) order. `user`/`system`-authored and unstamped widgets contribute nothing —
+* only `agent:<id>` provenance counts, since scoping + chips are per-AGENT.
+*/
+function distinctAgentActors(workspace) {
+	const actors = /* @__PURE__ */ new Set();
+	for (const tab of workspace.tabs) for (const widget of tab.widgets) {
+		const actor = widget.createdBy;
+		if (actor && dashboardAgentProvenance(actor)) actors.add(actor);
+	}
+	return [...actors].sort();
+}
+/**
+* Build the chip model for a widget's `createdBy`, or `null` when there is no agent chip
+* to show (the widget is not agent-authored). `highlightedAgent` (the active filter, or
+* null) drives `dimmed`.
+*/
+function agentChipFor(actor, highlightedAgent) {
+	const agentId = dashboardAgentProvenance(actor);
+	if (!agentId) return null;
+	return {
+		actor,
+		agentId,
+		short: shortAgentId(agentId),
+		hue: agentHue(actor),
+		dimmed: highlightedAgent !== null && actor !== highlightedAgent
+	};
 }
 //#endregion
 //#region src/boardstate-view.ts
@@ -5081,7 +7221,8 @@ function getViewState(host, storage) {
 			collapsedTabGroups: /* @__PURE__ */ new Set(),
 			lastPresenceSlug: null,
 			history: initialHistoryViewState(),
-			gallery: null
+			gallery: null,
+			highlightedAgent: null
 		};
 		dashboardViewStates.set(host, state);
 	}
@@ -5466,9 +7607,15 @@ function buildBuiltinContext(props, state, workspace, widget) {
 			state.actionError = message;
 			props.onRequestUpdate?.();
 		},
-		approvals: buildWidgetApprovalsSource(workspace, (name, decision) => void approveWidget(state, transport, {
+		approvals: buildApprovalsSource(workspace, (name, decision) => void approveWidget(state, transport, {
 			name,
 			decision
+		}), (name, decision, options) => void approveCapability(state, transport, {
+			name,
+			decision,
+			...options?.tools !== void 0 ? { tools: options.tools } : {},
+			...options?.autoConfirm !== void 0 ? { autoConfirm: options.autoConfirm } : {},
+			...options?.expiresAt !== void 0 ? { expiresAt: options.expiresAt } : {}
 		})),
 		registryPending: pendingWidgetNames(workspace)
 	};
@@ -5479,8 +7626,52 @@ function buildBuiltinContext(props, state, workspace, widget) {
 			name,
 			decision
 		});
+		context.actions = makeBuiltinActionsSeam(transport, props.operator === true);
 	}
 	return context;
+}
+/**
+* Build the external-tool action seam (SPEC §17 v2 / §18) for the action-button and
+* tool-mode action-form widgets. `invoke` maps the engine response to the outcome
+* union (a parked mutation → `pending`, a readOnly execution → `result`); `confirm`/
+* `deny` are attached ONLY for the local operator, so a networked client's widget
+* renders the confirm affordance disabled-with-reason (the server enforces the same —
+* invariant #5). `subscribe` multiplexes the `dashboard.action.changed` broadcast over
+* the transport's existing event stream (no new socket).
+*/
+function makeBuiltinActionsSeam(transport, operator) {
+	const seam = {
+		invoke: async (params) => {
+			const response = await transport.request("dashboard.action.invoke", params);
+			if (isRecord$4(response) && response.pending === true) return {
+				kind: "pending",
+				id: typeof response.id === "string" ? response.id : "",
+				expiresAt: typeof response.expiresAt === "string" ? response.expiresAt : ""
+			};
+			return {
+				kind: "result",
+				result: response
+			};
+		},
+		subscribe: (listener) => transport.addEventListener("dashboard.action.changed", (payload) => {
+			if (isRecord$4(payload) && typeof payload.id === "string") listener({
+				id: payload.id,
+				status: payload.status,
+				connector: typeof payload.connector === "string" ? payload.connector : "",
+				tool: typeof payload.tool === "string" ? payload.tool : ""
+			});
+		})
+	};
+	if (operator) {
+		seam.confirm = async (id) => {
+			const response = await transport.request("dashboard.action.confirm", { id });
+			return { result: isRecord$4(response) && "result" in response ? response.result : response };
+		};
+		seam.deny = async (id) => {
+			await transport.request("dashboard.action.deny", { id });
+		};
+	}
+	return seam;
 }
 /** Names of `custom:` widgets currently `pending` approval (chat inline approval card). */
 function pendingWidgetNames(workspace) {
@@ -5658,21 +7849,29 @@ function renderGrid(props, state, viewState, workspace, tab) {
 	if (tab.layout === "full") return renderFullBleed(props, state, viewState, workspace, tab);
 	const callbacks = makeCallbacks(props, state, viewState, tab);
 	const rows = gridRowCount(tab.widgets);
+	const minHeight = rows * 56 + Math.max(0, rows - 1) * 12;
+	const multiAgent = distinctAgentActors(workspace).length >= 2;
 	return b`
-    <div class="dashboard-grid" style="min-height: ${rows * 56 + Math.max(0, rows - 1) * 12}px" data-test-id="dashboard-grid">
+    <div class="dashboard-grid" style="min-height: ${minHeight}px" data-test-id="dashboard-grid">
       ${tab.widgets.map((widget) => {
 		const custom = buildCustomContext(props, state, viewState, workspace, widget, tab.slug);
 		const blame = computeWidgetBlame(props, viewState, widget);
+		const drag = viewState.drag;
+		const dragging = drag?.widgetId === widget.id;
+		const dragTransform = dragging && drag.mode === "move" ? `translate(${drag.pointerDx}px, ${drag.pointerDy}px)` : void 0;
+		const agentChip = multiAgent && widget.createdBy ? agentChipFor(widget.createdBy, viewState.highlightedAgent) : null;
 		return renderWidgetCell({
 			widget,
 			binding: viewState.bindingResults.get(widget.id) ?? null,
 			...blame ? { blame } : {},
 			menuOpen: viewState.openMenuWidgetId === widget.id,
 			pending: state.pendingWidgetIds.has(widget.id),
-			dragging: viewState.drag?.widgetId === widget.id,
+			dragging,
+			...dragTransform ? { dragTransform } : {},
 			builtinContext: buildBuiltinContext(props, state, workspace, widget),
 			callbacks,
-			...custom ? { custom } : {}
+			...custom ? { custom } : {},
+			...agentChip ? { agentChip } : {}
 		});
 	})}
       ${renderDragGhost(viewState, tab)}
@@ -5723,7 +7922,9 @@ function makeCallbacks(props, state, viewState, tab) {
 		});
 		viewState.drag = drag;
 		const target = event.target;
-		if (target.setPointerCapture) target.setPointerCapture(event.pointerId);
+		try {
+			target.setPointerCapture?.(event.pointerId);
+		} catch {}
 		let settled = false;
 		const teardown = () => {
 			window.removeEventListener("pointermove", onMove);
@@ -6011,7 +8212,61 @@ function renderBody(props, state, viewState) {
     ${renderWorkspacesHeader(props, state, viewState, tab)}
     ${renderOnboardingBanner(props, viewState, workspace, () => props.onRequestUpdate?.())}
     ${renderTabStrip(props, state, viewState, workspace)}
+    ${renderAgentFilterBar(props, viewState, workspace)}
     ${renderGrid(props, state, viewState, workspace, tab)}
+  `;
+}
+/**
+* The per-agent provenance filter (SPEC §17.3, #59): a row of deterministically-coloured
+* agent chips shown ONLY on a multi-agent board (≥2 distinct agent authors). Clicking a
+* chip highlights that agent's widgets (dimming the rest); clicking the active chip (or
+* "All") clears the filter. A single-agent / operator board renders nothing here.
+*/
+function renderAgentFilterBar(props, viewState, workspace) {
+	const actors = distinctAgentActors(workspace);
+	if (actors.length < 2) {
+		viewState.highlightedAgent = null;
+		return A;
+	}
+	const setHighlight = (actor) => {
+		viewState.highlightedAgent = viewState.highlightedAgent === actor ? null : actor;
+		props.onRequestUpdate?.();
+	};
+	const active = viewState.highlightedAgent;
+	return b`
+    <div
+      class="dashboard-agent-filter"
+      data-test-id="dashboard-agent-filter"
+      role="group"
+      aria-label=${t("dashboard.agentFilter.label")}
+    >
+      <span class="dashboard-agent-filter__label">${t("dashboard.agentFilter.label")}</span>
+      <button
+        class="dashboard-agent-filter__chip ${active === null ? "dashboard-agent-filter__chip--active" : ""}"
+        type="button"
+        data-test-id="dashboard-agent-filter-all"
+        aria-pressed=${active === null ? "true" : "false"}
+        @click=${() => setHighlight(null)}
+      >
+        ${t("dashboard.agentFilter.all")}
+      </button>
+      ${actors.map((actor) => {
+		const agentId = dashboardAgentProvenance(actor) ?? actor;
+		const isActive = active === actor;
+		return b`<button
+          class="dashboard-agent-filter__chip dashboard-agent-filter__chip--agent ${isActive ? "dashboard-agent-filter__chip--active" : ""}"
+          type="button"
+          style="--dashboard-agent-hue: ${agentHue(actor)}"
+          data-agent=${actor}
+          data-test-id="dashboard-agent-filter-chip"
+          aria-pressed=${isActive ? "true" : "false"}
+          title=${t("dashboard.widget.agentChipTooltip", { agent: actor })}
+          @click=${() => setHighlight(actor)}
+        >
+          ${shortAgentId(agentId)}
+        </button>`;
+	})}
+    </div>
   `;
 }
 /** Trigger a browser download of `json` under `filename` (no-op outside a document). */
@@ -6046,8 +8301,11 @@ function onWorkspaceImportChange(props, state, event) {
 function openGallery(props, viewState) {
 	viewState.gallery = {
 		indexUrl: readGalleryUrl(props.storage),
+		mode: "widgets",
 		entries: null,
 		selected: null,
+		recipes: null,
+		selectedRecipe: null,
 		busy: false,
 		error: null
 	};
@@ -6187,6 +8445,28 @@ function renderHistoryPanel(props, state, viewState) {
       </div>
     `);
 }
+/**
+* Compose the compact per-row change label from a store-computed summary, e.g.
+* "+2 · 1 moved". A summary with no tracked layout change (a props-only or
+* collapse mutation, which the diff doesn't count) still renders "Other edit" so
+* the row reads as a real, distinct change rather than an empty repeat.
+*/
+function historySummaryLabel(summary) {
+	const parts = [];
+	if (summary.added > 0) parts.push(t("dashboard.history.summary.added", { count: String(summary.added) }));
+	if (summary.removed > 0) parts.push(t("dashboard.history.summary.removed", { count: String(summary.removed) }));
+	if (summary.moved > 0) parts.push(t("dashboard.history.summary.moved", { count: String(summary.moved) }));
+	if (summary.retitled > 0) parts.push(t("dashboard.history.summary.retitled", { count: String(summary.retitled) }));
+	if (summary.tabsChanged > 0) parts.push(t("dashboard.history.summary.tabs", { count: String(summary.tabsChanged) }));
+	return parts.length > 0 ? parts.join(" · ") : t("dashboard.history.summary.minor");
+}
+/** The change-summary line under a history row's version (m2 polish, #4). */
+function renderHistoryChangeSummary(summary) {
+	if (!summary) return A;
+	return b`<span class="dashboard-history__change">
+    <span class="dashboard-history__change-label">${historySummaryLabel(summary)}</span>
+  </span>`;
+}
 function renderHistoryList(props, viewState, newestVersion) {
 	const history = viewState.history;
 	if (history.loading && history.entries.length === 0) return b`<div class="dashboard-history__list">
@@ -6212,6 +8492,7 @@ function renderHistoryList(props, viewState, newestVersion) {
               <span class="dashboard-history__version"
                 >${t("dashboard.history.version", { version: String(entry.version) })}</span
               >
+              ${renderHistoryChangeSummary(entry.summary)}
               <span class="dashboard-history__time">${formatRelativeTimestamp(entry.savedAt)}</span>
               ${entry.version === newestVersion ? b`<span class="dashboard-history__latest"
                       >${t("dashboard.history.latest")}</span
@@ -6233,7 +8514,7 @@ function renderHistoryDetail(props, state, viewState, version, snapshot) {
 	return b`
     <div class="dashboard-history__preview-wrap">
       <div class="dashboard-history__section-title">${t("dashboard.history.previewTitle")}</div>
-      ${renderHistoryPreview(snapshot, state.activeSlug)}
+      ${renderHistoryPreview(snapshot, state.activeSlug, version)}
     </div>
     <div class="dashboard-history__diff">
       <div class="dashboard-history__section-title">${t("dashboard.history.diffTitle")}</div>
@@ -6285,11 +8566,64 @@ function renderHistoryDetail(props, state, viewState, version, snapshot) {
   `;
 }
 /**
+* Category mini-glyphs for the snapshot preview cells. The preview resolves NO
+* live data (SPEC: previews stay cheap), so each cell shows a static hint of the
+* widget's KIND — a faux sparkline for charts, stacked rows for tables/lists, a
+* bold value bar for stat cards — so a past layout reads as intentional rather
+* than a row of empty boxes. Drawn like `icons.ts`: bare 24×24 stroke paths.
+*/
+const HISTORY_PREVIEW_GLYPHS = {
+	chart: w`<polyline points="3 15 8 10 12 13 17 6 21 9" /><path d="M3 20h18" opacity="0.5" />`,
+	"stat-card": w`<path d="M4 8h9" stroke-width="2.6" /><path d="M4 14h6" opacity="0.6" />`,
+	table: w`<rect x="3" y="5" width="18" height="14" rx="1.5" /><path d="M3 10h18M3 15h18M9 5v14" opacity="0.6" />`,
+	markdown: w`<path d="M4 7h16M4 12h16M4 17h9" opacity="0.85" />`,
+	notes: w`<path d="M5 6h11M5 11h11M5 16h7" opacity="0.8" /><path d="M16 15l3-3 2 2-3 3-2 1z" />`,
+	list: w`<circle cx="5" cy="7" r="1" /><circle cx="5" cy="12" r="1" /><circle cx="5" cy="17" r="1" /><path d="M9 7h11M9 12h11M9 17h7" opacity="0.8" />`,
+	gauge: w`<path d="M4 16a8 8 0 0 1 16 0" /><path d="M12 16l4-3" />`,
+	button: w`<rect x="4" y="9" width="16" height="6" rx="3" />`,
+	frame: w`<rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 8h18" opacity="0.6" />`,
+	custom: w`<path
+    d="M4 7h3a1.5 1.5 0 1 0 3 0h3v3a1.5 1.5 0 1 1 0 3v3h-3a1.5 1.5 0 1 0-3 0H4v-3a1.5 1.5 0 1 1 0-3z"
+  />`,
+	default: w`<rect x="4" y="5" width="16" height="14" rx="2" opacity="0.6" />`
+};
+const HISTORY_PREVIEW_GLYPH_ALIASES = {
+	activity: "list",
+	"agent-status": "list",
+	approvals: "list",
+	sessions: "list",
+	instances: "list",
+	cron: "list",
+	chat: "list",
+	usage: "gauge",
+	"action-button": "button",
+	"action-form": "button",
+	"iframe-embed": "frame",
+	preview: "frame"
+};
+/** Resolve a widget kind (`builtin:chart`, `custom:foo`) to its preview glyph. */
+function historyPreviewGlyph(kind) {
+	const base = kind.startsWith("custom:") ? "custom" : kind.replace(/^builtin:/, "");
+	return b`<svg
+    class="dashboard-history__cell-glyph"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.6"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    ${HISTORY_PREVIEW_GLYPHS[base] ?? HISTORY_PREVIEW_GLYPHS[HISTORY_PREVIEW_GLYPH_ALIASES[base] ?? "default"]}
+  </svg>`;
+}
+/**
 * Static read-only preview of a snapshot's active tab: reuses the grid placement
 * math but strips every interaction (no drag/resize handles, menus, or live
-* bindings) so a past state renders without any write affordance.
+* bindings) so a past state renders without any write affordance. Each cell carries
+* a per-kind glyph (no data resolved) and the grid is captioned with its version.
 */
-function renderHistoryPreview(snapshot, activeSlug) {
+function renderHistoryPreview(snapshot, activeSlug, version) {
 	const tab = (activeSlug ? snapshot.tabs.find((entry) => entry.slug === activeSlug) : void 0) ?? visibleTabs(snapshot)[0] ?? snapshot.tabs[0];
 	if (!tab || tab.widgets.length === 0) return b`<div class="dashboard-history__preview dashboard-history__preview--empty">
       ${t("dashboard.history.previewEmpty")}
@@ -6306,6 +8640,7 @@ function renderHistoryPreview(snapshot, activeSlug) {
 		const agent = dashboardAgentProvenance(widget.createdBy);
 		return b`
           <div class="dashboard-history__cell" style=${gridPlacementStyle(widget.grid)}>
+            ${historyPreviewGlyph(widget.kind)}
             <span class="dashboard-history__cell-title">${widget.title || widget.kind}</span>
             ${agent ? b`<span class="dashboard-widget__provenance"
                     >${t("dashboard.widget.provenanceChip")}</span
@@ -6313,6 +8648,9 @@ function renderHistoryPreview(snapshot, activeSlug) {
           </div>
         `;
 	})}
+    </div>
+    <div class="dashboard-history__preview-caption">
+      ${t("dashboard.history.previewCaption", { version: String(version) })}
     </div>
   `;
 }
@@ -6363,16 +8701,25 @@ function renderGalleryDialog(props, state, viewState) {
 	const onUrlInput = (event) => {
 		gallery.indexUrl = event.currentTarget.value;
 	};
+	const setMode = (mode) => {
+		gallery.mode = mode;
+		gallery.selected = null;
+		gallery.selectedRecipe = null;
+		gallery.error = null;
+		requestUpdate();
+	};
 	const browse = async () => {
 		const url = gallery.indexUrl.trim();
 		if (!url) return;
 		gallery.busy = true;
 		gallery.error = null;
 		gallery.selected = null;
+		gallery.selectedRecipe = null;
 		requestUpdate();
 		try {
-			const entries = await fetchGalleryIndex(url);
+			const [entries, recipes] = await Promise.all([fetchGalleryIndex(url), fetchGalleryRecipes(url)]);
 			gallery.entries = entries;
+			gallery.recipes = recipes;
 			persistGalleryUrl(props.storage, url);
 		} catch (err) {
 			gallery.error = formatGalleryError(err);
@@ -6390,6 +8737,45 @@ function renderGalleryDialog(props, state, viewState) {
 		} catch (err) {
 			gallery.error = formatGalleryError(err);
 		} finally {
+			gallery.busy = false;
+			requestUpdate();
+		}
+	};
+	const previewRecipe = async (entry) => {
+		gallery.busy = true;
+		gallery.error = null;
+		requestUpdate();
+		try {
+			gallery.selectedRecipe = await fetchRecipe(entry.manifestUrl);
+		} catch (err) {
+			gallery.error = formatGalleryError(err);
+		} finally {
+			gallery.busy = false;
+			requestUpdate();
+		}
+	};
+	const installRecipeFlow = async () => {
+		const recipe = gallery.selectedRecipe;
+		if (!recipe) return;
+		gallery.busy = true;
+		gallery.error = null;
+		requestUpdate();
+		try {
+			if (!await installRecipe(state, props.transport, recipe)) {
+				gallery.error = state.actionError ?? formatGalleryError(/* @__PURE__ */ new Error("Install failed."));
+				gallery.busy = false;
+				requestUpdate();
+				return;
+			}
+			const firstSlug = recipe.doc.tabs[0]?.slug;
+			if (firstSlug) {
+				state.activeSlug = firstSlug;
+				props.onNavigate?.(firstSlug);
+			}
+			viewState.gallery = null;
+			requestUpdate();
+		} catch (err) {
+			gallery.error = formatGalleryError(err);
 			gallery.busy = false;
 			requestUpdate();
 		}
@@ -6420,11 +8806,41 @@ function renderGalleryDialog(props, state, viewState) {
 			requestUpdate();
 		}
 	};
+	const renderWidgetsTab = () => gallery.selected ? renderGalleryDetail(gallery.selected, () => {
+		gallery.selected = null;
+		requestUpdate();
+	}, () => void install(), gallery.busy) : renderGalleryList(gallery, (entry) => void preview(entry));
+	const renderTemplatesTab = () => gallery.selectedRecipe ? renderRecipeDetail(gallery.selectedRecipe, () => {
+		gallery.selectedRecipe = null;
+		requestUpdate();
+	}, () => void installRecipeFlow(), gallery.busy) : renderRecipeList(gallery, (entry) => void previewRecipe(entry));
 	return renderModal(t("dashboard.gallery.title"), close, b`
       <div class="dashboard-gallery" data-test-id="dashboard-gallery">
         <div class="dashboard-gallery__header">
           <div class="card-title">${t("dashboard.gallery.title")}</div>
           <div class="card-sub">${t("dashboard.gallery.subtitle")}</div>
+        </div>
+        <div class="dashboard-gallery__tabs" role="tablist">
+          <button
+            class="dashboard-gallery__tab ${gallery.mode === "widgets" ? "is-active" : ""}"
+            type="button"
+            role="tab"
+            aria-selected=${gallery.mode === "widgets"}
+            data-test-id="dashboard-gallery-tab-widgets"
+            @click=${() => setMode("widgets")}
+          >
+            ${t("dashboard.gallery.tabWidgets")}
+          </button>
+          <button
+            class="dashboard-gallery__tab ${gallery.mode === "templates" ? "is-active" : ""}"
+            type="button"
+            role="tab"
+            aria-selected=${gallery.mode === "templates"}
+            data-test-id="dashboard-gallery-tab-templates"
+            @click=${() => setMode("templates")}
+          >
+            ${t("dashboard.gallery.tabTemplates")}
+          </button>
         </div>
         <div class="dashboard-gallery__browse">
           <input
@@ -6450,10 +8866,7 @@ function renderGalleryDialog(props, state, viewState) {
         ${gallery.error ? b`<div class="callout danger" role="alert" data-test-id="dashboard-gallery-error">
                 ${gallery.error}
               </div>` : A}
-        ${gallery.selected ? renderGalleryDetail(gallery.selected, () => {
-		gallery.selected = null;
-		requestUpdate();
-	}, () => void install(), gallery.busy) : renderGalleryList(gallery, (entry) => void preview(entry))}
+        ${gallery.mode === "templates" ? renderTemplatesTab() : renderWidgetsTab()}
       </div>
     `);
 }
@@ -6512,6 +8925,89 @@ function renderGalleryDetail(bundle, onBack, onInstall, busy) {
     </div>
   `;
 }
+/** Templates tab list (#60): one row per recipe, with its "what it needs" connector hint. */
+function renderRecipeList(gallery, onSelect) {
+	if (gallery.recipes === null) return A;
+	if (gallery.recipes.length === 0) return b`<div class="dashboard-gallery__empty">${t("dashboard.gallery.recipesEmpty")}</div>`;
+	return b`
+    <ul class="dashboard-gallery__list" data-test-id="dashboard-gallery-recipe-list">
+      ${gallery.recipes.map((entry) => b`
+          <li class="dashboard-gallery__item">
+            <div class="dashboard-gallery__item-body">
+              <div class="dashboard-gallery__item-name">${entry.title}</div>
+              ${entry.description ? b`<div class="dashboard-gallery__item-desc">${entry.description}</div>` : A}
+              <div class="dashboard-gallery__recipe-needs">
+                ${entry.connectors.length === 0 ? t("dashboard.gallery.recipeNeedsNothing") : t("dashboard.gallery.recipeNeedsConnectors", { connectors: entry.connectors.join(", ") })}
+              </div>
+            </div>
+            <button
+              class="bs-btn bs-btn--small"
+              type="button"
+              data-test-id="dashboard-gallery-recipe-select"
+              ?disabled=${gallery.busy}
+              @click=${() => onSelect(entry)}
+            >
+              ${t("dashboard.gallery.view")}
+            </button>
+          </li>
+        `)}
+    </ul>
+  `;
+}
+/**
+* Selected-recipe detail (#60): an HONEST "what this board will ask for" — the grant
+* list, per connector, with a human label for each tool — surfaced BEFORE install. On
+* install the grants land `requested`; the approvals widget shows the pending cards.
+*/
+function renderRecipeDetail(recipe, onBack, onInstall, busy) {
+	const connectors = Object.entries(recipe.grantsManifest);
+	return b`
+    <div class="dashboard-gallery__detail" data-test-id="dashboard-gallery-recipe-detail">
+      <div class="dashboard-gallery__item-name">${recipe.title}</div>
+      <div class="dashboard-gallery__item-desc">${recipe.description}</div>
+      <div class="dashboard-gallery__recipe-grants">
+        <div class="dashboard-gallery__caps-label">${t("dashboard.gallery.recipeNeedsLabel")}</div>
+        ${connectors.length === 0 ? b`<div class="dashboard-gallery__recipe-nogrants">
+                ${t("dashboard.gallery.recipeNoGrants")}
+              </div>` : connectors.map(([, grant]) => b`
+                  <div class="dashboard-gallery__recipe-connector">
+                    <div class="dashboard-gallery__recipe-connector-name">${grant.label}</div>
+                    ${grant.reason ? b`<div class="dashboard-gallery__recipe-connector-reason">
+                            ${grant.reason}
+                          </div>` : A}
+                    <ul class="dashboard-gallery__recipe-tools">
+                      ${(grant.tools ?? []).map((tool) => b`
+                          <li
+                            class="dashboard-gallery__recipe-tool"
+                            data-test-id="dashboard-gallery-recipe-tool"
+                          >
+                            <code>${tool.id}</code>
+                            <span>${tool.label}</span>
+                            ${tool.readOnly ? b`<span class="dashboard-gallery__recipe-readonly"
+                                    >${t("dashboard.gallery.recipeReadOnly")}</span
+                                  >` : A}
+                          </li>
+                        `)}
+                    </ul>
+                  </div>
+                `)}
+      </div>
+      <div class="dashboard-gallery__pending-note">${t("dashboard.gallery.recipeInstallNote")}</div>
+      <div class="bs-dialog__actions">
+        <button
+          class="bs-btn bs-btn--primary"
+          type="button"
+          data-test-id="dashboard-gallery-recipe-install"
+          ?disabled=${busy}
+          @click=${onInstall}
+        >
+          ${t("dashboard.gallery.recipeInstall")}
+        </button>
+        <button class="bs-btn" type="button" @click=${onBack}>${t("common.back")}</button>
+      </div>
+    </div>
+  `;
+}
 /**
 * `<boardstate-view>` — the reference view custom element. Renders into light DOM
 * (so injected theme tokens / CSS cascade). Set `transport` + `connected` to drive
@@ -6523,6 +9019,7 @@ var BoardstateViewElement = class extends i$2 {
 		super(..._args);
 		this.transport = null;
 		this.connected = false;
+		this.operator = false;
 	}
 	createRenderRoot() {
 		return this;
@@ -6539,7 +9036,8 @@ var BoardstateViewElement = class extends i$2 {
 			basePath: { type: String },
 			initialTab: { type: String },
 			sessionKey: { type: String },
-			logbookHref: { type: String }
+			logbookHref: { type: String },
+			operator: { type: Boolean }
 		};
 	}
 	render() {
@@ -6556,7 +9054,8 @@ var BoardstateViewElement = class extends i$2 {
 			...this.basePath !== void 0 ? { basePath: this.basePath } : {},
 			...this.initialTab !== void 0 ? { initialTab: this.initialTab } : {},
 			...this.sessionKey !== void 0 ? { sessionKey: this.sessionKey } : {},
-			...this.logbookHref !== void 0 ? { logbookHref: this.logbookHref } : {}
+			...this.logbookHref !== void 0 ? { logbookHref: this.logbookHref } : {},
+			operator: this.operator
 		});
 	}
 	disconnectedCallback() {
