@@ -1,67 +1,107 @@
 # boardstate-hermes-plugin
 
-A drop-in tab for the [Hermes](https://github.com/NousResearch/hermes-agent) web
-dashboard (`hermes dashboard`) that renders a **live [Boardstate](https://github.com/100yenadmin/boardstate) board** —
-the layout-as-data dashboard Hermes builds via `boardstate-mcp`, streamed into the
-Hermes UI over a WebSocket to a local sidecar.
+A drop-in dashboard plugin for [Hermes](https://github.com/NousResearch/hermes-agent)
+(`hermes dashboard`) that brings a **live [Boardstate](https://github.com/100yenadmin/boardstate)
+board** into the Hermes UI — the layout-as-data workspace an agent **builds and operates
+through tools**, rendered live over a WebSocket to a local sidecar, styled to match the
+active Hermes theme, and bound to real Hermes data.
 
 The plugin adds a **Board** tab (after *Skills*). Opening it mounts the real
-`<boardstate-view>` custom element and drives it over the Boardstate networked
-transport. A Node sidecar owns the control plane over an fs-backed store, so a widget
-Hermes adds via `boardstate-mcp` (or the `boardstate` CLI) against the same state
-dir shows up on the board. On first boot against an empty state dir the sidecar seeds
-a clean, Hermes-native welcome board (no external data bindings, zero error cells).
+`<boardstate-view>` custom element over the Boardstate networked transport, backed by a
+Node sidecar that owns the control plane.
 
-![Board tab — live widget over the WS sidecar](.github/media/board-tab.png)
+![The Hermes agent composes a board live from a natural-language prompt](.github/media/flagship-agent-builds-board.png)
 
-*Verification shot: the real plugin bundle + WS bridge + Node sidecar + fs state; the "Hermes Plugin Proof" widget was added via the boardstate CLI and renders live. (Run through a faithful plugin-SDK harness — see Caveats for the stale-web_dist note.)*
+*The Hermes agent, from a plain-English prompt, discovers the widget catalog and composes
+a live board — rendered inside Hermes' own chrome, zero error cells.*
+
+## Features
+
+- **The agent builds the board live.** Hermes reaches the board through a networked MCP
+  endpoint on the sidecar; every `boardstate_*` tool call lands on the same host the
+  browser is subscribed to, so widgets appear as the agent works — no reload.
+- **Live Hermes data.** Data-source widgets (usage, sessions, instances, cron) and
+  `source:"rpc"` bindings resolve against the live Hermes REST surface
+  (`/api/analytics/usage`, `/api/sessions`, `/api/status`, cron) — real numbers, graceful
+  empty states, never an error cell. Credentials are injected server-side only and never
+  reach the browser or the workspace doc.
+- **Native theming.** The board follows the active Hermes palette by aliasing Boardstate's
+  `--bs-*` tokens to Hermes' `--color-*` / `--*-base` tokens, and **auto-follows live
+  palette swaps** with zero JavaScript. Light and dark both render at WCAG-safe contrast.
+- **One-click templates.** A picker swaps in a ready-made, live-bound board — *Agent HQ*,
+  *Usage & Cost*, *Sessions Monitor* — each built from self-binding data widgets.
+- **Secure by construction.** The sidecar's WS and MCP endpoints are gated by a per-spawn
+  nonce; operator-only methods (`widget.approve` / `capability.approve` / `action.confirm`)
+  are blocked over the networked transport; the browser authenticates through the
+  dashboard's own session gate.
+
+| ![Native teal theme + live data](.github/media/live-data.png) | ![Agent HQ template](.github/media/template-agent-hq.png) |
+|:--:|:--:|
+| Live usage/sessions data in the native Hermes theme | The *Agent HQ* template, one click |
 
 ## Architecture
 
 ```
-browser  <boardstate-view> + createWsTransport
-   │  ws  /api/plugins/boardstate/ws   (SDK buildWsUrl → authed by the Hermes WS gate)
+browser  <boardstate-view> + createWsTransport         theme adapter aliases --bs-* → Hermes --color-*
+   │  ws   /api/plugins/boardstate/ws                   (SDK buildWsUrl → authed by the Hermes WS gate)
+   │  http /api/plugins/boardstate/mcp   ◄─ Hermes agent's MCP client (StreamableHTTP)
    ▼
-plugin_api.py  ── FastAPI WS bridge (relays JSON frames verbatim) + sidecar lifecycle
-   │  ws  ws://127.0.0.1:<ephemeral>/ws
+plugin_api.py  ── FastAPI: WS bridge + MCP proxy + sidecar lifecycle
+   │             injects a per-spawn nonce + (server-side only) Hermes URL + session token
+   │  ws/http  127.0.0.1:<ephemeral>?nonce=…
    ▼
 sidecar/server.js  ── @boardstate/server control plane (createInProcessHost +
-   │                   registerBoardstateRpc + attachWsTransport) over an fs store
+   │                   registerBoardstateRpc + attachWsTransport), one MCP endpoint on the
+   │                   SAME host, and read-scoped RPC handlers that resolve rpc data
+   │                   bindings against Hermes REST
    ▼
-~/.hermes/boardstate-state/dashboard/workspace.json   ← also written by boardstate-mcp
+$HERMES_HOME/boardstate-state/dashboard/workspace.json
 ```
+
+Three things share **one** sidecar host so a write from any of them updates every live
+view: the browser (over the WS bridge), the Hermes agent (over the MCP proxy), and the
+data resolver (over Hermes REST).
 
 ### Why a WebSocket proxy (not a direct browser→sidecar connection)
 
-The browser connects to the **dashboard origin**, so auth is the dashboard's
-canonical WS gate (`web_server._ws_auth_ok`) — the same gate the bundled *kanban*
-plugin's live feed uses. It transparently accepts the right credential in every mode
-(loopback `?token=`, gated single-use `?ticket=`, server-internal `?internal=`), and
-works under `--host` / gated OAuth / HTTPS where a direct `ws://127.0.0.1:<port>` from
-the page would be blocked (mixed content) or unreachable. The SDK's `buildWsUrl`
-attaches the credential; `plugin_api.py` bridges the authenticated upgrade to the
-loopback sidecar. The sidecar binds `127.0.0.1` only and is never exposed to the
-browser. No bespoke token scheme.
+The browser connects to the **dashboard origin**, so auth is the dashboard's canonical WS
+gate (`web_server._ws_auth_ok`) — the same gate the bundled *kanban* plugin uses. It
+accepts the right credential in every mode (loopback `?token=`, gated single-use
+`?ticket=`, server-internal `?internal=`) and works under `--host` / gated OAuth / HTTPS
+where a direct `ws://127.0.0.1:<port>` from the page would be blocked or unreachable. The
+sidecar binds `127.0.0.1` only, behind a per-spawn nonce, and is never exposed to the
+browser.
+
+### How live rpc data bindings resolve
+
+`<boardstate-view>` resolves a `source:"rpc"` binding by calling the binding's **method
+directly as a networked RPC** (`transport.request("usage.status", …)`), not via
+`dashboard.data.read`. The sidecar registers each allowlisted data method
+(`usage.status` / `usage.cost` / `system-presence` / `sessions.list` / `cron.list` /
+`node.list`) as a **read-scoped** RPC handler that maps to a Hermes REST call. The
+dedicated data-source builtins self-bind to these methods, so a template shows real data
+with no manual bindings.
 
 ### File tree
 
 ```
 dashboard/
 ├── manifest.json          tab "Board" (/board), entry dist/index.js, css, api
-├── plugin_api.py          FastAPI: WS bridge + Node sidecar lifecycle + /health
-├── src/index.tsx          React tab (host React) → mounts <boardstate-view> over createWsTransport
-├── dist/index.js          built browser bundle (IIFE, React external, createWsTransport inlined)
+├── plugin_api.py          FastAPI: WS bridge + MCP proxy + sidecar lifecycle + nonce + creds
+├── src/
+│   ├── index.tsx           React tab → mounts <boardstate-view>; theme adapter; template picker
+│   ├── theme.ts            pure Hermes→Boardstate token mapping (unit-tested)
+│   └── templates.ts        live-bound board templates
+├── dist/index.js          built browser bundle (IIFE, React external)
 ├── sidecar/
-│   ├── src/server.ts       sidecar source
+│   ├── src/{server,mcp,hermes-data,chat-translate}.ts
 │   └── server.js           built self-contained ESM bundle (all @boardstate/* inlined)
-└── vendor/
-    ├── boardstate-browser.js   @boardstate/lit/browser — registers <boardstate-view>
-    └── boardstate.css          @boardstate/lit stylesheet (manifest `css`)
-build.mjs                  esbuild driver (frontend + sidecar + vendor copy)
+└── vendor/                 @boardstate/lit/browser bundle + stylesheet
+build.mjs                   esbuild driver (resolves @boardstate/* from npm)
 ```
 
-The built artifacts (`dist/`, `sidecar/server.js`, `vendor/*`) are committed — the
-plugin is a **runtime drop-in and does no npm resolution at runtime** (only `node`).
+The built artifacts (`dist/`, `sidecar/server.js`, `vendor/*`) are committed — the plugin
+is a **runtime drop-in and does no npm resolution at runtime** (only `node`).
 
 ## Install
 
@@ -72,59 +112,72 @@ Requires Node ≥ 20 on the machine running `hermes dashboard`.
 mkdir -p ~/.hermes/plugins/boardstate
 cp -r dashboard ~/.hermes/plugins/boardstate/dashboard
 
-# 2. Enable it (user plugins are gated by plugins.enabled in config.yaml).
-hermes plugins enable boardstate      # or add `boardstate` under plugins.enabled
+# 2. Enable it — user plugins are gated by plugins.enabled in ~/.hermes/config.yaml:
+#    plugins:
+#      enabled:
+#        - boardstate
 
-# 3. (Re)start the dashboard, or force a rescan:
+# 3. (Re)start the dashboard (backend API routes mount at startup).
 hermes dashboard
-#   curl http://127.0.0.1:9119/api/dashboard/plugins/rescan   # rescan without restart
-#   (backend API routes mount at startup only — restart after first install)
 ```
 
 Open the dashboard; the **Board** tab appears after *Skills*.
+
+### Let the agent build it
+
+Register the plugin's MCP endpoint so Hermes can build and operate the board via tools —
+in `~/.hermes/config.yaml` (or a profile):
+
+```yaml
+mcp_servers:
+  boardstate:
+    url: http://127.0.0.1:9119/api/plugins/boardstate/mcp   # your dashboard port
+    headers:
+      X-Hermes-Session-Token: <dashboard session token>
+```
+
+Then ask Hermes, e.g. *"add a stat card showing 7 active agents"* — the widget appears on
+the board live. Or click a **template** in the board toolbar for an instant live board.
 
 ### Config
 
 | Setting | Default | Notes |
 |---------|---------|-------|
-| Board state dir | `$HERMES_HOME/boardstate-state` | Override with `BOARDSTATE_HERMES_STATE_DIR`. Point `boardstate-mcp` at the same dir (`BOARDSTATE_STATE_DIR`) so the agent and the tab share one board. |
+| Board state dir | `$HERMES_HOME/boardstate-state` | Override with `BOARDSTATE_HERMES_STATE_DIR`. |
 | Node binary | `node` on `PATH` | Override with `HERMES_NODE_BIN`. |
+| Live Hermes data | on when the dashboard injects its URL + session token | The sidecar reads Hermes REST server-side only; the token never reaches the browser. |
 
-Populate the board with the Boardstate MCP server or CLI against the same dir:
+## Do / Observe
 
-```bash
-export BOARDSTATE_STATE_DIR=~/.hermes/boardstate-state
-boardstate dashboard widgets add --tab main --kind builtin:markdown \
-  --title "Hello" --props '{"markdown":"# Live from the agent"}'
-# …or run `boardstate-mcp` so Hermes builds the board via tools.
-```
-
-> **Cross-process live updates:** the sidecar broadcasts `boardstate.changed` on its
-> *own* writes, so writes from a *separate* `boardstate-mcp` process are picked up on
-> the next board read (open/reload the tab), not pushed live. Agent turns driven
-> through the same board render live. (v1 has no shared cross-process event bus.)
+| Do | Observe |
+|----|---------|
+| Open the **Board** tab | "Board connected"; the board renders in the active Hermes palette |
+| Ask the agent to add a widget | The widget appears live, no reload |
+| Click a **template** (e.g. *Agent HQ*) | The board swaps to a live-bound workspace; usage/sessions/instances/cron resolve real data with graceful empty states |
+| Switch the Hermes theme | The board repaints to the new palette automatically |
+| Bind a stat-card to `usage.status` | It shows today's cost/tokens from `/api/analytics/usage` |
 
 ## Dev loop
 
 ```bash
-npm install                 # esbuild (build-time only)
-# Build needs a local Boardstate monorepo (packages built with `pnpm install && pnpm build`).
-BOARDSTATE_REPO=/path/to/boardstate npm run build
+npm install        # esbuild + @boardstate/* pinned from npm (build-time only)
+npm run build      # → dashboard/dist/index.js, sidecar/server.js, vendored element bundle
+npm test           # or: node test/*.mjs  (see below)
 ```
 
-`build.mjs` emits `dashboard/dist/index.js`, `dashboard/sidecar/server.js`, and copies
-the vendored `@boardstate/lit/browser` bundle + stylesheet. Only the build needs the
-monorepo; the emitted artifacts are self-contained.
+No local Boardstate monorepo needed — `build.mjs` resolves `@boardstate/*` from npm.
 
-## Screenshots
+### Tests (all run in CI)
 
-`docs/` slots (add your own):
-
-- `docs/board-tab.png` — the Board tab in the dashboard nav.
-- `docs/board-live.png` — a live board with agent-authored widgets.
-
-A verification capture (harness rendering the real `dist/index.js` against a live
-sidecar) is produced during end-to-end testing; see the repo's build notes.
+| Test | Proves |
+|------|--------|
+| `test/sidecar-smoke.mjs` | control plane + nonce gate |
+| `test/mcp-liveness.mjs` | an MCP tool call produces a live board update on the single host |
+| `test/hermes-data.mjs` | rpc data methods resolve Hermes REST shapes over the **real render path** |
+| `test/chat-translate.mjs` | Hermes agent events → SPEC §14 `AgentStreamEvent` |
+| `test/theme.mjs` | Hermes→Boardstate token mapping + WCAG luminance split |
+| `test/templates.mjs` | every template is a schema-valid, allowlisted workspace |
+| `test/plugin_api_check.py` | router shape (WS + MCP proxy + nonce forwarding) |
 
 ## License
 
