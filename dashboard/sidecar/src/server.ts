@@ -27,6 +27,7 @@ import {
   nodeRpcDeps,
   registerBoardstateRpc,
 } from "@boardstate/server/node";
+import { createMcpEndpoint } from "./mcp.js";
 
 const stateDirEnv = process.env.BOARDSTATE_STATE_DIR;
 const storage = new FsStorageAdapter(stateDirEnv ? { storageDir: stateDirEnv } : {});
@@ -107,21 +108,33 @@ registerBoardstateRpc(host, {
 // bundle and need no server route.
 const widgetRoute = createWidgetHttpRouteHandler({ store });
 
+// The networked MCP endpoint the Hermes agent connects to (StreamableHTTP), assembled
+// against THIS host so its `boardstate_*` writes land on the same bus the board reads.
+// Same per-spawn nonce gate as the WS.
+const sidecarNonceForMcp = process.env.BOARDSTATE_SIDECAR_NONCE;
+const mcpEndpoint = await createMcpEndpoint(host, store, { nonce: sidecarNonceForMcp });
+
 const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
-  void widgetRoute
-    .handleHttpRequest(req, res)
-    .then((handled) => {
-      if (handled) {
-        return;
+  const pathname = (req.url ?? "/").split("?")[0];
+  void mcpEndpoint
+    .handle(req, res, pathname)
+    .then((handledMcp) => {
+      if (handledMcp) {
+        return undefined;
       }
-      if (req.method === "GET" && (req.url ?? "/").split("?")[0] === "/healthz") {
-        res.statusCode = 200;
-        res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify({ ok: true, stateDir: store.stateDir }));
-        return;
-      }
-      res.statusCode = 404;
-      res.end("not found");
+      return widgetRoute.handleHttpRequest(req, res).then((handled) => {
+        if (handled) {
+          return;
+        }
+        if (req.method === "GET" && pathname === "/healthz") {
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ ok: true, stateDir: store.stateDir }));
+          return;
+        }
+        res.statusCode = 404;
+        res.end("not found");
+      });
     })
     .catch(() => {
       if (!res.headersSent) {
