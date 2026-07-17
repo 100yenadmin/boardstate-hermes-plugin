@@ -3,6 +3,18 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.4.0
+
+### Added
+
+- **Custom widgets mount in Hermes** — the library's sandboxed-widget ladder (games,
+  calculators, tools) now works end-to-end in the dashboard and desktop app. Approved
+  widget assets are served through a tokenized root-level route (iframes can't carry
+  auth headers): per-boot capability token in the path, constant-time compared,
+  traversal-jailed, approved-only with uniform 404, sandbox CSP preserved verbatim.
+  Proven live: the twenty48 bundle installed, approved, mounted, and played inside
+  Hermes.
+
 ## 1.3.1
 
 ### Fixed
