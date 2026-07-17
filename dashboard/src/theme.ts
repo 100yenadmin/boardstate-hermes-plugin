@@ -42,23 +42,28 @@ export const BS_TO_HERMES: Record<string, string[]> = {
 // The Hermes DESKTOP app (Electron renderer) uses a different token system than the
 // web dashboard — `--ui-*` surfaces/text/strokes + `--ui-accent`/`--ui-red`… — so the
 // desktop plugin needs its own map. Same var()-alias mechanism; same pure helpers.
+//
+// ⚠ These are validated against the app's RUNTIME token VALUES, not just names. Trap:
+// `--ui-base` is the app's INK color (`var(--theme-foreground)`), NOT a background —
+// so page/card surfaces come from `--ui-surface-background` / `--ui-bg-editor` /
+// `--ui-bg-elevated`, and the accent's foreground is a light surface, never `--ui-base`.
 export const BS_TO_DESKTOP: Record<string, string[]> = {
-  "--bs-bg": ["--ui-base", "--ui-editor-surface-background"],
+  "--bs-bg": ["--ui-surface-background", "--ui-bg-editor"],
   "--bs-bg-hover": ["--ui-row-hover-background", "--ui-control-hover-background"],
-  "--bs-bg-muted": ["--ui-bg-tertiary"],
-  "--bs-surface-muted": ["--ui-bg-tertiary"],
-  "--bs-card": ["--ui-bg-elevated", "--ui-chat-surface-background"],
+  "--bs-bg-muted": ["--ui-bg-chrome", "--ui-bg-tertiary"],
+  "--bs-surface-muted": ["--ui-bg-chrome", "--ui-bg-tertiary"],
+  "--bs-card": ["--ui-bg-elevated", "--ui-surface-background"],
   "--bs-card-highlight": ["--ui-row-active-background", "--ui-bg-elevated"],
   "--bs-border": ["--ui-stroke-secondary"],
   "--bs-border-strong": ["--ui-stroke-primary"],
-  "--bs-input": ["--ui-control-active-background", "--ui-bg-tertiary"],
-  "--bs-text": ["--ui-text-primary", "--foreground"],
-  "--bs-text-strong": ["--ui-text-primary", "--foreground"],
+  "--bs-input": ["--ui-bg-input", "--ui-control-active-background"],
+  "--bs-text": ["--ui-text-primary"],
+  "--bs-text-strong": ["--ui-text-primary"],
   "--bs-text-muted": ["--ui-text-tertiary"],
   "--bs-text-dim": ["--ui-text-quaternary", "--ui-text-tertiary"],
   "--bs-muted": ["--ui-text-tertiary"],
   "--bs-accent": ["--ui-accent"],
-  "--bs-accent-foreground": ["--ui-base", "--foreground"],
+  "--bs-accent-foreground": ["--ui-bg-elevated", "--ui-surface-background"],
   "--bs-ring": ["--ui-accent"],
   "--bs-danger": ["--ui-red"],
   "--bs-success": ["--ui-green"],
@@ -73,12 +78,16 @@ export function aliasChain(candidates: string[]): string {
   return expr;
 }
 
-// Relative luminance (WCAG) of a CSS `rgb(...)` / `rgba(...)` string, 0..1.
-export function relLuminance(rgb: string): number {
-  const m = rgb.match(/[\d.]+/g);
+// Relative luminance (WCAG) of a CSS color string, 0..1. Handles BOTH `rgb()`/`rgba()`
+// (0..255 components) AND the modern `color(srgb r g b)` form that getComputedStyle
+// returns for `color-mix()` results (0..1 components) — dividing those by 255 would
+// read every light color as near-black and flip the light/dark base the wrong way.
+export function relLuminance(color: string): number {
+  const m = color.match(/[\d.]+/g);
   if (!m || m.length < 3) return 0;
+  const scale = /^\s*color\(/i.test(color) ? 1 : 255;
   const [r, g, b] = m.slice(0, 3).map((n) => {
-    const c = Number(n) / 255;
+    const c = Number(n) / scale;
     return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
   });
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
