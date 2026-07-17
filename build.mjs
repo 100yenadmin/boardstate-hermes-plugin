@@ -45,6 +45,8 @@ await esbuild.build({
   jsx: "transform",
   jsxFactory: "React.createElement",
   jsxFragment: "React.Fragment",
+  // The Hermes web skin (skin-web.css) is imported as text and injected at runtime.
+  loader: { ".css": "text" },
   // React comes from window.__HERMES_PLUGIN_SDK__, never bundled.
   external: ["react", "react-dom"],
   sourcemap: true,

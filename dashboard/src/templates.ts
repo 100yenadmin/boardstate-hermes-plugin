@@ -79,7 +79,7 @@ export const TEMPLATES: BoardTemplate[] = [
       data("cost", "builtin:stat-card", "Cost", 0, 2, 3, 2, { metric: "todayCost", format: "usd", label: "Cost (today)" }),
       data("tokens", "builtin:stat-card", "Tokens", 3, 2, 3, 2, { metric: "todayTokens", format: "int", label: "Tokens (today)" }),
       data("usage", "builtin:usage", "Usage detail", 6, 2, 6, 3),
-      data("cron", "builtin:cron", "Scheduled jobs", 0, 4, 12, 3),
+      data("cron", "builtin:cron", "Scheduled jobs", 0, 5, 12, 3),
     ].map((w) =>
       // The two stat-cards read live usage; the dedicated builtins self-bind.
       w.id === "cost" || w.id === "tokens"

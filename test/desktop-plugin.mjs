@@ -51,6 +51,14 @@ check("sources the desktop connection", bundle.includes("getConnection"));
 check("applies a template via workspace.replace", bundle.includes("dashboard.workspace.replace"));
 check("maps to desktop --ui-* tokens", bundle.includes("--ui-"));
 
+// DESKTOP skin (macOS design language) — the theme adopts the app's own card rounding
+// (--radius-xl) and the scoped skin sheet is inlined. Distinct from the web skin.
+check("adopts the app card radius (--radius-xl)", bundle.includes("--radius-xl"));
+check("inlines the desktop skin sheet (.dashboard-widget__bar)", bundle.includes(".dashboard-widget__bar"));
+// Re-assert the loader contract holds AFTER adding the skin import: still only
+// @hermes/plugin-sdk + react* survive as bare specifiers (no skin-css leak as an import).
+check("desktop skin adds no external import", bareSpecs.every((s) => ALLOWED.has(s)));
+
 console.log(`\ndesktop-plugin: ${n} checks`);
 if (failures.length) {
   console.error(`${failures.length} failed: ${failures.join(", ")}`);

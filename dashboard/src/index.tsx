@@ -11,6 +11,7 @@
 import { createWsTransport, type WsTransport } from "@boardstate/core";
 import { BS_TO_HERMES, aliasChain, themeBase } from "./theme";
 import { TEMPLATES } from "./templates";
+import skinCss from "./skin-web.css"; // esbuild text loader → string
 
 const SDK = window.__HERMES_PLUGIN_SDK__!;
 const React = SDK.React;
@@ -44,6 +45,21 @@ type ViewElement = HTMLElement & {
   basePath?: string;
 };
 
+// Inject the Hermes web skin once (class-level rules the tokens can't express).
+// Idempotent, like the desktop plugin's ensureCss.
+let skinInjected = false;
+function ensureSkin(): void {
+  if (skinInjected || document.querySelector("style[data-boardstate-skin]")) {
+    skinInjected = true;
+    return;
+  }
+  const style = document.createElement("style");
+  style.setAttribute("data-boardstate-skin", "");
+  style.textContent = skinCss as unknown as string;
+  document.head.appendChild(style);
+  skinInjected = true;
+}
+
 // ── Hermes theme adapter (DOM glue; pure mapping lives in ./theme) ───────────
 // A var() alias re-resolves whenever Hermes rewrites its own tokens, so live
 // palette swaps repaint the board with zero JS; only the light/dark base is
@@ -53,6 +69,24 @@ function applyHermesTheme(view: HTMLElement): void {
   view.setAttribute("data-theme", themeBase(bodyBg));
   for (const [bsVar, hermesVars] of Object.entries(BS_TO_HERMES)) {
     view.style.setProperty(bsVar, aliasChain(hermesVars));
+  }
+  // Non-color skin tokens: inherit the host font, flatten tiles (no shadow), adopt
+  // Hermes radii, and make the tile translucent so the board reads as native chrome.
+  view.style.setProperty("--bs-font-sans", getComputedStyle(document.body).fontFamily);
+  view.style.setProperty("--bs-shadow-md", "none");
+  view.style.setProperty("--bs-radius-lg", "0.5rem");
+  view.style.setProperty("--bs-radius-md", "0.375rem");
+  view.style.setProperty("--bs-radius-sm", "0.25rem");
+  // Translucent tile (the Kanban look) — ONLY when the host actually defines the
+  // card token. A fixed fallback color here would force a dark card onto light
+  // non-Hermes hosts; skipping the override keeps the bundle's own theme-correct card.
+  const hostCard = getComputedStyle(document.documentElement)
+    .getPropertyValue("--color-card")
+    .trim();
+  if (hostCard) {
+    view.style.setProperty("--bs-card", "color-mix(in srgb, var(--color-card) 85%, transparent)");
+  } else {
+    view.style.removeProperty("--bs-card");
   }
 }
 
@@ -98,6 +132,7 @@ function BoardPage() {
     let view: ViewElement | undefined;
     let disposeTheme: (() => void) | undefined;
 
+    ensureSkin();
     (async () => {
       try {
         await ensureBundle();
