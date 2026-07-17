@@ -6,7 +6,7 @@
 // shows REAL Hermes data with zero manual bindings and graceful empty states, never
 // an error cell. Applied via the non-operator `dashboard.workspace.replace` RPC.
 //
-// Everything here is data — no OpenClaw references, Hermes-native copy.
+// Everything here is data — Hermes-native copy throughout.
 
 export type BoardTemplate = {
   id: string;
