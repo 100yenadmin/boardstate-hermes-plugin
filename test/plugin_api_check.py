@@ -66,6 +66,41 @@ def main() -> int:
     check("appends nonce to upstream ws url", "?nonce=" in src)
     check("_ensure_sidecar returns (port, nonce)", "tuple[int, str]" in inspect.getsource(mod._ensure_sidecar))
 
+    # ── Operator gate (the security crux) ────────────────────────────────────────────
+    # The privileged operator route exists and is a POST.
+    check("router mounts /operator", "/operator" in paths)
+
+    op_src = inspect.getsource(mod.operator)
+    auth_src = inspect.getsource(mod._authorize_operator)
+
+    # Only the four operator verbs pass — anything else is refused before it reaches the
+    # sidecar. Assert the set is EXACTLY those four (no extra verb smuggled in).
+    check(
+        "operator method set is exactly the 4 verbs",
+        mod._OPERATOR_METHODS == frozenset({
+            "dashboard.widget.approve",
+            "dashboard.capability.approve",
+            "dashboard.action.confirm",
+            "dashboard.action.deny",
+        }),
+    )
+    check("operator route consults the method allowlist", "_OPERATOR_METHODS" in op_src)
+
+    # The route requires dashboard session auth AND the operators allowlist policy.
+    check("operator route authorizes before acting", "_authorize_operator" in op_src)
+    check("authorization consults the dashboard session gate", "_has_valid_session_token" in auth_src or "request.state.session" in auth_src)
+    check("authorization consults the operators allowlist", "_load_operators_allowlist" in auth_src)
+    check("allowlist absent ⇒ denied in gated mode", "gated" in auth_src and "403" in auth_src)
+    check("allowlist file is boardstate.operators.json in state dir", "boardstate.operators.json" in src)
+    for fn in ("_operators_allowlist_path", "_load_operators_allowlist", "_authorize_operator"):
+        check(f"has {fn}", hasattr(mod, fn))
+
+    # The nonce is forwarded to the sidecar's /operator (never leaves the two processes).
+    check("operator route forwards {method, params} to sidecar /operator?nonce=", "/operator?nonce=" in op_src and '"method": method' in op_src)
+
+    # Absent allowlist file ⇒ None (loopback-only signal); present ⇒ a list of principals.
+    check("_load_operators_allowlist returns None when absent", mod._load_operators_allowlist(Path("/nonexistent-bs-state-dir")) is None)
+
     if failures:
         print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}", file=sys.stderr)
         return 1

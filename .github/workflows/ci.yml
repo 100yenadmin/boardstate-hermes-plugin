@@ -70,3 +70,6 @@ jobs:
 
       - name: Router import + shape check (no Hermes host required)
         run: python test/plugin_api_check.py
+
+      - name: Operator gate wire-contract (plugin_api → sidecar exact param shapes)
+        run: python test/operator_wire.py

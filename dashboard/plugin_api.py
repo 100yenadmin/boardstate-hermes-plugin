@@ -52,7 +52,7 @@ from typing import Optional
 import httpx
 import websockets
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect, status as http_status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 log = logging.getLogger(__name__)
 
@@ -404,6 +404,134 @@ async def mcp_proxy(request: "Request") -> "Response":
             await client.aclose()
 
     return StreamingResponse(_iter(), status_code=upstream.status_code, headers=resp_headers)
+
+
+# ---------------------------------------------------------------------------
+# Operator gate: the ONLY privileged path to the sidecar's operator verbs.
+#
+# Hermes has no role primitive, so operator approve/confirm can NEVER travel the browser
+# WS or the MCP proxy (both stay blocked by the sidecar's OPERATOR_ONLY_METHODS). This
+# route is the one privileged surface. It (a) requires the dashboard session auth (same
+# family as the WS gate), (b) consults an allowlist policy (``boardstate.operators.json``
+# in the state dir) — ABSENT ⇒ allowed only in loopback-token mode, DENIED (403) in
+# gated/multi-user mode; PRESENT ⇒ the caller principal must be listed — then forwards
+# ``{method, params}`` to the sidecar's nonce-gated ``/operator``. The nonce never leaves
+# these two processes.
+# ---------------------------------------------------------------------------
+
+# EXACTLY the four operator verbs the sidecar executes (the sidecar re-enforces this from
+# @boardstate/server's OPERATOR_ONLY_METHODS; we gate here too so a non-operator verb never
+# even reaches the loopback endpoint).
+_OPERATOR_METHODS: frozenset[str] = frozenset({
+    "dashboard.widget.approve",
+    "dashboard.capability.approve",
+    "dashboard.action.confirm",
+    "dashboard.action.deny",
+})
+
+
+def _operators_allowlist_path(state_dir: Path) -> Path:
+    return state_dir / "boardstate.operators.json"
+
+
+def _load_operators_allowlist(state_dir: Path) -> Optional[list[str]]:
+    """The operator allowlist policy. Returns None when the file is ABSENT (⇒ loopback-only
+    policy), else the list of allowed principals (malformed ⇒ empty list = nobody, fail
+    closed). The file lists WHO may approve; it is authored by the operator, like the
+    connectors config, and lives in the state dir (never the board doc)."""
+    path = _operators_allowlist_path(state_dir)
+    try:
+        raw = path.read_text()
+    except FileNotFoundError:
+        return None
+    except Exception:  # pragma: no cover - unreadable file: fail closed
+        return []
+    try:
+        rec = json.loads(raw)
+    except Exception:
+        return []  # malformed ⇒ nobody is blessed (fail closed)
+    ops = rec.get("operators") if isinstance(rec, dict) else None
+    return [str(o) for o in ops] if isinstance(ops, list) else []
+
+
+def _authorize_operator(request: "Request") -> tuple[Optional[str], Optional[Response]]:
+    """Authorize an operator request. Returns ``(principal, None)`` when allowed, or
+    ``(None, error_response)`` (401/403) when not. Enforces BOTH the dashboard session
+    auth and the allowlist policy above."""
+    try:
+        from hermes_cli import web_server as _ws  # local import: avoid load-order coupling
+    except Exception:  # pragma: no cover - dashboard internals unavailable
+        _ws = None
+
+    gated = bool(getattr(getattr(request, "app", None), "state", None) and getattr(request.app.state, "auth_required", False))
+
+    if gated:
+        # The gate middleware already authenticated the cookie and attached the session.
+        session = getattr(request.state, "session", None)
+        if session is None:
+            return None, JSONResponse(status_code=401, content={"error": "unauthorized"})
+        principal = getattr(session, "email", None) or getattr(session, "user_id", None) or None
+    else:
+        # Loopback: validate the dashboard session token exactly as the WS gate does.
+        checker = getattr(_ws, "_has_valid_session_token", None) if _ws else None
+        if checker is not None and not checker(request):
+            return None, JSONResponse(status_code=401, content={"error": "unauthorized"})
+        principal = "loopback"
+
+    allowlist = _load_operators_allowlist(_state_dir())
+    if allowlist is None:
+        # No allowlist file: single-user local operator only. In gated/multi-user mode we
+        # refuse — an undifferentiated session token must not be a self-service operator.
+        if gated:
+            return None, JSONResponse(
+                status_code=403,
+                content={"error": "operator allowlist (boardstate.operators.json) required in gated mode"},
+            )
+    else:
+        if not principal or principal not in allowlist:
+            return None, JSONResponse(status_code=403, content={"error": "caller is not an authorized operator"})
+
+    return principal, None
+
+
+@router.post("/operator")
+async def operator(request: "Request") -> "Response":
+    principal, denied = _authorize_operator(request)
+    if denied is not None:
+        return denied
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "body must be JSON { method, params }"})
+
+    method = payload.get("method") if isinstance(payload, dict) else None
+    params = (payload.get("params") if isinstance(payload, dict) else None) or {}
+    if not isinstance(method, str) or method not in _OPERATOR_METHODS:
+        return JSONResponse(status_code=400, content={"error": f"method not allowed on the operator endpoint: {method}"})
+
+    try:
+        port, nonce = await _ensure_sidecar()
+    except Exception as exc:  # defensive: never crash the dashboard worker
+        log.warning("boardstate: sidecar unavailable for operator: %s", exc)
+        return JSONResponse(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, content={"error": "sidecar unavailable"})
+
+    # Forward the EXACT { method, params } shape to the sidecar's nonce-gated /operator.
+    url = f"http://127.0.0.1:{port}/operator?nonce={nonce}"
+    log.info("boardstate: operator %s by %s", method, principal)
+    try:
+        async with httpx.AsyncClient(timeout=None) as client:
+            upstream = await client.post(url, json={"method": method, "params": params})
+    except Exception as exc:
+        log.warning("boardstate: operator upstream error: %s", exc)
+        return JSONResponse(status_code=http_status.HTTP_502_BAD_GATEWAY, content={"error": "operator upstream error"})
+
+    # Relay the sidecar's status + JSON body verbatim (200 result / 400 refusal / 401).
+    try:
+        body = upstream.json()
+    except Exception:
+        body = {"error": upstream.text}
+    return JSONResponse(status_code=upstream.status_code, content=body)
 
 
 # ---------------------------------------------------------------------------
