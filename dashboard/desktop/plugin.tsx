@@ -125,7 +125,16 @@ function BoardPage({ operatorRest }: { operatorRest?: OperatorRest }) {
       view.transport = transport;
       view.connected = true;
       view.operator = true;
-      view.basePath = "";
+      // The desktop page runs on a file:// origin, so the custom-widget asset base must
+      // be ABSOLUTE. The backend hands out a tokenized root-level base (iframes can't
+      // carry auth headers); fetched here through the plugin's authed REST door. No
+      // base ⇒ builtins-only, no errors.
+      try {
+        const ab = operatorRest ? await operatorRest<{ base?: string }>("/assets-base", { method: "GET" }) : undefined;
+        view.basePath = ab?.base ? `${conn.baseUrl.replace(/\/+$/, "")}${ab.base}` : "";
+      } catch {
+        view.basePath = "";
+      }
       applyDesktopTheme(view);
       obs = new MutationObserver(() => view && applyDesktopTheme(view));
       obs.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });

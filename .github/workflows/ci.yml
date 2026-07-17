@@ -63,6 +63,9 @@ jobs:
       - name: Board templates (each is a schema-valid, allowlisted workspace)
         run: node test/templates.mjs
 
+      - name: Custom widgets (pending 404s; approved serves with the CSP jail)
+        run: node test/custom-widget.mjs
+
       - name: OfficeCLI preset (detect-or-instruct, stamps a valid connector)
         run: node test/officecli-preset.mjs
 
@@ -94,6 +97,9 @@ jobs:
 
       - name: Router import + shape check (no Hermes host required)
         run: python test/plugin_api_check.py
+
+      - name: Tokenized asset proxy at runtime (traversal-jailed, CSP verbatim)
+        run: python test/asset_proxy.py
 
       - name: Operator gate wire-contract (plugin_api → sidecar exact param shapes)
         run: python test/operator_wire.py
