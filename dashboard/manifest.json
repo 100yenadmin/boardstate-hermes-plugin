@@ -1,9 +1,9 @@
 {
   "name": "boardstate",
   "label": "Board",
-  "description": "Live Boardstate board — the layout-as-data dashboard an agent builds via boardstate-mcp, rendered live over a WebSocket to a local sidecar.",
+  "description": "Live Boardstate board for Hermes \u2014 an agent builds and operates it through tools, styled to the active Hermes theme and bound to real Hermes data.",
   "icon": "BarChart3",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "tab": {
     "path": "/board",
     "position": "after:skills"
