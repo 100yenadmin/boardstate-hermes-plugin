@@ -37,7 +37,7 @@ const check = (name, cond) => {
     join(stateDir, "boardstate.connectors.json"),
     JSON.stringify({ connectors: [{ name: "office", transport: "stdio", command: SHORT_CMD, args: ["mcp"] }] }),
   );
-  const { proc, port } = await spawnSidecar({ stateDir, nonce: NONCE, quiet: true });
+  const { proc, port, getStderr } = await spawnSidecar({ stateDir, nonce: NONCE, quiet: true });
   try {
     const mcp = new Client({ name: "redaction-test", version: "1.0.0" }, { capabilities: {} });
     await mcp.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp?nonce=${NONCE}`)));
@@ -47,6 +47,11 @@ const check = (name, cond) => {
     check("a SHORT connector command is ABSENT from the MCP response (SEC-2)", !text.includes(SHORT_CMD));
     check("the response is redacted (sanitization ran)", text.includes("[redacted]"));
     await mcp.close().catch(() => {});
+    // The sidecar's OWN log stream is forwarded into the dashboard log by plugin_api,
+    // so the connector command must be redacted there too (not just the MCP response).
+    await new Promise((r) => setTimeout(r, 300));
+    const logs = getStderr();
+    check("connector command ABSENT from the sidecar log stream", !logs.includes(SHORT_CMD));
   } finally {
     stopSidecar(proc);
   }

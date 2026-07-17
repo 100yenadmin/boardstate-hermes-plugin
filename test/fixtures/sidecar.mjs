@@ -47,7 +47,12 @@ export async function spawnSidecar({ stateDir, nonce, operatorSecret = `${nonce}
     });
     proc.on("exit", (c) => reject(new Error("sidecar exited " + c)));
   });
-  return { proc, port, operatorSecret: operatorSecret || null };
+  // Accumulate stderr AFTER the handshake too, so tests can assert what the sidecar
+  // logs (e.g. secret-redaction proves connector config never reaches the log stream
+  // that plugin_api forwards into the dashboard log).
+  const stderrChunks = [];
+  proc.stderr.on("data", (d) => stderrChunks.push(d.toString()));
+  return { proc, port, operatorSecret: operatorSecret || null, getStderr: () => stderrChunks.join("") };
 }
 
 export function stopSidecar(proc) {

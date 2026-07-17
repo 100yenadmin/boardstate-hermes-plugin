@@ -265,9 +265,11 @@ export async function createMcpEndpoint(
       } catch (error) {
         // Never echo a raw error to the agent: a broker spawn/fetch failure embeds the
         // connector's command/url (a server-side secret — invariant #3). Log the full
-        // detail server-side ONLY; return the redacted message.
+        // Redact the server-side log line too: sidecar stderr is forwarded into the
+        // dashboard's INFO log stream, which is broader than the config file itself.
+        // Nothing is lost — the redacted values are config the operator authored.
         const raw = error instanceof Error ? error.message : String(error);
-        console.error(`[boardstate] MCP tool "${mcpName}" failed: ${raw}`);
+        console.error(`[boardstate] MCP tool "${mcpName}" failed: ${redactSecrets(raw)}`);
         return textResult({ error: redactSecrets(raw) }, true);
       }
     });

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -77,6 +78,10 @@ class _FakeSidecar:
 
 
 def main() -> int:
+    # This harness runs without hermes_cli (CI installs only fastapi/websockets/httpx), so
+    # the loopback session-token checker is unavailable. The route now FAILS CLOSED in that
+    # state; the explicit test bypass acknowledges it for the wire-contract checks below.
+    os.environ["BOARDSTATE_OPERATOR_TEST_BYPASS"] = "1"
     mod = _load_plugin_api()
     failures: list[str] = []
 
@@ -203,6 +208,16 @@ def main() -> int:
         r_indet = indet_client.post("/api/plugins/boardstate/operator", json=confirm)
         check("indeterminate mode + no allowlist → 403 (fail closed, AUTH-1)", r_indet.status_code == 403)
         check("indeterminate denied never forwarded", len(fake.requests) == before)
+
+        # ── loopback WITHOUT the session-token checker fails CLOSED (review follow-up) ──
+        # With hermes_cli unimportable the loopback token checker is unavailable; absent the
+        # explicit test bypass, the operator route must 401 rather than silently allow.
+        os.environ.pop("BOARDSTATE_OPERATOR_TEST_BYPASS", None)
+        before = len(fake.requests)
+        r_nochecker = client.post("/api/plugins/boardstate/operator", json=confirm)
+        check("loopback + no checker + no bypass → 401 (fail closed)", r_nochecker.status_code == 401)
+        check("fail-closed request never forwarded", len(fake.requests) == before)
+        os.environ["BOARDSTATE_OPERATOR_TEST_BYPASS"] = "1"
     finally:
         fake.close()
 

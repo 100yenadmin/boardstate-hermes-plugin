@@ -128,7 +128,20 @@ const resolveBinding =
 // into BOTH the pending-action engine and the MCP `boardstate_connector_invoke` tool, so the
 // agent's tools/call can never hang forever waiting on a confirm that never comes. Overridable
 // via env (tests use a short value); defaults to the broker's 5-minute default.
-const mutationTimeoutMs = Number(process.env.BOARDSTATE_MUTATION_TIMEOUT_MS) || 300_000;
+// Explicitly reject 0/negative/garbage rather than silently coercing to the default:
+// "no confirm-wait" isn't a supported mode (the CORRECT-1 invariant needs a bound), so a
+// set-but-invalid value is called out loud and the safe default applies.
+const rawMutationTimeout = process.env.BOARDSTATE_MUTATION_TIMEOUT_MS;
+const parsedMutationTimeout = rawMutationTimeout === undefined ? undefined : Number(rawMutationTimeout);
+if (parsedMutationTimeout !== undefined && !(Number.isFinite(parsedMutationTimeout) && parsedMutationTimeout > 0)) {
+  console.error(
+    `[boardstate] BOARDSTATE_MUTATION_TIMEOUT_MS=${rawMutationTimeout} is invalid (must be a positive number of ms) — using the 300000ms default`,
+  );
+}
+const mutationTimeoutMs =
+  parsedMutationTimeout !== undefined && Number.isFinite(parsedMutationTimeout) && parsedMutationTimeout > 0
+    ? parsedMutationTimeout
+    : 300_000;
 
 let connectors: ConnectorWorkspace | null = null;
 try {
