@@ -43,6 +43,11 @@ def main() -> int:
     check("mcp proxy forwards with nonce", "/mcp?nonce=" in src2)
     check("mcp proxy streams the response", "StreamingResponse" in src2)
 
+    # Custom-widget asset proxy: mounted, and it PRESERVES the sandbox CSP verbatim
+    # (stripping it would un-jail every custom widget in the browser).
+    check("router mounts /widgets proxy", any("/widgets" in str(getattr(r, "path", "")) for r in mod.router.routes))
+    check("widget proxy preserves the sandbox CSP", "content-security-policy" in src2)
+
     # Sidecar lifecycle helpers exist.
     for fn in ("_ensure_sidecar", "_read_port", "_kill_sidecar", "_ws_upgrade_authorized"):
         check(f"has {fn}", hasattr(mod, fn))

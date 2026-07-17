@@ -63,6 +63,9 @@ jobs:
       - name: Board templates (each is a schema-valid, allowlisted workspace)
         run: node test/templates.mjs
 
+      - name: Custom widgets (pending 404s; approved serves with the CSP jail)
+        run: node test/custom-widget.mjs
+
       - name: OfficeCLI preset (detect-or-instruct, stamps a valid connector)
         run: node test/officecli-preset.mjs
 
