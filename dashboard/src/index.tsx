@@ -9,6 +9,7 @@
 // `window.__HERMES_PLUGIN_SDK__`.
 
 import { createWsTransport, type WsTransport } from "@boardstate/core";
+import { BS_TO_HERMES, aliasChain, themeBase } from "./theme";
 
 const SDK = window.__HERMES_PLUGIN_SDK__!;
 const React = SDK.React;
@@ -42,6 +43,30 @@ type ViewElement = HTMLElement & {
   basePath?: string;
 };
 
+// ── Hermes theme adapter (DOM glue; pure mapping lives in ./theme) ───────────
+// A var() alias re-resolves whenever Hermes rewrites its own tokens, so live
+// palette swaps repaint the board with zero JS; only the light/dark base is
+// computed here, from the host's painted background.
+function applyHermesTheme(view: HTMLElement): void {
+  const bodyBg = getComputedStyle(document.body).backgroundColor || "rgb(0,0,0)";
+  view.setAttribute("data-theme", themeBase(bodyBg));
+  for (const [bsVar, hermesVars] of Object.entries(BS_TO_HERMES)) {
+    view.style.setProperty(bsVar, aliasChain(hermesVars));
+  }
+}
+
+function observeHermesTheme(view: HTMLElement): () => void {
+  // The var() aliases auto-follow token value changes; the observer only needs to
+  // re-evaluate the light/dark base when a palette swap flips the background.
+  const obs = new MutationObserver(() => applyHermesTheme(view));
+  obs.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["class", "style", "data-theme"],
+  });
+  obs.observe(document.body, { attributes: true, attributeFilter: ["class", "style"] });
+  return () => obs.disconnect();
+}
+
 function BoardPage() {
   const hostRef = React.useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = React.useState<"connecting" | "live" | "error">("connecting");
@@ -51,6 +76,7 @@ function BoardPage() {
     let disposed = false;
     let transport: WsTransport | undefined;
     let view: ViewElement | undefined;
+    let disposeTheme: (() => void) | undefined;
 
     (async () => {
       try {
@@ -64,7 +90,10 @@ function BoardPage() {
         // Built-in widgets resolve from the bundle; approved custom widgets would
         // resolve under the sidecar's own /widgets route (out of scope for v1).
         view.basePath = "";
-        view.setAttribute("data-theme", "dark");
+        // Follow the active Hermes palette (light/dark base + `--bs-*` aliases)
+        // and keep following it across live palette swaps.
+        applyHermesTheme(view);
+        disposeTheme = observeHermesTheme(view);
         view.style.display = "block";
         view.style.minHeight = "70vh";
         hostRef.current?.appendChild(view);
@@ -88,6 +117,7 @@ function BoardPage() {
 
     return () => {
       disposed = true;
+      disposeTheme?.();
       try {
         transport?.close();
       } catch {
