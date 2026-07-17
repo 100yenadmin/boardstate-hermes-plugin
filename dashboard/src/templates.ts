@@ -57,6 +57,30 @@ const data = (id: string, kind: string, title: string, x: number, y: number, w: 
   props,
 });
 
+// A grant-gated action button: one click INVOKES an approved external tool (a mutation only
+// PARKS — the operator confirms; a readOnly tool runs directly). `connector`/`tool` reference
+// an operator-authored connector; until the operator grants that tool the button is inert.
+const actionButton = (
+  id: string,
+  title: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  connector: string,
+  tool: string,
+  label: string,
+  args: Record<string, unknown> | null = null,
+): Widget => ({
+  id,
+  kind: "builtin:action-button",
+  title,
+  grid: { x, y, w, h },
+  collapsed: false,
+  hidden: false,
+  props: { connector, tool, label, args },
+});
+
 export const TEMPLATES: BoardTemplate[] = [
   {
     id: "agent-hq",
@@ -96,6 +120,56 @@ export const TEMPLATES: BoardTemplate[] = [
       data("sessions", "builtin:sessions", "Sessions", 0, 2, 7, 5),
       data("instances", "builtin:instances", "Instances", 7, 2, 5, 3),
       data("usage", "builtin:usage", "Usage", 7, 5, 5, 2),
+    ]),
+  },
+  {
+    // The M5 OPERATIONAL template (epic #37 / #46). Drives OfficeCLI (`officecli mcp`) through
+    // approved tools: a grant-gated action-button generates a document, and the artifacts note
+    // explains where the results land. Inert until the operator authors the `officecli`
+    // connector and grants the tool — a safe scaffold, never an auto-run.
+    id: "office-ops",
+    name: "Office Ops",
+    summary: "Operate OfficeCLI — generate documents and workbooks through approved tools, artifacts on the board.",
+    doc: doc("board", "Office Ops", [
+      md(
+        "header",
+        "Overview",
+        0,
+        0,
+        12,
+        2,
+        "# Office Ops\nDrive **OfficeCLI** (`officecli mcp`) through operator-approved tools. Author the `officecli` connector in `boardstate.connectors.json`, approve its tools in the approvals panel, then act below.",
+      ),
+      actionButton(
+        "generate-report",
+        "Quarterly report",
+        0,
+        2,
+        4,
+        3,
+        "officecli",
+        "create_document",
+        "Generate quarterly report .docx",
+        { title: "Quarterly Report", format: "docx" },
+      ),
+      md(
+        "artifacts",
+        "Artifacts",
+        4,
+        2,
+        8,
+        3,
+        "## Artifacts\nGenerated documents and workbooks land in your OfficeCLI working directory and are linked here as the agent produces them. A mutating action **parks for your confirm** before it runs; a read-only tool runs directly.",
+      ),
+      md(
+        "setup",
+        "Setup",
+        0,
+        5,
+        12,
+        2,
+        "### Setup\n1. Install OfficeCLI (`brew install officecli` or a GitHub release) so `officecli` is on PATH.\n2. Author `boardstate.connectors.json` in the state dir with the `officecli` stdio connector.\n3. Approve the tools you want in the approvals panel — nothing runs until you do.",
+      ),
     ]),
   },
 ];

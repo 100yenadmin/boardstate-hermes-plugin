@@ -45,6 +45,9 @@ jobs:
       - name: Board templates (each is a schema-valid, allowlisted workspace)
         run: node test/templates.mjs
 
+      - name: OfficeCLI preset (detect-or-instruct, stamps a valid connector)
+        run: node test/officecli-preset.mjs
+
       - name: Desktop plugin bundle (loader-safe imports + contract + inlined boardstate)
         run: node test/desktop-plugin.mjs
 

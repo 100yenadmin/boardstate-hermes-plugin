@@ -28101,6 +28101,8 @@ var SSEClientTransport = class {
 
 // node_modules/@boardstate/broker/dist/index.js
 import { createHash as createHash2 } from "node:crypto";
+import { existsSync } from "node:fs";
+import { delimiter, join } from "node:path";
 var BrokerError = class extends Error {
   code;
   constructor(code, message) {
@@ -28552,6 +28554,13 @@ var CONNECTOR_PRESETS = Object.freeze({
   [pipedreamPreset.id]: pipedreamPreset,
   [composioPreset.id]: composioPreset
 });
+function detectBinary(command, env = process.env) {
+  if (command.includes("/") || command.includes("\\")) return existsSync(command);
+  const dirs = (env.PATH ?? "").split(delimiter).filter((dir) => dir.length > 0);
+  const exts = process.platform === "win32" ? (env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";") : [""];
+  for (const dir of dirs) for (const ext of exts) if (existsSync(join(dir, command + ext))) return true;
+  return false;
+}
 
 // dashboard/sidecar/src/connectors.ts
 var CONNECTORS_CONFIG_FILE = "boardstate.connectors.json";
@@ -30804,6 +30813,24 @@ function createOperatorEndpoint(host2, options = {}) {
   };
 }
 
+// dashboard/sidecar/src/presets.ts
+function officeCliSetup() {
+  const binary = officeCliPreset.requiresBinary;
+  const detected = binary ? detectBinary(binary.command) : false;
+  return {
+    id: officeCliPreset.id,
+    title: officeCliPreset.title,
+    detected,
+    connector: officeCliPreset.build(),
+    install: detected ? null : binary?.install ?? null
+  };
+}
+function officeCliBootHint() {
+  const setup = officeCliSetup();
+  const sample = JSON.stringify({ connectors: [setup.connector] });
+  return setup.detected ? `[boardstate] OfficeCLI detected on PATH \u2014 enable it by writing boardstate.connectors.json: ${sample}` : `[boardstate] OfficeCLI connector available. ${setup.install} Then author boardstate.connectors.json: ${sample}`;
+}
+
 // dashboard/sidecar/src/server.ts
 var stateDirEnv = process.env.BOARDSTATE_STATE_DIR;
 var storage = new FsStorageAdapter(stateDirEnv ? { storageDir: stateDirEnv } : {});
@@ -30889,6 +30916,8 @@ if (connectors) {
   console.log(
     `[boardstate] connectors wired: ${connectors.broker.connectorNames().join(", ") || "(none)"}`
   );
+} else {
+  console.log(officeCliBootHint());
 }
 if (hermesUrl && hermesToken) {
   const dataMethods = registerHermesDataRpc(host, { baseUrl: hermesUrl, sessionToken: hermesToken });

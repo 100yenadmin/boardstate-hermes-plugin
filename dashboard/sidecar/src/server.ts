@@ -31,6 +31,7 @@ import { installConnectorsFromConfig, type ConnectorWorkspace } from "./connecto
 import { createHermesRpcResolver, registerHermesDataRpc } from "./hermes-data.js";
 import { createMcpEndpoint } from "./mcp.js";
 import { createOperatorEndpoint } from "./operator.js";
+import { officeCliBootHint } from "./presets.js";
 
 const stateDirEnv = process.env.BOARDSTATE_STATE_DIR;
 const storage = new FsStorageAdapter(stateDirEnv ? { storageDir: stateDirEnv } : {});
@@ -155,6 +156,10 @@ if (connectors) {
   console.log(
     `[boardstate] connectors wired: ${connectors.broker.connectorNames().join(", ") || "(none)"}`,
   );
+} else {
+  // No connectors yet — surface the first blessed connector's detect-or-instruct hint so an
+  // operator sees the exact next step (install OfficeCLI, then author boardstate.connectors.json).
+  console.log(officeCliBootHint());
 }
 
 // Live Hermes data bindings. `<boardstate-view>` resolves a `source:"rpc"` binding by
