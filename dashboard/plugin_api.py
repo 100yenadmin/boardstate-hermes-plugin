@@ -52,7 +52,7 @@ from typing import Optional
 import httpx
 import websockets
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect, status as http_status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 log = logging.getLogger(__name__)
 
@@ -77,7 +77,13 @@ except ImportError:  # pragma: no cover - Windows
 # the cross-process first-connect race. `owned` marks whether WE spawned it (reap only
 # our own on exit).
 _sidecar_lock = asyncio.Lock()
-_sidecar: dict = {"proc": None, "port": None, "nonce": None, "owned": False}
+# ``operator_secret`` (SEC-1) is the DEDICATED credential for the sidecar's /operator endpoint.
+# Unlike ``nonce`` (the /ws + /mcp adoption credential, published to the port file so a second
+# backend can render the board), it is NEVER written to disk — only THIS spawning process holds
+# it — so knowing the port-file contents is not sufficient to drive operator actions. An adopted
+# (not-spawned) sidecar has ``operator_secret = None`` here → operator actions are unavailable on
+# that backend (documented, acceptable).
+_sidecar: dict = {"proc": None, "port": None, "nonce": None, "operator_secret": None, "owned": False}
 _atexit_registered = False
 
 
@@ -240,14 +246,19 @@ async def _spawn_sidecar(state_dir: Path) -> tuple[int, str]:
     """Spawn a fresh sidecar and record it in the port-file. Caller holds the locks."""
     global _atexit_registered
 
-    # Per-spawn shared secret: the sidecar's WS gate (verifyClient) requires it as a
-    # `?nonce=` query param, so a random other local process can't drive the control
-    # plane just by finding the ephemeral loopback port. Only this bridge knows it.
+    # Per-spawn shared secret: the sidecar's WS/MCP gate (verifyClient) requires it as a
+    # `?nonce=` query param, so a random other local process can't drive the control plane just
+    # by finding the ephemeral loopback port. Published to the port file for adoption.
     nonce = secrets.token_urlsafe(32)
+    # SEC-1: a SEPARATE operator secret for the sidecar's /operator endpoint — NEVER written to
+    # the port file, so port-file knowledge alone cannot approve/confirm/deny. Only this process
+    # holds it.
+    operator_secret = secrets.token_urlsafe(32)
 
     env = os.environ.copy()
     env["BOARDSTATE_STATE_DIR"] = str(state_dir)
     env["BOARDSTATE_SIDECAR_NONCE"] = nonce
+    env["BOARDSTATE_OPERATOR_SECRET"] = operator_secret
     env.setdefault("PORT", "0")  # ephemeral loopback port
 
     # Inject the dashboard base URL + session token so the sidecar can resolve
@@ -278,12 +289,18 @@ async def _spawn_sidecar(state_dir: Path) -> tuple[int, str]:
     _sidecar["proc"] = proc
     _sidecar["port"] = port
     _sidecar["nonce"] = nonce
+    _sidecar["operator_secret"] = operator_secret  # in-memory only; NEVER persisted (SEC-1)
     _sidecar["owned"] = True
-    # Publish for other backend processes to adopt (single writer per state dir).
+    # Publish port + adoption nonce for other backend processes (single writer per state dir).
+    # The operator secret is DELIBERATELY excluded — adoption grants board rendering, not the
+    # operator plane. chmod 600 so only this user can even read the adoption record.
     try:
-        _portfile_path(state_dir).write_text(
-            json.dumps({"port": port, "nonce": nonce, "pid": os.getpid()})
-        )
+        pf = _portfile_path(state_dir)
+        pf.write_text(json.dumps({"port": port, "nonce": nonce, "pid": os.getpid()}))
+        try:
+            os.chmod(pf, 0o600)
+        except OSError:  # pragma: no cover - best-effort (e.g. Windows)
+            pass
     except Exception as exc:  # pragma: no cover - non-fatal
         log.warning("boardstate: could not write sidecar port-file: %s", exc)
     # Keep draining both streams so the pipe buffers never fill and stall node.
@@ -404,6 +421,155 @@ async def mcp_proxy(request: "Request") -> "Response":
             await client.aclose()
 
     return StreamingResponse(_iter(), status_code=upstream.status_code, headers=resp_headers)
+
+
+# ---------------------------------------------------------------------------
+# Operator gate: the ONLY privileged path to the sidecar's operator verbs.
+#
+# Hermes has no role primitive, so operator approve/confirm can NEVER travel the browser
+# WS or the MCP proxy (both stay blocked by the sidecar's OPERATOR_ONLY_METHODS). This
+# route is the one privileged surface. It (a) requires the dashboard session auth (same
+# family as the WS gate), (b) consults an allowlist policy (``boardstate.operators.json``
+# in the state dir) — ABSENT ⇒ allowed only in loopback-token mode, DENIED (403) in
+# gated/multi-user mode; PRESENT ⇒ the caller principal must be listed — then forwards
+# ``{method, params}`` to the sidecar's nonce-gated ``/operator``. The nonce never leaves
+# these two processes.
+# ---------------------------------------------------------------------------
+
+# EXACTLY the four operator verbs the sidecar executes (the sidecar re-enforces this from
+# @boardstate/server's OPERATOR_ONLY_METHODS; we gate here too so a non-operator verb never
+# even reaches the loopback endpoint).
+_OPERATOR_METHODS: frozenset[str] = frozenset({
+    "dashboard.widget.approve",
+    "dashboard.capability.approve",
+    "dashboard.action.confirm",
+    "dashboard.action.deny",
+})
+
+
+def _operators_allowlist_path(state_dir: Path) -> Path:
+    return state_dir / "boardstate.operators.json"
+
+
+def _load_operators_allowlist(state_dir: Path) -> Optional[list[str]]:
+    """The operator allowlist policy. Returns None when the file is ABSENT (⇒ loopback-only
+    policy), else the list of allowed principals (malformed ⇒ empty list = nobody, fail
+    closed). The file lists WHO may approve; it is authored by the operator, like the
+    connectors config, and lives in the state dir (never the board doc)."""
+    path = _operators_allowlist_path(state_dir)
+    try:
+        raw = path.read_text()
+    except FileNotFoundError:
+        return None
+    except Exception:  # pragma: no cover - unreadable file: fail closed
+        return []
+    try:
+        rec = json.loads(raw)
+    except Exception:
+        return []  # malformed ⇒ nobody is blessed (fail closed)
+    ops = rec.get("operators") if isinstance(rec, dict) else None
+    return [str(o) for o in ops] if isinstance(ops, list) else []
+
+
+def _authorize_operator(request: "Request") -> tuple[Optional[str], Optional[Response]]:
+    """Authorize an operator request. Returns ``(principal, None)`` when allowed, or
+    ``(None, error_response)`` (401/403) when not. Enforces BOTH the dashboard session
+    auth and the allowlist policy above."""
+    try:
+        from hermes_cli import web_server as _ws  # local import: avoid load-order coupling
+    except Exception:  # pragma: no cover - dashboard internals unavailable
+        _ws = None
+
+    # AUTH-1 (fail CLOSED): only a POSITIVELY-confirmed loopback single-user bind — the
+    # dashboard set `app.state.auth_required = False` at startup (see web_server:should_require_auth)
+    # — is trusted as a self-service operator without an allowlist. If gating is INDETERMINATE
+    # (the attribute is absent — e.g. an atypical embedding) or the bind is gated/multi-user
+    # (True), the operator allowlist is MANDATORY. `auth_required` defaulting to False here would
+    # be fail-OPEN, so we treat "not exactly False" as untrusted.
+    state = getattr(getattr(request, "app", None), "state", None)
+    auth_required = getattr(state, "auth_required", None) if state is not None else None
+    loopback_single_user = auth_required is False
+
+    if loopback_single_user:
+        # Loopback: validate the dashboard session token exactly as the WS gate does.
+        checker = getattr(_ws, "_has_valid_session_token", None) if _ws else None
+        if checker is not None and not checker(request):
+            return None, JSONResponse(status_code=401, content={"error": "unauthorized"})
+        principal = "loopback"
+    else:
+        # Gated OR indeterminate → the allowlist is mandatory (below). Identify the caller from
+        # the gate-attached session when present; a gated bind with no session is a gate failure.
+        session = getattr(request.state, "session", None)
+        if auth_required is True and session is None:
+            return None, JSONResponse(status_code=401, content={"error": "unauthorized"})
+        principal = (getattr(session, "email", None) or getattr(session, "user_id", None)) if session else None
+
+    allowlist = _load_operators_allowlist(_state_dir())
+    if allowlist is None:
+        # No allowlist file: permitted ONLY for a confirmed loopback single-user bind. Otherwise
+        # (gated or indeterminate) refuse — an undifferentiated session token must not be a
+        # self-service operator on a shared/unknown host.
+        if not loopback_single_user:
+            return None, JSONResponse(
+                status_code=403,
+                content={"error": "operator allowlist (boardstate.operators.json) required unless the dashboard is a confirmed loopback single-user bind"},
+            )
+    else:
+        if not principal or principal not in allowlist:
+            return None, JSONResponse(status_code=403, content={"error": "caller is not an authorized operator"})
+
+    return principal, None
+
+
+@router.post("/operator")
+async def operator(request: "Request") -> "Response":
+    principal, denied = _authorize_operator(request)
+    if denied is not None:
+        return denied
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "body must be JSON { method, params }"})
+
+    method = payload.get("method") if isinstance(payload, dict) else None
+    params = (payload.get("params") if isinstance(payload, dict) else None) or {}
+    if not isinstance(method, str) or method not in _OPERATOR_METHODS:
+        return JSONResponse(status_code=400, content={"error": f"method not allowed on the operator endpoint: {method}"})
+
+    try:
+        port, _nonce = await _ensure_sidecar()
+    except Exception as exc:  # defensive: never crash the dashboard worker
+        log.warning("boardstate: sidecar unavailable for operator: %s", exc)
+        return JSONResponse(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, content={"error": "sidecar unavailable"})
+
+    # SEC-1: forward with the DEDICATED operator secret (in-memory, never in the port file),
+    # NOT the adoption nonce. If this backend ADOPTED the sidecar (didn't spawn it) it has no
+    # operator secret — operator actions are unavailable here (drive them from the spawning
+    # backend, or restart so this process owns the sidecar).
+    operator_secret = _sidecar.get("operator_secret")
+    if not operator_secret:
+        return JSONResponse(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"error": "operator actions unavailable on this backend (adopted sidecar); use the backend that spawned it"},
+        )
+
+    # Forward the EXACT { method, params } shape to the sidecar's secret-gated /operator.
+    url = f"http://127.0.0.1:{port}/operator?nonce={operator_secret}"
+    log.info("boardstate: operator %s by %s", method, principal)
+    try:
+        async with httpx.AsyncClient(timeout=None) as client:
+            upstream = await client.post(url, json={"method": method, "params": params})
+    except Exception as exc:
+        log.warning("boardstate: operator upstream error: %s", exc)
+        return JSONResponse(status_code=http_status.HTTP_502_BAD_GATEWAY, content={"error": "operator upstream error"})
+
+    # Relay the sidecar's status + JSON body verbatim (200 result / 400 refusal / 401).
+    try:
+        body = upstream.json()
+    except Exception:
+        body = {"error": upstream.text}
+    return JSONResponse(status_code=upstream.status_code, content=body)
 
 
 # ---------------------------------------------------------------------------

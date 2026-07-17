@@ -27,8 +27,12 @@ import {
   nodeRpcDeps,
   registerBoardstateRpc,
 } from "@boardstate/server/node";
+import { installConnectorsFromConfig, type ConnectorWorkspace } from "./connectors.js";
 import { createHermesRpcResolver, registerHermesDataRpc } from "./hermes-data.js";
 import { createMcpEndpoint } from "./mcp.js";
+import { createOperatorEndpoint } from "./operator.js";
+import { officeCliBootHint } from "./presets.js";
+import { buildRedactor } from "./redact.js";
 
 const stateDirEnv = process.env.BOARDSTATE_STATE_DIR;
 const storage = new FsStorageAdapter(stateDirEnv ? { storageDir: stateDirEnv } : {});
@@ -113,14 +117,57 @@ const resolveBinding =
       })
     : nodeDeps.resolveBinding;
 
+// M5 operational layer: if the operator authored `boardstate.connectors.json` in the
+// state dir, wire the whole connector stack (broker → grant lifecycle + pending-action
+// engine → agent-tool adapter → `boardstate_tool_search` backing) onto THIS host, BEFORE
+// `registerBoardstateRpc` (the engine registers `dashboard.action.*` + `dashboard.connector.read`;
+// the base RPC registration then takes the workspace's `capabilityToolsHash` so partial
+// grants stay anti-rug-pull correct — SPEC §17.1). Absent config ⇒ `null` ⇒ byte-identical
+// to the pre-M5 board. The config path is fixed (state dir), never the agent-writable doc.
+// Bounded wait for an operator's confirm on an agent-invoked mutation (CORRECT-1): threaded
+// into BOTH the pending-action engine and the MCP `boardstate_connector_invoke` tool, so the
+// agent's tools/call can never hang forever waiting on a confirm that never comes. Overridable
+// via env (tests use a short value); defaults to the broker's 5-minute default.
+const mutationTimeoutMs = Number(process.env.BOARDSTATE_MUTATION_TIMEOUT_MS) || 300_000;
+
+let connectors: ConnectorWorkspace | null = null;
+try {
+  connectors = await installConnectorsFromConfig(host, store, { mutationTimeoutMs });
+} catch (err) {
+  // A present-but-malformed config is fail-closed: no connectors wired, board still renders.
+  console.error(
+    `[boardstate] connectors config rejected: ${err instanceof Error ? err.message : String(err)}`,
+  );
+}
+
 // Same registration the MCP server uses: base methods + shipped extensions, with the
-// node-side widget-bundle installer + the (possibly Hermes-wrapped) binding resolver.
+// node-side widget-bundle installer + the (possibly Hermes-wrapped) binding resolver, plus
+// the connector workspace's partial-grant hash resolver when connectors are wired.
 registerBoardstateRpc(host, {
   store,
   dataRead: { stateDir: store.stateDir },
   ...nodeDeps,
   resolveBinding,
+  ...(connectors ? { capabilityToolsHash: connectors.workspace.capabilityToolsHash } : {}),
 });
+
+// Block boot on the initial grant registration + granted-tool cache so the first board
+// open already shows the connectors' `requested` grants. Non-fatal: a connector that can't
+// connect (e.g. its binary is absent) degrades to "unavailable" — the board still renders.
+if (connectors) {
+  await connectors.workspace.ready.catch((err: unknown) => {
+    console.error(
+      `[boardstate] connector workspace not fully ready: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
+  console.log(
+    `[boardstate] connectors wired: ${connectors.broker.connectorNames().join(", ") || "(none)"}`,
+  );
+} else {
+  // No connectors yet — surface the first blessed connector's detect-or-instruct hint so an
+  // operator sees the exact next step (install OfficeCLI, then author boardstate.connectors.json).
+  console.log(officeCliBootHint());
+}
 
 // Live Hermes data bindings. `<boardstate-view>` resolves a `source:"rpc"` binding by
 // calling the binding's METHOD as a networked RPC (usage.status / usage.cost /
@@ -141,28 +188,66 @@ const widgetRoute = createWidgetHttpRouteHandler({ store });
 // against THIS host so its `boardstate_*` writes land on the same bus the board reads.
 // Same per-spawn nonce gate as the WS.
 const sidecarNonceForMcp = process.env.BOARDSTATE_SIDECAR_NONCE;
-const mcpEndpoint = await createMcpEndpoint(host, store, { nonce: sidecarNonceForMcp });
+
+// Redact connector config (command/url/args/env keys+values/header values) + the sidecar
+// nonce + the operator secret from any agent-facing MCP error (invariant #3). Connector-sourced
+// strings are collected LENGTH-AGNOSTIC (SEC-2: an env value is an API key — even a short one
+// must never leak); the nonce/secret keep a length floor. Sorted DESC by length (SEC-3) so a
+// short value that prefixes a longer token can't leave the suffix unmasked.
+const operatorSecret = process.env.BOARDSTATE_OPERATOR_SECRET;
+const redactSecrets = buildRedactor([
+  // Config-sourced secrets (command/url/args/env keys+values/header values) — length-agnostic.
+  ...(connectors?.sensitiveStrings ?? []),
+  // Long random process secrets: keep a floor so a stray short value never over-redacts text.
+  ...[sidecarNonceForMcp, operatorSecret].filter((s): s is string => typeof s === "string" && s.length >= 8),
+]);
+
+const mcpEndpoint = await createMcpEndpoint(host, store, {
+  nonce: sidecarNonceForMcp,
+  redactSecrets,
+  ...(connectors ? { toolSearch: connectors.workspace.toolSearch } : {}),
+  ...(connectors
+    ? {
+        connectors: {
+          confirmAndExecute: (id, opts) => connectors.workspace.actions.confirmAndExecute(id, opts),
+          mutationTimeoutMs,
+        },
+      }
+    : {}),
+});
+
+// The operator DECISION seam: a DEDICATED-secret-gated in-process HTTP endpoint the parent
+// `plugin_api` bridge (and ONLY it) forwards operator approve/confirm/deny to. Operator verbs
+// stay blocked on `/ws` and excluded from `/mcp`. SEC-1: gated by BOARDSTATE_OPERATOR_SECRET
+// (never the port-file adoption nonce), so port-file knowledge alone can't drive it. Disabled
+// when no secret is configured (a direct CLI spawn drives the in-process host itself).
+const operatorEndpoint = createOperatorEndpoint(host, { secret: operatorSecret });
 
 const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
   const pathname = (req.url ?? "/").split("?")[0];
-  void mcpEndpoint
+  void operatorEndpoint
     .handle(req, res, pathname)
-    .then((handledMcp) => {
-      if (handledMcp) {
+    .then((handledOperator) => {
+      if (handledOperator) {
         return undefined;
       }
-      return widgetRoute.handleHttpRequest(req, res).then((handled) => {
-        if (handled) {
-          return;
+      return mcpEndpoint.handle(req, res, pathname).then((handledMcp) => {
+        if (handledMcp) {
+          return undefined;
         }
-        if (req.method === "GET" && pathname === "/healthz") {
-          res.statusCode = 200;
-          res.setHeader("Content-Type", "application/json");
-          res.end(JSON.stringify({ ok: true, stateDir: store.stateDir }));
-          return;
-        }
-        res.statusCode = 404;
-        res.end("not found");
+        return widgetRoute.handleHttpRequest(req, res).then((handled) => {
+          if (handled) {
+            return;
+          }
+          if (req.method === "GET" && pathname === "/healthz") {
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ ok: true, stateDir: store.stateDir }));
+            return;
+          }
+          res.statusCode = 404;
+          res.end("not found");
+        });
       });
     })
     .catch(() => {

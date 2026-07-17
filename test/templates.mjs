@@ -34,10 +34,14 @@ const check = (name, cond) => {
   if (!cond) failures.push(name);
 };
 
-check("at least 3 templates", Array.isArray(TEMPLATES) && TEMPLATES.length >= 3);
+check("at least 4 templates", Array.isArray(TEMPLATES) && TEMPLATES.length >= 4);
 check("template ids are unique", new Set(TEMPLATES.map((t) => t.id)).size === TEMPLATES.length);
+check("ships the Office Ops operational template", TEMPLATES.some((t) => t.id === "office-ops"));
 
 const DATA_KINDS = new Set(["builtin:usage", "builtin:sessions", "builtin:instances", "builtin:cron", "builtin:agent-status"]);
+// Interactive/live widgets that make a template "real" (not just static markdown): a data
+// source, an explicit binding, or a grant-gated action widget.
+const LIVE_KINDS = new Set([...DATA_KINDS, "builtin:action-button", "builtin:action-form"]);
 
 for (const tpl of TEMPLATES) {
   check(`${tpl.id}: has name + summary`, typeof tpl.name === "string" && typeof tpl.summary === "string" && tpl.name.length > 0);
@@ -55,7 +59,7 @@ for (const tpl of TEMPLATES) {
   const widgets = (tpl.doc?.tabs ?? []).flatMap((t) => t.widgets ?? []);
   check(`${tpl.id}: widget ids unique`, new Set(widgets.map((w) => w.id)).size === widgets.length);
   check(`${tpl.id}: grids fit 12 columns`, widgets.every((w) => w.grid.x >= 0 && w.grid.x + w.grid.w <= 12 && w.grid.w > 0 && w.grid.h > 0));
-  check(`${tpl.id}: has at least one live data widget`, widgets.some((w) => DATA_KINDS.has(w.kind) || w.bindings));
+  check(`${tpl.id}: has at least one live/interactive widget`, widgets.some((w) => LIVE_KINDS.has(w.kind) || w.bindings));
 
   // Any explicit rpc binding must use an allowlisted method, or the client denies it.
   const boundMethods = widgets

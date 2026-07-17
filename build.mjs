@@ -75,6 +75,11 @@ await esbuild.build({
 });
 
 // 2) Node sidecar bundle — single self-contained ESM file; node builtins stay external.
+// The M5 broker's stdio connector transport (via @modelcontextprotocol/sdk → cross-spawn)
+// does a dynamic `require("child_process")`. In an ESM bundle esbuild replaces an
+// unresolved `require` with a shim that throws UNLESS a real `require` is in scope — so we
+// inject one via createRequire. esbuild's shim then falls through to the real Node require,
+// and the stdio connector (e.g. OfficeCLI `officecli mcp`) spawns correctly at runtime.
 await esbuild.build({
   entryPoints: [path.join(dashboardDir, "sidecar/src/server.ts")],
   outfile: path.join(dashboardDir, "sidecar/server.js"),
@@ -82,6 +87,9 @@ await esbuild.build({
   format: "esm",
   platform: "node",
   target: ["node20"],
+  banner: {
+    js: "import { createRequire as __bsCreateRequire } from 'node:module';\nconst require = __bsCreateRequire(import.meta.url);",
+  },
   sourcemap: true,
   logLevel: "info",
 });

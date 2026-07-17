@@ -19,6 +19,7 @@ import boardstateCss from "../vendor/boardstate.css"; // esbuild text loader →
 import skinDesktopCss from "./skin-desktop.css"; // Hermes DESKTOP skin (macOS language)
 import { BS_TO_DESKTOP, aliasChain, themeBase } from "../src/theme";
 import { TEMPLATES } from "../src/templates";
+import { withOperatorGate } from "../src/operator-transport";
 
 type Connection = { baseUrl: string; token: string; authMode?: string };
 declare global {
@@ -60,9 +61,13 @@ function applyDesktopTheme(view: HTMLElement): void {
   view.style.setProperty("--bs-font-sans", getComputedStyle(document.body).fontFamily);
 }
 
-type ViewElement = HTMLElement & { transport?: unknown; connected?: boolean; basePath?: string };
+type ViewElement = HTMLElement & { transport?: unknown; connected?: boolean; basePath?: string; operator?: boolean };
 
-function BoardPage() {
+/** POST an operator decision through the plugin's own namespaced REST door (`ctx.rest` →
+ *  `/api/plugins/boardstate/operator`); resolve the sidecar's raw RPC result. */
+type OperatorRest = <T>(path: string, opts?: { method?: string; body?: unknown }) => Promise<T>;
+
+function BoardPage({ operatorRest }: { operatorRest?: OperatorRest }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const transportRef = useRef<WsTransport | undefined>(undefined);
   const [status, setStatus] = useState<"connecting" | "live" | "error">("connecting");
@@ -107,11 +112,19 @@ function BoardPage() {
       }
       const wsBase = conn.baseUrl.replace(/^http/, "ws");
       const wsUrl = `${wsBase}/api/plugins/boardstate/ws?token=${encodeURIComponent(conn.token)}`;
-      transport = createWsTransport(wsUrl);
+      // Route the four operator verbs through the plugin_api operator endpoint via the
+      // desktop REST door (the WS + MCP stay blocked); everything else rides the WS.
+      const sendOperator = async (method: string, params: unknown): Promise<unknown> => {
+        if (!operatorRest) throw new Error("operator endpoint unavailable");
+        const res = await operatorRest<{ result?: unknown }>("/operator", { method: "POST", body: { method, params } });
+        return res?.result;
+      };
+      transport = withOperatorGate(createWsTransport(wsUrl), sendOperator);
       transportRef.current = transport;
       view = document.createElement("boardstate-view") as ViewElement;
       view.transport = transport;
       view.connected = true;
+      view.operator = true;
       view.basePath = "";
       applyDesktopTheme(view);
       obs = new MutationObserver(() => view && applyDesktopTheme(view));
@@ -188,9 +201,11 @@ export default {
   name: "Board",
   register(ctx: {
     register: (c: { id: string; area: unknown; data?: unknown; render?: () => unknown }) => void;
+    rest?: OperatorRest;
   }) {
-    // A full page in the workspace pane…
-    ctx.register({ id: "board-route", area: ROUTES_AREA, data: { path: "/board" }, render: () => <BoardPage /> });
+    // A full page in the workspace pane… The plugin's namespaced REST door (`ctx.rest`) is
+    // threaded in as the operator transport's send path (→ /api/plugins/boardstate/operator).
+    ctx.register({ id: "board-route", area: ROUTES_AREA, data: { path: "/board" }, render: () => <BoardPage operatorRest={ctx.rest} /> });
     // …reachable from a sidebar nav row.
     ctx.register({ id: "board-nav", area: SIDEBAR_NAV_AREA, data: { path: "/board", label: "Board", codicon: "dashboard" } });
   },

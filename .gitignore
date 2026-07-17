@@ -8,3 +8,7 @@ node_modules/
 
 __pycache__/
 *.pyc
+
+# Transient test artifacts (transpiled + removed by their tests).
+test/fixtures/.presets.gen.mjs
+test/fixtures/.connectors.gen.mjs
