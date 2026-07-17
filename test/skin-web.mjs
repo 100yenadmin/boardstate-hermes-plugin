@@ -23,10 +23,27 @@ const check = (name, cond) => {
   if (!cond) failures.push(name);
 };
 
-// The skin CSS (Hermes display font + flat/translucent tiles) is bundled as text.
-check("ships the Hermes display font", bundle.includes("Rules Expanded"));
-check("flattens the tile shadow", bundle.includes("--bs-shadow-md"));
-check("translucent card via color-mix", bundle.includes("color-mix"));
+// Rule-shaped assertions: the SELECTOR and its load-bearing declaration must appear in
+// the SAME rule block inside the bundled CSS text (a bare substring check would pass
+// even if a refactor moved the property to an unrelated rule). The CSS ships inside a
+// JS string, so braces/selectors survive minification literally.
+check(
+  "widget titles use the Hermes display font",
+  /\.dashboard-widget__title\s*\{[^}]*Rules Expanded/.test(bundle),
+);
+check(
+  "buttons are sharp-cornered",
+  /\.bs-btn\s*\{[^}]*border-radius:\s*0/.test(bundle),
+);
+check(
+  "title bar tint derives from currentColor (palette-adaptive, not hardcoded white)",
+  /\.dashboard-widget__bar\s*\{[^}]*currentColor/.test(bundle),
+);
+// Token overrides applied at mount: shadow flattened, translucent card GATED on the
+// host token existing (a fixed dark fallback would wreck light non-Hermes hosts).
+check("flattens the tile shadow to none", /--bs-shadow-md["'],\s*["']none/.test(bundle));
+check("translucent card via color-mix on the host token", /color-mix\(in srgb,\s*var\(--color-card\)\s*85%/.test(bundle));
+check("card override is conditional (removeProperty fallback)", bundle.includes("removeProperty"));
 // The skin <style> is injected once at runtime.
 check("injects the skin stylesheet", bundle.includes("data-boardstate-skin"));
 

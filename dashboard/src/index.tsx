@@ -77,10 +77,17 @@ function applyHermesTheme(view: HTMLElement): void {
   view.style.setProperty("--bs-radius-lg", "0.5rem");
   view.style.setProperty("--bs-radius-md", "0.375rem");
   view.style.setProperty("--bs-radius-sm", "0.25rem");
-  view.style.setProperty(
-    "--bs-card",
-    "color-mix(in srgb, var(--color-card, #131318) 85%, transparent)",
-  );
+  // Translucent tile (the Kanban look) — ONLY when the host actually defines the
+  // card token. A fixed fallback color here would force a dark card onto light
+  // non-Hermes hosts; skipping the override keeps the bundle's own theme-correct card.
+  const hostCard = getComputedStyle(document.documentElement)
+    .getPropertyValue("--color-card")
+    .trim();
+  if (hostCard) {
+    view.style.setProperty("--bs-card", "color-mix(in srgb, var(--color-card) 85%, transparent)");
+  } else {
+    view.style.removeProperty("--bs-card");
+  }
 }
 
 function observeHermesTheme(view: HTMLElement): () => void {

@@ -9,10 +9,12 @@
  * this file handles the title-bar slab, the display font, and the sharp buttons. */
 
 /* Kill the contrasting title-bar slab: a near-transparent bar with a hairline rule
-   instead of the bundle's filled, rounded drag handle. */
+   instead of the bundle's filled, rounded drag handle. The tint derives from
+   currentColor (the theme's own text color), so it adapts to ANY palette — a light
+   tint on dark themes, a dark tint on light ones — instead of hardcoding white. */
 boardstate-view .dashboard-widget__bar {
-  background: rgba(255, 255, 255, 0.02);
-  border-bottom: 1px solid var(--color-border, rgba(255, 255, 255, 0.15));
+  background: color-mix(in srgb, currentColor 3%, transparent);
+  border-bottom: 1px solid var(--color-border, color-mix(in srgb, currentColor 15%, transparent));
 }
 
 /* Widget titles adopt the Hermes display face ("Rules Expanded", already loaded by
