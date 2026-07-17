@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createWsTransport, type WsTransport } from "@boardstate/core";
 import "@boardstate/lit/browser"; // side effect: registers <boardstate-view> + builtins
 import boardstateCss from "../vendor/boardstate.css"; // esbuild text loader → string
+import skinDesktopCss from "./skin-desktop.css"; // Hermes DESKTOP skin (macOS language)
 import { BS_TO_DESKTOP, aliasChain, themeBase } from "../src/theme";
 import { TEMPLATES } from "../src/templates";
 
@@ -35,7 +36,9 @@ function ensureCss(): void {
   }
   const style = document.createElement("style");
   style.setAttribute("data-boardstate", "");
-  style.textContent = boardstateCss as unknown as string;
+  // Boardstate base sheet first, then the DESKTOP skin (macOS design language) so
+  // the skin's scoped class-level rules win over the bundle's own defaults.
+  style.textContent = `${boardstateCss as unknown as string}\n${skinDesktopCss as unknown as string}`;
   document.head.appendChild(style);
   cssInjected = true;
 }
@@ -47,6 +50,14 @@ function applyDesktopTheme(view: HTMLElement): void {
   for (const [bsVar, uiVars] of Object.entries(BS_TO_DESKTOP)) {
     view.style.setProperty(bsVar, aliasChain(uiVars));
   }
+  // macOS design language: adopt the app's own card rounding (--radius-xl ≈ 9.6px),
+  // tighter control radii, a single subtle elevation shadow (not the bundle's heavy
+  // two-layer default), and the host system font stack (SF on macOS).
+  view.style.setProperty("--bs-radius-lg", "var(--radius-xl, 10px)");
+  view.style.setProperty("--bs-radius-md", "0.375rem");
+  view.style.setProperty("--bs-radius-sm", "0.25rem");
+  view.style.setProperty("--bs-shadow-md", "0 1px 3px rgba(0,0,0,0.10)");
+  view.style.setProperty("--bs-font-sans", getComputedStyle(document.body).fontFamily);
 }
 
 type ViewElement = HTMLElement & { transport?: unknown; connected?: boolean; basePath?: string };
