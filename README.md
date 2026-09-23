@@ -19,8 +19,9 @@ in `HERMES_NODE_BIN`, then in Hermes' own Node lookup, then on `PATH`.
 hermes plugins install boardstate --enable
 ```
 
-This installs the catalog entry at its reviewed pin. Hermes accepts the scanner's `caution`
-verdict for that pin without a prompt once the catalog entry is merged.
+This installs the catalog entry at its reviewed pin, and Hermes accepts the scanner's `caution`
+verdict for that pin without a prompt. The bare name resolves only after the Hermes plugin catalog
+lists Boardstate; until then, use the `owner/repo` form below.
 
 The `owner/repo` form (`hermes plugins install 100yenadmin/boardstate-hermes-plugin`) is not
 reviewed or pinned. It prints the scanner findings and asks for confirmation; pass `--force`
@@ -52,9 +53,13 @@ on under **Capabilities → Plugins**, and talks to the active profile's backend
 
 ### Uninstall
 
-Run `hermes plugins remove boardstate`. The board itself stays in
-`$HERMES_HOME/boardstate-state`; delete it with `rm -rf "$HERMES_HOME/boardstate-state"` if you
-no longer need it.
+Run `hermes plugins remove boardstate`. The board itself stays in `boardstate-state` under the
+profile's Hermes home (`~/.hermes` by default, `~/.hermes/profiles/<name>` for a named profile).
+If you no longer need it, delete that directory, for example:
+
+```bash
+rm -rf "${HERMES_HOME:-$HOME/.hermes}/boardstate-state"
+```
 
 ## Native agent tools
 
