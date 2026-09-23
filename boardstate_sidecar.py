@@ -39,6 +39,9 @@ _runtime_loop: Optional[asyncio.AbstractEventLoop] = None
 _runtime_loop_guard = threading.Lock()
 _NATIVE_HTTP_TIMEOUT_SECONDS = 30
 _NATIVE_CONFIRM_TIMEOUT_MS = 25_000
+# Sidecar traffic is loopback-only and carries the nonce; never route it through an
+# HTTP(S)_PROXY from the environment.
+_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 try:
     import fcntl
@@ -303,7 +306,7 @@ def _probe_record_sync(port: int, nonce: str) -> bool:
         method="GET",
     )
     try:
-        with urllib.request.urlopen(request, timeout=1.0) as response:
+        with _DIRECT_OPENER.open(request, timeout=1.0) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except Exception:
         return False
@@ -726,7 +729,7 @@ def _post_json_sync(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=_NATIVE_HTTP_TIMEOUT_SECONDS) as response:
+        with _DIRECT_OPENER.open(request, timeout=_NATIVE_HTTP_TIMEOUT_SECONDS) as response:
             raw = response.read()
     except urllib.error.HTTPError as exc:
         raw = exc.read()

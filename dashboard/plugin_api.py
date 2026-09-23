@@ -58,6 +58,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 log = logging.getLogger(__name__)
 
+# All sidecar traffic is loopback and carries the nonce or operator secret: never let an
+# HTTP(S)_PROXY from the environment see it. httpx uses trust_env=False; websockets >= 15
+# reads proxies from the environment unless proxy=None (older versions never proxy).
+try:
+    _WS_DIRECT = {"proxy": None} if int(websockets.__version__.split(".")[0]) >= 15 else {}
+except (AttributeError, ValueError):  # pragma: no cover - unparseable version
+    _WS_DIRECT = {}
+
 router = APIRouter()
 
 _DASHBOARD_DIR = Path(__file__).resolve().parent
@@ -217,7 +225,7 @@ async def _proxy_widget_asset(asset_path: str) -> "Response":
         return Response(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE)
     url = f"http://127.0.0.1:{port}/widgets/{safe_path}"
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
             upstream = await client.get(url)
     except Exception as exc:
         log.warning("boardstate: widget asset upstream error: %s", exc)
@@ -304,7 +312,7 @@ async def mcp_proxy(request: "Request") -> "Response":
     fwd_headers = {h: request.headers[h] for h in _MCP_FWD_REQ_HEADERS if h in request.headers}
     url = f"http://127.0.0.1:{port}/mcp?nonce={nonce}"
 
-    client = httpx.AsyncClient(timeout=None)
+    client = httpx.AsyncClient(timeout=None, trust_env=False)
     try:
         upstream_req = client.build_request(request.method, url, content=body, headers=fwd_headers)
         upstream = await client.send(upstream_req, stream=True)
@@ -356,7 +364,7 @@ async def rpc_proxy(request: "Request") -> "Response":
             content={"error": "sidecar unavailable"},
         )
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
             upstream = await client.post(
                 f"http://127.0.0.1:{port}/rpc?nonce={nonce}",
                 json={
@@ -522,7 +530,7 @@ async def operator(request: "Request") -> "Response":
     url = f"http://127.0.0.1:{port}/operator?nonce={operator_secret}"
     log.info("boardstate: operator %s by %s", method, principal)
     try:
-        async with httpx.AsyncClient(timeout=None) as client:
+        async with httpx.AsyncClient(timeout=None, trust_env=False) as client:
             upstream = await client.post(url, json={"method": method, "params": params})
     except Exception as exc:
         log.warning("boardstate: operator upstream error: %s", exc)
@@ -560,7 +568,7 @@ async def board_ws(ws: WebSocket) -> None:
 
     uri = f"ws://127.0.0.1:{port}/ws?nonce={nonce}"
     try:
-        async with websockets.connect(uri, max_size=2 ** 20) as upstream:
+        async with websockets.connect(uri, max_size=2 ** 20, **_WS_DIRECT) as upstream:
             # ctx.socket is receive-only and has no open callback. Ack only
             # after the upstream connection exists, so Desktop never turns a
             # failed reconnect into a false "live" state.

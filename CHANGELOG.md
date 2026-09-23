@@ -20,7 +20,8 @@ adheres to [Semantic Versioning](https://semver.org/).
   it no longer reads `window.hermesDesktop` or constructs a tokenized WebSocket.
 - Live-data widgets return a clear dashboard-unavailable result when the agent starts the
   sidecar before a dashboard is present.
-- CI validates against pinned Hermes upstream and checks generated tool-schema sync.
+- CI validates against pinned Hermes upstream and checks generated tool-schema sync, runs the
+  committed sidecar on Node 20 (the minimum), and runs the lifecycle probe on Windows.
 
 ### Security
 
@@ -29,6 +30,9 @@ adheres to [Semantic Versioning](https://semver.org/).
   `windows-latest` CI job exercises the probe against a real child process.
 - An agent-owned sidecar no longer receives the operator secret in its environment, so an
   agent with shell access cannot read it back and approve its own pending actions.
+- Loopback sidecar traffic (native tools, dashboard proxy routes, the Desktop WebSocket bridge)
+  never goes through an `HTTP(S)_PROXY` from the environment, so the nonce and operator secret
+  cannot reach a proxy.
 
 ### Fixed
 

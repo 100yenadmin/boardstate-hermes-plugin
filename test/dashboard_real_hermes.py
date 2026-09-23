@@ -28,11 +28,17 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+# The acceptance client talks to loopback directly, so the test can also run under a dead
+# HTTP(S)_PROXY and prove the dashboard's own sidecar traffic never uses it.
+_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_WS_DIRECT = {"proxy": None} if int(websockets.__version__.split(".")[0]) >= 15 else {}
+
+
 def _request(url: str, token: str | None = None) -> tuple[int, object]:
     headers = {"X-Hermes-Session-Token": token} if token else {}
     request = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=5) as response:
+        with _DIRECT.open(request, timeout=5) as response:
             body = response.read().decode("utf-8")
             return response.status, json.loads(body)
     except urllib.error.HTTPError as exc:
@@ -48,14 +54,14 @@ async def _check_websocket(port: int, token: str) -> None:
     base = f"ws://127.0.0.1:{port}/api/plugins/boardstate/ws"
     rejected = False
     try:
-        async with websockets.connect(base, open_timeout=5):
+        async with websockets.connect(base, open_timeout=5, **_WS_DIRECT):
             pass
     except Exception:
         rejected = True
     assert rejected, "tokenless plugin WebSocket unexpectedly connected"
 
     async with websockets.connect(
-        f"{base}?token={token}", open_timeout=5, close_timeout=2
+        f"{base}?token={token}", open_timeout=5, close_timeout=2, **_WS_DIRECT
     ) as ws:
         connected = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
         assert connected.get("event") == "boardstate.desktop.connected", connected

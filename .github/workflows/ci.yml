@@ -86,6 +86,29 @@ jobs:
           git diff --exit-code -- dashboard/dist desktop dashboard/sidecar dashboard/vendor dashboard/tools.schema.json \
             || (echo "::error::Built artifacts are stale — run 'npm run build' and commit." && exit 1)
 
+  node20-runtime:
+    # README promises Node >= 20: run the committed sidecar bundle on the minimum runtime.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install (test-time @boardstate/* from npm)
+        run: npm ci
+
+      - name: Committed sidecar bundle runs on Node 20
+        run: |
+          node test/sidecar-smoke.mjs
+          node test/mcp-liveness.mjs
+          node test/sidecar-drain.mjs
+          node test/operator-secret.mjs
+          node test/invoke-timeout.mjs
+          node test/operational-e2e.mjs
+          node test/secret-redaction.mjs
+
   python:
     runs-on: ubuntu-latest
     steps:
@@ -221,3 +244,17 @@ jobs:
 
       - name: Real dashboard HTTP and WebSocket acceptance
         run: python test/dashboard_real_hermes.py
+
+      - name: Loopback sidecar traffic ignores environment proxies
+        env:
+          HTTP_PROXY: http://127.0.0.1:9
+          HTTPS_PROXY: http://127.0.0.1:9
+          ALL_PROXY: http://127.0.0.1:9
+          http_proxy: http://127.0.0.1:9
+          https_proxy: http://127.0.0.1:9
+          all_proxy: http://127.0.0.1:9
+          NO_PROXY: ""
+          no_proxy: ""
+        run: |
+          python test/native_plugin.py
+          python test/dashboard_real_hermes.py
