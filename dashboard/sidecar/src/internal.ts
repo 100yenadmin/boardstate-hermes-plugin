@@ -55,13 +55,25 @@ function secretsEqual(actual: string | null, expected: string): boolean {
 export function createInternalEndpoint(
   host: InProcessHost,
   tools: McpEndpoint,
-  options: { nonce?: string; spawnedBy?: "agent" | "dashboard" },
+  options: {
+    nonce?: string;
+    spawnedBy?: "agent" | "dashboard";
+    requestShutdown?: () => void;
+  },
 ) {
   const nonce = options.nonce;
   return {
     async handle(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> {
       const identityProbe = pathname === "/internal/healthz";
-      if (!identityProbe && pathname !== "/rpc" && pathname !== "/tools/invoke") return false;
+      const shutdownRequest = pathname === "/internal/shutdown";
+      if (
+        !identityProbe &&
+        !shutdownRequest &&
+        pathname !== "/rpc" &&
+        pathname !== "/tools/invoke"
+      ) {
+        return false;
+      }
       if (!nonce) {
         send(res, 403, { error: "internal endpoint disabled" });
         return true;
@@ -76,6 +88,17 @@ export function createInternalEndpoint(
           send(res, 405, { error: "GET required" });
         } else {
           send(res, 200, { ok: true });
+        }
+        return true;
+      }
+      if (shutdownRequest) {
+        if (req.method !== "POST") {
+          send(res, 405, { error: "POST required" });
+        } else if (!options.requestShutdown) {
+          send(res, 503, { error: "shutdown unavailable" });
+        } else {
+          send(res, 202, { accepted: true });
+          setImmediate(options.requestShutdown);
         }
         return true;
       }

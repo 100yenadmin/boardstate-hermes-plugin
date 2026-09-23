@@ -171,6 +171,9 @@ jobs:
       - name: Exit cleanup never signals an unverified recorded pid
         run: python test/shutdown_pid_reuse.py
 
+      - name: Graceful authenticated replacement drains and never signals an unverified pid
+        run: python test/sidecar_graceful_replace.py
+
   windows-lifecycle:
     runs-on: windows-latest
     steps:
@@ -188,6 +191,9 @@ jobs:
 
       - name: Windows lifecycle decisions use a cross-process lock
         run: python test/windows_lock.py
+
+      - name: Replacement never terminates an unverifiable live pid
+        run: python test/sidecar_graceful_replace.py --case unverified
 
   hermes-catalog-acceptance:
     runs-on: ubuntu-latest
@@ -244,6 +250,7 @@ jobs:
           python test/native_plugin.py
           python test/agent_operator_secret.py
           python test/shutdown_pid_reuse.py
+          python test/sidecar_graceful_replace.py
 
       - name: Install into an isolated Hermes home
         run: |

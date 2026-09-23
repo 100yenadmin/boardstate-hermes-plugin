@@ -48,6 +48,9 @@ adheres to [Semantic Versioning](https://semver.org/).
 - The port record is written atomically (temp file + rename); a crash mid-write can no longer
   leave a record that blocks every start. The refusal message names the file.
 - The sidecar closes connector clients before exiting, so handoffs do not orphan stdio connectors.
+- Dashboard replacement now uses a nonce-authenticated loopback shutdown request, waits up to
+  35 seconds for accepted native calls and connector cleanup to drain, and never signals a bare
+  recorded pid. Windows therefore gets the same graceful path instead of `TerminateProcess`.
 - The Desktop page no longer installs theme observers after it has unmounted.
 
 ## 1.4.1

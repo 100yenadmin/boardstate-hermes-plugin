@@ -245,9 +245,11 @@ const mcpEndpoint = await createMcpEndpoint(host, store, {
       }
     : {}),
 });
+let requestSidecarShutdown = (): void => undefined;
 const internalEndpoint = createInternalEndpoint(host, mcpEndpoint, {
   nonce: sidecarNonceForMcp,
   spawnedBy: process.env.BOARDSTATE_SPAWNED_BY === "agent" ? "agent" : "dashboard",
+  requestShutdown: () => requestSidecarShutdown(),
 });
 
 // The operator DECISION seam: a DEDICATED-secret-gated in-process HTTP endpoint the parent
@@ -371,5 +373,6 @@ const shutdown = (): void => {
   // Fail-safe for a genuinely stuck request. Normal accepted calls drain first.
   setTimeout(() => process.exit(0), 30_000).unref();
 };
+requestSidecarShutdown = shutdown;
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

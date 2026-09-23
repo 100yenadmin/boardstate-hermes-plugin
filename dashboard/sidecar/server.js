@@ -28809,7 +28809,10 @@ function createInternalEndpoint(host2, tools, options) {
   return {
     async handle(req, res, pathname) {
       const identityProbe = pathname === "/internal/healthz";
-      if (!identityProbe && pathname !== "/rpc" && pathname !== "/tools/invoke") return false;
+      const shutdownRequest = pathname === "/internal/shutdown";
+      if (!identityProbe && !shutdownRequest && pathname !== "/rpc" && pathname !== "/tools/invoke") {
+        return false;
+      }
       if (!nonce) {
         send(res, 403, { error: "internal endpoint disabled" });
         return true;
@@ -28824,6 +28827,17 @@ function createInternalEndpoint(host2, tools, options) {
           send(res, 405, { error: "GET required" });
         } else {
           send(res, 200, { ok: true });
+        }
+        return true;
+      }
+      if (shutdownRequest) {
+        if (req.method !== "POST") {
+          send(res, 405, { error: "POST required" });
+        } else if (!options.requestShutdown) {
+          send(res, 503, { error: "shutdown unavailable" });
+        } else {
+          send(res, 202, { accepted: true });
+          setImmediate(options.requestShutdown);
         }
         return true;
       }
@@ -31259,9 +31273,11 @@ var mcpEndpoint = await createMcpEndpoint(host, store, {
     }
   } : {}
 });
+var requestSidecarShutdown = () => void 0;
 var internalEndpoint = createInternalEndpoint(host, mcpEndpoint, {
   nonce: sidecarNonceForMcp,
-  spawnedBy: process.env.BOARDSTATE_SPAWNED_BY === "agent" ? "agent" : "dashboard"
+  spawnedBy: process.env.BOARDSTATE_SPAWNED_BY === "agent" ? "agent" : "dashboard",
+  requestShutdown: () => requestSidecarShutdown()
 });
 var operatorEndpoint = createOperatorEndpoint(host, { secret: operatorSecret });
 var activeInvocations = 0;
@@ -31360,6 +31376,7 @@ var shutdown = () => {
   if (activeInvocations === 0) exitAfterCleanup();
   setTimeout(() => process.exit(0), 3e4).unref();
 };
+requestSidecarShutdown = shutdown;
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 //# sourceMappingURL=server.js.map

@@ -16,7 +16,6 @@ import logging
 import os
 import secrets
 import shutil
-import signal
 import sys
 import threading
 import time
@@ -39,6 +38,8 @@ _runtime_loop: Optional[asyncio.AbstractEventLoop] = None
 _runtime_loop_guard = threading.Lock()
 _NATIVE_HTTP_TIMEOUT_SECONDS = 30
 _NATIVE_CONFIRM_TIMEOUT_MS = 25_000
+_SIDECAR_DRAIN_WAIT_SECONDS = 35.0
+_ATEXIT_DRAIN_WAIT_SECONDS = 5.0
 # Sidecar traffic is loopback-only and carries the nonce; never route it through an
 # HTTP(S)_PROXY from the environment.
 _DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -299,18 +300,6 @@ async def _port_listening(port: int) -> bool:
     return True
 
 
-def _sidecar_identity_verified(
-    state: dict[str, Any], record: dict[str, Any], pid: int, nonce: str
-) -> bool:
-    """True only when ``pid`` is provably still this sidecar, so signalling it is safe."""
-    proc = state.get("proc")
-    # Our own child cannot have its pid reused until we reap it.
-    if proc is not None and getattr(proc, "pid", None) == pid and getattr(proc, "returncode", 0) is None:
-        return True
-    port = record.get("port")
-    return isinstance(port, int) and _probe_record_sync(port, nonce)
-
-
 def _probe_record_sync(port: int, nonce: str) -> bool:
     request = urllib.request.Request(
         f"http://127.0.0.1:{port}/internal/healthz?nonce={nonce}",
@@ -556,28 +545,86 @@ async def _spawn_sidecar(
 async def _terminate_record(directory: Path, record: dict[str, Any]) -> None:
     state = _state_for(directory)
     pid = int(record["pid"])
+    port = int(record["port"])
+    nonce = str(record["nonce"])
     proc = state.get("proc")
-    if proc is not None and proc.pid == pid:
+    own_live_child = bool(
+        proc is not None
+        and getattr(proc, "pid", None) == pid
+        and getattr(proc, "returncode", 0) is None
+    )
+    shutdown_result = await asyncio.to_thread(
+        _request_shutdown_sync,
+        port,
+        nonce,
+    )
+
+    if shutdown_result == "accepted":
+        stopped = await _wait_record_exit(pid, proc, _SIDECAR_DRAIN_WAIT_SECONDS)
+        if not stopped:
+            raise RuntimeError(
+                "existing Boardstate sidecar did not stop after authenticated shutdown"
+            )
+    elif shutdown_result == "unreachable" and own_live_child:
         proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=5.0)
-        except asyncio.TimeoutError as exc:
+        stopped = await _wait_record_exit(pid, proc, _SIDECAR_DRAIN_WAIT_SECONDS)
+        if not stopped:
             raise RuntimeError(
                 "agent-owned Boardstate sidecar did not stop after SIGTERM"
-            ) from exc
-        await asyncio.gather(*state.get("drain_tasks", []), return_exceptions=True)
+            )
+    elif not _pid_alive(pid):
+        stopped = True
     else:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        deadline = asyncio.get_running_loop().time() + 5.0
-        while _pid_alive(pid) and asyncio.get_running_loop().time() < deadline:
-            await asyncio.sleep(0.05)
-        if _pid_alive(pid):
-            raise RuntimeError("agent-owned Boardstate sidecar did not stop after SIGTERM")
+        if shutdown_result == "rejected":
+            raise RuntimeError(
+                "existing Boardstate sidecar rejected authenticated shutdown; "
+                "not signalling an unverified pid"
+            )
+        raise RuntimeError(
+            "existing Boardstate sidecar did not stop; not signalling an unverified pid"
+        )
+
+    if own_live_child:
+        await proc.wait()
+        await asyncio.gather(*state.get("drain_tasks", []), return_exceptions=True)
+    _drop_record_if_current(directory, nonce)
+
+
+def _request_shutdown_sync(port: int, nonce: str) -> Literal["accepted", "rejected", "unreachable"]:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/internal/shutdown?nonce={nonce}",
+        data=b"",
+        headers={"Accept": "application/json"},
+        method="POST",
+    )
+    try:
+        with _DIRECT_OPENER.open(request, timeout=1.0) as response:
+            response.read()
+            return "accepted" if response.status == 202 else "rejected"
+    except urllib.error.HTTPError as exc:
+        exc.read()
+        return "rejected"
+    except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+        return "unreachable"
+
+
+async def _wait_record_exit(pid: int, proc: Any, timeout: float) -> bool:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if proc is not None and getattr(proc, "pid", None) == pid:
+            if getattr(proc, "returncode", None) is not None:
+                return True
+        elif not _pid_alive(pid):
+            return True
+        await asyncio.sleep(0.05)
+    if proc is not None and getattr(proc, "pid", None) == pid:
+        return getattr(proc, "returncode", None) is not None
+    return not _pid_alive(pid)
+
+
+def _drop_record_if_current(directory: Path, nonce: str) -> None:
     current = _read_record(directory)
-    if current and current.get("nonce") == record.get("nonce"):
+    if current and current.get("nonce") == nonce:
         _portfile_path(directory).unlink(missing_ok=True)
 
 
@@ -665,39 +712,53 @@ async def _ensure_sidecar_impl(
             ):
                 return int(current_port), str(current_nonce)
             if current_port and not cached_matches:
-                state.update(
-                    {
-                        "proc": None,
-                        "port": None,
-                        "nonce": None,
-                        "operator_secret": None,
-                        "owned": False,
-                        "spawned_by": None,
-                        "state_dir": None,
-                        "drain_tasks": [],
-                    }
+                current_proc = state.get("proc")
+                keep_owned_state = bool(
+                    cached_record
+                    and getattr(current_proc, "pid", None) == cached_record.get("pid")
+                    and getattr(current_proc, "returncode", 0) is None
                 )
+                if not keep_owned_state:
+                    state.update(
+                        {
+                            "proc": None,
+                            "port": None,
+                            "nonce": None,
+                            "operator_secret": None,
+                            "owned": False,
+                            "spawned_by": None,
+                            "state_dir": None,
+                            "drain_tasks": [],
+                        }
+                    )
 
             record = await _try_adopt(directory)
-            owner_pid = record.get("owner_pid") if record else None
+            unreachable_record = None
+            if record is None:
+                candidate = _read_record(directory)
+                if candidate is not None and _pid_alive(int(candidate["pid"])):
+                    unreachable_record = candidate
+            active_record = record or unreachable_record
+            owner_pid = active_record.get("owner_pid") if active_record else None
             live_adopters = [
                 int(pid)
-                for pid in (record or {}).get("adopters", [])
+                for pid in (active_record or {}).get("adopters", [])
                 if isinstance(pid, int) and _pid_alive(int(pid))
             ]
             owner_is_dead = bool(
-                record
+                active_record
                 and (
                     not isinstance(owner_pid, int)
                     or (owner_pid != os.getpid() and not _pid_alive(owner_pid))
                 )
             )
-            if record and (
+            if active_record and (
                 (owner_is_dead and not live_adopters)
-                or (caller == "dashboard" and record.get("spawned_by") == "agent")
+                or (caller == "dashboard" and active_record.get("spawned_by") == "agent")
             ):
-                await _terminate_record(directory, record)
+                await _terminate_record(directory, active_record)
                 record = None
+                unreachable_record = None
                 state.update(
                     {
                         "proc": None,
@@ -709,6 +770,10 @@ async def _ensure_sidecar_impl(
                         "state_dir": None,
                         "drain_tasks": [],
                     }
+                )
+            if unreachable_record is not None:
+                raise RuntimeError(
+                    "existing Boardstate sidecar did not stop; not signalling an unverified pid"
                 )
             if record:
                 _remember_adoption(directory, record, caller)
@@ -819,34 +884,30 @@ def _shutdown_owned_sidecar_sync(directory: Optional[Path] = None) -> None:
             should_terminate = False
 
         pid = int(record["pid"])
-        if should_terminate and not _sidecar_identity_verified(state, record, pid, nonce):
-            # The recorded pid may have been reused by an unrelated process after the
-            # sidecar died: never signal what we cannot prove is ours. Drop the record
-            # only when nothing lives at that pid; otherwise leave it for the next start.
-            should_terminate = False
-            if not _pid_alive(pid):
-                current = _read_record(directory)
-                if current and current.get("nonce") == nonce:
-                    _portfile_path(directory).unlink(missing_ok=True)
+        if should_terminate:
+            shutdown_result = _request_shutdown_sync(int(record["port"]), nonce)
+            proc = state.get("proc")
+            own_live_child = bool(
+                proc is not None
+                and getattr(proc, "pid", None) == pid
+                and getattr(proc, "returncode", 0) is None
+            )
+            if shutdown_result == "accepted":
+                stopped = _wait_pid_exit_sync(pid, _ATEXIT_DRAIN_WAIT_SECONDS)
+            elif shutdown_result == "unreachable" and own_live_child:
+                proc.terminate()
+                stopped = _wait_pid_exit_sync(pid, _ATEXIT_DRAIN_WAIT_SECONDS)
+            elif not _pid_alive(pid):
+                stopped = True
             else:
-                log.warning("boardstate: sidecar pid %d did not verify; not signalling it", pid)
-        elif should_terminate:
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            stopped = _wait_pid_exit_sync(pid, 2.0)
-            if not stopped:
-                try:
-                    # Windows has no SIGKILL; SIGTERM already maps to TerminateProcess there.
-                    os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
-                except ProcessLookupError:
-                    pass
-                stopped = _wait_pid_exit_sync(pid, 2.0)
+                stopped = False
+                log.warning(
+                    "boardstate: sidecar pid %d did not accept authenticated shutdown; "
+                    "not signalling it",
+                    pid,
+                )
             if stopped:
-                current = _read_record(directory)
-                if current and current.get("nonce") == nonce:
-                    _portfile_path(directory).unlink(missing_ok=True)
+                _drop_record_if_current(directory, nonce)
             else:
                 log.warning(
                     "boardstate: sidecar %d survived shutdown; preserving its record",
