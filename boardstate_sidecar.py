@@ -40,8 +40,10 @@ _NATIVE_HTTP_TIMEOUT_SECONDS = 30
 _NATIVE_CONFIRM_TIMEOUT_MS = 25_000
 _SIDECAR_DRAIN_WAIT_SECONDS = 35.0
 _ATEXIT_DRAIN_WAIT_SECONDS = 5.0
-# An orphaned sidecar's owner watchdog closes its listener and exits within ~2 s.
-_SELF_SHUTDOWN_WAIT_SECONDS = 5.0
+# A sidecar that closed its listener is draining: it exits once accepted calls settle, or at
+# its 30 s fail-safe. A record pid that is alive with a closed port for longer than this is not
+# a Boardstate sidecar (the pid was reused); its record is dropped and the pid never signalled.
+_STALE_RECORD_WAIT_SECONDS = _SIDECAR_DRAIN_WAIT_SECONDS
 # Sidecar traffic is loopback-only and carries the nonce; never route it through an
 # HTTP(S)_PROXY from the environment.
 _DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -616,7 +618,7 @@ async def _terminate_record(directory: Path, record: dict[str, Any]) -> None:
     elif not _pid_alive(pid):
         stopped = True
     elif shutdown_result == "unreachable" and await _wait_record_exit(
-        pid, None, _SELF_SHUTDOWN_WAIT_SECONDS
+        pid, None, _STALE_RECORD_WAIT_SECONDS
     ):
         # The sidecar was already stopping itself (its owner watchdog closes the listener
         # before exiting); wait for that exit instead of calling it unverifiable.
@@ -778,12 +780,26 @@ async def _ensure_sidecar_impl(
                     )
 
             record = await _try_adopt(directory)
-            unreachable_record = None
             if record is None:
                 candidate = _read_record(directory)
                 if candidate is not None and _pid_alive(int(candidate["pid"])):
-                    unreachable_record = candidate
-            active_record = record or unreachable_record
+                    # Live pid, closed port: either our sidecar draining after its listener
+                    # closed, or an unrelated process that reused the pid. Wait out the drain
+                    # bound, then treat the record as stale. Never signal the pid.
+                    stale_pid = int(candidate["pid"])
+                    own_proc = state.get("proc")
+                    if not await _wait_record_exit(
+                        stale_pid,
+                        own_proc if getattr(own_proc, "pid", None) == stale_pid else None,
+                        _STALE_RECORD_WAIT_SECONDS,
+                    ):
+                        log.warning(
+                            "boardstate: pid %d in the port record is alive but serves no "
+                            "sidecar; dropping the stale record without signalling it",
+                            stale_pid,
+                        )
+                    _drop_record_if_current(directory, str(candidate["nonce"]))
+            active_record = record
             owner_pid = active_record.get("owner_pid") if active_record else None
             live_adopters = [
                 int(pid)
@@ -803,7 +819,6 @@ async def _ensure_sidecar_impl(
             ):
                 await _terminate_record(directory, active_record)
                 record = None
-                unreachable_record = None
                 state.update(
                     {
                         "proc": None,
@@ -815,10 +830,6 @@ async def _ensure_sidecar_impl(
                         "state_dir": None,
                         "drain_tasks": [],
                     }
-                )
-            if unreachable_record is not None:
-                raise RuntimeError(
-                    "existing Boardstate sidecar did not stop; not signalling an unverified pid"
                 )
             if record:
                 own_proc = state.get("proc")

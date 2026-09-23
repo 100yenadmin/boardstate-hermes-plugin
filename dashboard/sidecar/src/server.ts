@@ -384,9 +384,11 @@ process.on("SIGTERM", shutdown);
 // agent- or dashboard-owned sidecar would otherwise outlive it. Every 3 s, read the port
 // record: while it is ours (same nonce), the holders are its current `owner_pid` plus its
 // `adopters` — the same set the Python lifecycle hands ownership between — so a sidecar that
-// any live process owns or has adopted is never stopped. Before the record names us (or
-// after it stops naming us), only the spawning pid can know our nonce, so it is the holder.
-// Inactive for a direct CLI/demo spawn (no nonce or owner pid).
+// any live process owns or has adopted is never stopped. While a readable record names a
+// different sidecar (before ours is written), only the spawning pid can know our nonce, so
+// it is the holder. A missing or unreadable record skips the tick: after a handoff the
+// spawner may be gone while an adopter still owns us. Inactive for a direct CLI/demo spawn
+// (no nonce or owner pid).
 const spawnerPid = Number(process.env.BOARDSTATE_OWNER_PID);
 const recordPath = stateDirEnv ? join(stateDirEnv, ".boardstate-sidecar.json") : undefined;
 // Only trust a reparent signal when node is the spawner's direct child (not behind a shim).
@@ -409,26 +411,23 @@ const pidAlive = (pid: number): boolean => {
   }
   return true;
 };
-const recordHolders = (): number[] => {
+const recordHolders = (): number[] | null => {
+  let record: { nonce?: unknown; owner_pid?: unknown; adopters?: unknown };
   try {
-    const record = JSON.parse(readFileSync(recordPath as string, "utf8")) as {
-      nonce?: unknown;
-      owner_pid?: unknown;
-      adopters?: unknown;
-    };
-    if (record.nonce === sidecarNonce) {
-      const adopters = Array.isArray(record.adopters) ? record.adopters : [];
-      return [record.owner_pid, ...adopters].filter((pid): pid is number => Number.isInteger(pid));
-    }
+    record = JSON.parse(readFileSync(recordPath as string, "utf8"));
   } catch {
-    /* absent or mid-rewrite: fall back to the spawner */
+    return null; // missing, unreadable, or a transient read error: decide on a later tick
+  }
+  if (record.nonce === sidecarNonce) {
+    const adopters = Array.isArray(record.adopters) ? record.adopters : [];
+    return [record.owner_pid, ...adopters].filter((pid): pid is number => Number.isInteger(pid));
   }
   return [spawnerPid];
 };
 if (sidecarNonce && recordPath && Number.isInteger(spawnerPid) && spawnerPid > 0) {
   setInterval(() => {
     const holders = recordHolders();
-    if (holders.length > 0 && !holders.some(pidAlive)) {
+    if (holders && holders.length > 0 && !holders.some(pidAlive)) {
       console.error("[boardstate] no live owner or adopter remains; shutting down");
       shutdown();
     }

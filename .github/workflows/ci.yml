@@ -187,6 +187,9 @@ jobs:
       - name: Sidecar exits after its owner and adopters are SIGKILLed
         run: python test/sidecar_owner_watchdog.py
 
+      - name: A stale port record behind a reused pid is dropped, never signalled
+        run: python test/sidecar_stale_record.py
+
   windows-lifecycle:
     runs-on: windows-latest
     steps:
@@ -266,6 +269,7 @@ jobs:
           python test/sidecar_graceful_replace.py
           python test/node_resolution.py
           python test/sidecar_owner_watchdog.py
+          python test/sidecar_stale_record.py
 
       - name: Install into an isolated Hermes home
         run: |

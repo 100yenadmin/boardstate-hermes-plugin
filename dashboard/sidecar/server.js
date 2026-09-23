@@ -31403,20 +31403,22 @@ var pidAlive = (pid) => {
   return true;
 };
 var recordHolders = () => {
+  let record2;
   try {
-    const record2 = JSON.parse(readFileSync(recordPath, "utf8"));
-    if (record2.nonce === sidecarNonce) {
-      const adopters = Array.isArray(record2.adopters) ? record2.adopters : [];
-      return [record2.owner_pid, ...adopters].filter((pid) => Number.isInteger(pid));
-    }
+    record2 = JSON.parse(readFileSync(recordPath, "utf8"));
   } catch {
+    return null;
+  }
+  if (record2.nonce === sidecarNonce) {
+    const adopters = Array.isArray(record2.adopters) ? record2.adopters : [];
+    return [record2.owner_pid, ...adopters].filter((pid) => Number.isInteger(pid));
   }
   return [spawnerPid];
 };
 if (sidecarNonce && recordPath && Number.isInteger(spawnerPid) && spawnerPid > 0) {
   setInterval(() => {
     const holders = recordHolders();
-    if (holders.length > 0 && !holders.some(pidAlive)) {
+    if (holders && holders.length > 0 && !holders.some(pidAlive)) {
       console.error("[boardstate] no live owner or adopter remains; shutting down");
       shutdown();
     }

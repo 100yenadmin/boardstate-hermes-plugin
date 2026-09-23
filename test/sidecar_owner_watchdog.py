@@ -176,6 +176,19 @@ def main() -> int:
         finally:
             _cleanup(sidecar_pid, owner, adopter)
 
+    # An unreadable (here: deleted) record is not evidence that nobody owns the sidecar;
+    # the watchdog skips those ticks instead of falling back to the long-gone spawner.
+    with tempfile.TemporaryDirectory(prefix="boardstate-watchdog-norecord-") as tmp:
+        holder, sidecar_pid = _start_holder(tmp, "agent")
+        try:
+            (Path(tmp) / ".boardstate-sidecar.json").unlink()
+            _sigkill(holder)
+            time.sleep(SURVIVE_SECONDS)
+            assert _alive(sidecar_pid), "watchdog stopped a sidecar on a missing record"
+            print("ok   a missing record skips the watchdog tick instead of stopping the sidecar")
+        finally:
+            _cleanup(sidecar_pid, holder)
+
     _replace_self_stopping_sidecar()
 
     print("owner watchdog: all checks passed")

@@ -182,20 +182,29 @@ async def _case_unverified_pid() -> None:
                 "adopters": [],
             },
         )
+        # Past the drain bound, a live pid behind a closed port is not a sidecar: the stale
+        # record is dropped and a replacement starts, but the pid is never signalled.
+        original_bound = runtime._STALE_RECORD_WAIT_SECONDS
+        original_spawn = runtime._spawn_sidecar
+        spawned: list[str] = []
+
+        async def fake_spawn(spawn_dir: Path, caller: str, *_args: Any) -> tuple[int, str]:
+            spawned.append(caller)
+            assert runtime._read_record(spawn_dir) is None, "stale record kept at spawn"
+            return 1, "replacement-nonce"
+
+        runtime._STALE_RECORD_WAIT_SECONDS = 1.0
+        runtime._spawn_sidecar = fake_spawn
         try:
-            try:
-                await runtime._ensure_sidecar_impl("dashboard")
-            except RuntimeError as exc:
-                assert (
-                    "existing Boardstate sidecar did not stop; not signalling an unverified pid"
-                    in str(exc)
-                ), str(exc)
-            else:
-                raise AssertionError("dashboard replaced an unreachable, unverifiable live pid")
+            started = time.monotonic()
+            port, replacement_nonce = await runtime._ensure_sidecar_impl("dashboard")
+            assert time.monotonic() - started >= 0.9, "stale pid was not given the drain bound"
+            assert (port, replacement_nonce) == (1, "replacement-nonce")
+            assert spawned == ["dashboard"], spawned
             assert stranger.poll() is None, "unverified recorded pid was signalled"
-            record = runtime._read_record(directory)
-            assert record is not None and int(record["pid"]) == stranger.pid
         finally:
+            runtime._STALE_RECORD_WAIT_SECONDS = original_bound
+            runtime._spawn_sidecar = original_spawn
             state = runtime._state_for(directory)
             owned_proc = state.get("proc")
             if owned_proc is not None and getattr(owned_proc, "returncode", None) is None:

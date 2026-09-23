@@ -68,6 +68,9 @@ adheres to [Semantic Versioning](https://semver.org/).
   applies to a git checkout.
 - A sidecar whose owner and adopters were all killed without cleanup (for example
   `SIGKILL`) now shuts itself down within a few seconds instead of running on as an orphan.
+- A port record whose pid is alive but serves no sidecar (for example after pid reuse) no
+  longer blocks every tool call and dashboard request: after the sidecar drain limit (35 s)
+  the stale record is dropped and a fresh sidecar starts. The pid is never signalled.
 - README: corrected the security-scanner attributions (per finding and module) and the SDK
   members the Desktop page uses, listed the real widget kinds, and rewrote the install
   instructions (catalog form first, `--ref`/`--force` for the `owner/repo` form,
