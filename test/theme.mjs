@@ -84,6 +84,9 @@ for (const t of REQUIRED) {
 const desktopTargets = Object.values(BS_TO_DESKTOP).flat();
 check("all desktop targets are --ui-*/--foreground", desktopTargets.every((t) => /^--(ui-|foreground)/.test(t)));
 check("no self-referential desktop --bs- target", desktopTargets.every((t) => !t.startsWith("--bs-")));
+// --ui-bg-input is #fcfcfc in both Desktop themes: a white input on a dark board.
+check("desktop map never references --ui-bg-input", !desktopTargets.includes("--ui-bg-input"));
+check("desktop input follows the theme (--ui-bg-card)", BS_TO_DESKTOP["--bs-input"][0] === "--ui-bg-card");
 check("web + desktop cover the same --bs-* keys", JSON.stringify(Object.keys(BS_TO_HERMES).sort()) === JSON.stringify(Object.keys(BS_TO_DESKTOP).sort()));
 
 console.log(`\ntheme mapping: ${n} checks`);

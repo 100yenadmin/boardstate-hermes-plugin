@@ -61,6 +61,7 @@ adheres to [Semantic Versioning](https://semver.org/).
   shutdown reaches connector cleanup promptly instead of waiting for the 30-second fail-safe.
 - The Desktop page no longer installs theme observers after it has unmounted.
 - The Desktop page works on Hermes Desktop builds whose plugin SDK has no scoped timers.
+- Desktop board inputs (the notes textarea) follow the dark theme instead of rendering white.
 - Without Node.js, tools return "Boardstate needs Node.js >= 20 on PATH (or set
   HERMES_NODE_BIN)" instead of a bare `FileNotFoundError`. After the plugin files are
   removed mid-session, tools say so instead of suggesting `npm run build`, which only
