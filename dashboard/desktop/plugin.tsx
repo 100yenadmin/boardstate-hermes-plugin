@@ -104,6 +104,9 @@ function createSdkTransport(
       acknowledged = true;
       cancelAckTimeout();
       onStatus("live");
+      // Socket events are lossy across a disconnect. An empty changed event bypasses
+      // the version short-circuit and makes <boardstate-view> refetch the workspace.
+      for (const listener of listeners.get("boardstate.changed") ?? []) listener({});
       return;
     }
     if (typeof frame.event !== "string") return;
@@ -180,7 +183,7 @@ function BoardPage({
     let errorSticky = false;
     const updateStatus = (next: DesktopStatus, message = "") => {
       if (next === "error") errorSticky = true;
-      if (next === "live" && errorSticky) return;
+      if (errorSticky && next !== "error") return;
       if (!disposed) {
         setStatus(next);
         setDetail(message);

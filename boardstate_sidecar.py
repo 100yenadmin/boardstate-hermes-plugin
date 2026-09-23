@@ -269,12 +269,19 @@ async def _probe_record(record: dict[str, Any]) -> bool:
     )
 
 
-def _read_record(directory: Path) -> Optional[dict[str, Any]]:
+def _read_raw_record(directory: Path) -> Optional[dict[str, Any]]:
     try:
         record = json.loads(_portfile_path(directory).read_text(encoding="utf-8"))
     except Exception:
         return None
     if not isinstance(record, dict):
+        return None
+    return record
+
+
+def _read_record(directory: Path) -> Optional[dict[str, Any]]:
+    record = _read_raw_record(directory)
+    if record is None:
         return None
     port, nonce, pid = record.get("port"), record.get("nonce"), record.get("pid")
     spawned_by = record.get("spawned_by")
@@ -542,6 +549,25 @@ async def _ensure_sidecar_impl(
 
         lock_fd = await _acquire_lifecycle_lock(directory)
         try:
+            record_path = _portfile_path(directory)
+            raw_record = _read_raw_record(directory)
+            if record_path.exists() and raw_record is None:
+                raise RuntimeError(
+                    "unrecognized Boardstate sidecar record; refusing to overwrite it"
+                )
+            if raw_record is not None and _read_record(directory) is None:
+                raw_pid = raw_record.get("pid")
+                raw_port = raw_record.get("port")
+                live_legacy = bool(
+                    (isinstance(raw_pid, int) and _pid_alive(raw_pid))
+                    or (isinstance(raw_port, int) and await _port_listening(raw_port))
+                )
+                if live_legacy:
+                    raise RuntimeError(
+                        "live legacy Boardstate sidecar record detected; stop the old sidecar before retrying"
+                    )
+                record_path.unlink(missing_ok=True)
+
             current_port = state.get("port")
             current_nonce = state.get("nonce")
             current_dir = state.get("state_dir")
@@ -737,6 +763,9 @@ def _shutdown_owned_sidecar_sync(directory: Optional[Path] = None) -> None:
                     pid,
                 )
         elif spawned_by == "agent":
+            if owner_pid == os.getpid() and adopters:
+                record["owner_pid"] = adopters.pop(0)
+                record["adopters"] = adopters
             _write_record(directory, record)
     finally:
         _release_lifecycle_lock(lock_fd)

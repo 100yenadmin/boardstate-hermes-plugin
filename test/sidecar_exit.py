@@ -193,6 +193,47 @@ def main() -> int:
             if _alive(orphan_pid):
                 os.kill(orphan_pid, signal.SIGTERM)
 
+    with tempfile.TemporaryDirectory(prefix="boardstate-legacy-") as tmp:
+        directory = Path(tmp)
+        legacy = subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "--foreign-listener-worker"],
+            cwd=ROOT,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert legacy.stdout is not None
+        legacy_port = int(legacy.stdout.readline().strip())
+        record_path = directory / ".boardstate-sidecar.json"
+        record_path.write_text(
+            json.dumps({"port": legacy_port, "nonce": "legacy-nonce", "pid": legacy.pid}),
+            encoding="utf-8",
+        )
+        record_path.chmod(0o600)
+        previous = os.environ.get("BOARDSTATE_HERMES_STATE_DIR")
+        os.environ["BOARDSTATE_HERMES_STATE_DIR"] = tmp
+        try:
+            try:
+                asyncio.run(runtime.ensure_sidecar("dashboard"))
+            except RuntimeError as exc:
+                assert "legacy" in str(exc).lower() or "unrecognized" in str(exc).lower()
+            else:
+                raise AssertionError("live legacy record was overwritten by a second sidecar")
+            preserved = json.loads(record_path.read_text(encoding="utf-8"))
+            assert preserved["pid"] == legacy.pid
+            assert legacy.poll() is None
+        finally:
+            runtime.shutdown_owned_sidecar()
+            runtime._states.pop(runtime._state_key(directory), None)
+            if previous is None:
+                os.environ.pop("BOARDSTATE_HERMES_STATE_DIR", None)
+            else:
+                os.environ["BOARDSTATE_HERMES_STATE_DIR"] = previous
+            if legacy.poll() is None:
+                legacy.terminate()
+                legacy.wait(timeout=5)
+
     with tempfile.TemporaryDirectory(prefix="boardstate-identity-") as tmp:
         directory = Path(tmp)
         foreign = subprocess.Popen(

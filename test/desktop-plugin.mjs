@@ -53,8 +53,12 @@ check("uses ctx.rest for Boardstate requests", bundle.includes("/rpc"));
 check("uses ctx.socket for live pushes", bundle.includes("/ws"));
 check("uses the desktop-only absolute widget asset base", bundle.includes("absoluteBase"));
 check(
-  "a reconnect ack cannot override an error state",
-  source.includes('next === "live" && errorSticky'),
+  "no reconnect status can override an initialization error",
+  source.includes('errorSticky && next !== "error"'),
+);
+check(
+  "a desktop socket acknowledgement refetches missed board changes",
+  source.includes('listeners.get("boardstate.changed")'),
 );
 check("registers dispose cleanup", bundle.includes("onDispose"));
 check("guards custom-element registration", bundle.includes("customElements.get"));
