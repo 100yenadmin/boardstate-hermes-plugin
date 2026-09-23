@@ -21,13 +21,14 @@ WHY A PROXY (not a direct browser→sidecar connection)
 -----------------------------------------------------
 The browser connects to the *dashboard origin*, so:
 
-* Auth is the dashboard's canonical WS gate (``web_server._ws_auth_ok``) — the same
-  gate kanban's live-events WS uses. It transparently accepts the right credential in
-  every mode: loopback ``?token=``, gated single-use ``?ticket=``, server-internal
-  ``?internal=``. No bespoke sidecar token scheme, and it works under ``--host`` /
-  gated OAuth / HTTPS where a direct ``ws://127.0.0.1:<port>`` from the page would be
-  blocked (mixed content) or unreachable. The sidecar binds loopback-only and is
-  never exposed to the browser.
+* Auth is the dashboard's canonical WS gate (``web_server_chat._ws_auth_ok`` plus
+  its request-boundary check when available) — the same gate the dashboard's own
+  sockets use. It transparently accepts the right credential in every mode: loopback
+  ``?token=``, gated single-use ``?ticket=``, server-internal ``?internal=``. No
+  bespoke sidecar token scheme, and it works under ``--host`` / gated OAuth / HTTPS
+  where a direct ``ws://127.0.0.1:<port>`` from the page would be blocked (mixed
+  content) or unreachable. The sidecar binds loopback-only and is never exposed to
+  the browser.
 
 Security note
 -------------
@@ -41,6 +42,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import importlib
 import json
 import logging
 import os
@@ -175,21 +177,33 @@ def _hermes_data_credentials() -> tuple[Optional[str], Optional[str]]:
 # ---------------------------------------------------------------------------
 
 def _ws_upgrade_authorized(ws: "WebSocket") -> bool:
-    """Authorize a WS upgrade via ``hermes_cli.web_server._ws_auth_ok`` so the right
-    credential is accepted in every mode. Older dashboards without the gate fall back
-    to accept (loopback-only anyway)."""
-    try:
-        from hermes_cli import web_server as _ws  # local import: avoid load-order coupling
-    except Exception:  # pragma: no cover - dashboard internals unavailable
-        return True
-    checker = getattr(_ws, "_ws_auth_ok", None)
-    if checker is None:
-        return True
-    try:
-        return bool(checker(ws))
-    except Exception as exc:  # pragma: no cover - defensive
-        log.warning("boardstate: WS auth check failed: %s", exc)
-        return False
+    """Authorize through Hermes' canonical WS gates, failing closed if unavailable."""
+    for module_name in ("hermes_cli.web_server_chat", "hermes_cli.web_server"):
+        try:
+            auth_module = importlib.import_module(module_name)
+        except Exception:  # pragma: no cover - compatibility probe
+            continue
+
+        auth_check = getattr(auth_module, "_ws_auth_ok", None)
+        if not callable(auth_check):
+            continue
+        checks = [auth_check]
+        request_check = getattr(auth_module, "_ws_request_is_allowed", None)
+        if callable(request_check):
+            checks.append(request_check)
+
+        try:
+            return all(bool(check(ws)) for check in checks)
+        except Exception as exc:  # pragma: no cover - defensive
+            # Do not include exception text: a checker may embed presented credentials.
+            log.warning(
+                "boardstate: Hermes WS check failed (%s); rejecting upgrade",
+                type(exc).__name__,
+            )
+            return False
+
+    log.warning("boardstate: Hermes WS auth gate unavailable; rejecting upgrade")
+    return False
 
 
 # ---------------------------------------------------------------------------

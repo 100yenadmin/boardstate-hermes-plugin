@@ -161,7 +161,7 @@ tools you want — nothing runs until you do. See [docs/connectors/officecli.md]
 npm ci && npm run build   # web tab + desktop plugin + sidecar + vendored bundles (npm-pinned @boardstate/*)
 ```
 
-### Tests (all run in CI — 23 node suites + 3 python)
+### Tests (all run in CI — 18 node suites + 4 python)
 
 | Highlights | Proves |
 |------|--------|
@@ -172,10 +172,11 @@ npm ci && npm run build   # web tab + desktop plugin + sidecar + vendored bundle
 | `operator-secret.mjs` | port-file knowledge cannot drive the operator plane |
 | `invoke-timeout.mjs` | an unconfirmed mutation settles as parked, never hangs |
 | `asset_proxy.py` | tokenized asset route at runtime: traversal-jailed, CSP forwarded verbatim |
+| `ws_auth.py` | WS auth follows current/legacy Hermes gates and fails closed |
 | `operator_wire.py` | the operator gate's wire contract, incl. gated-mode 403s |
 | + sidecar smoke, MCP liveness, data wire-contract, chat translator, theme (48), templates (27), skins, desktop bundle contract (14) | every seam has a test |
 
-Full history in [CHANGELOG.md](CHANGELOG.md) (v1.0.0 → v1.4.0).
+Full history in [CHANGELOG.md](CHANGELOG.md) (v1.0.0 → v1.4.1).
 
 ## License
 

@@ -3,6 +3,13 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.4.1
+
+### Security
+
+- WebSocket upgrade gate failed open on Hermes ≥ 2026-09-02
+  (`web_server_chat` refactor); now fails closed.
+
 ## 1.4.0
 
 ### Added
