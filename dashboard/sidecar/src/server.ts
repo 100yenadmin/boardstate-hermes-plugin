@@ -28,7 +28,12 @@ import {
   registerBoardstateRpc,
 } from "@boardstate/server/node";
 import { installConnectorsFromConfig, type ConnectorWorkspace } from "./connectors.js";
-import { createHermesRpcResolver, registerHermesDataRpc } from "./hermes-data.js";
+import {
+  createHermesRpcResolver,
+  registerHermesDataRpc,
+  registerUnavailableHermesDataRpc,
+} from "./hermes-data.js";
+import { createInternalEndpoint } from "./internal.js";
 import { createMcpEndpoint } from "./mcp.js";
 import { createOperatorEndpoint } from "./operator.js";
 import { officeCliBootHint } from "./presets.js";
@@ -190,6 +195,8 @@ if (connectors) {
 if (hermesUrl && hermesToken) {
   const dataMethods = registerHermesDataRpc(host, { baseUrl: hermesUrl, sessionToken: hermesToken });
   console.log(`[boardstate] live Hermes data RPC methods: ${dataMethods.join(", ")}`);
+} else {
+  registerUnavailableHermesDataRpc(host);
 }
 
 // Approved custom-widget assets resolve under the sidecar's own `/widgets` route
@@ -228,6 +235,9 @@ const mcpEndpoint = await createMcpEndpoint(host, store, {
       }
     : {}),
 });
+const internalEndpoint = createInternalEndpoint(host, mcpEndpoint, {
+  nonce: sidecarNonceForMcp,
+});
 
 // The operator DECISION seam: a DEDICATED-secret-gated in-process HTTP endpoint the parent
 // `plugin_api` bridge (and ONLY it) forwards operator approve/confirm/deny to. Operator verbs
@@ -244,7 +254,11 @@ const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
       if (handledOperator) {
         return undefined;
       }
-      return mcpEndpoint.handle(req, res, pathname).then((handledMcp) => {
+      return internalEndpoint.handle(req, res, pathname).then((handledInternal) => {
+        if (handledInternal) {
+          return undefined;
+        }
+        return mcpEndpoint.handle(req, res, pathname).then((handledMcp) => {
         if (handledMcp) {
           return undefined;
         }
@@ -261,6 +275,7 @@ const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
           res.statusCode = 404;
           res.end("not found");
         });
+      });
       });
     })
     .catch(() => {

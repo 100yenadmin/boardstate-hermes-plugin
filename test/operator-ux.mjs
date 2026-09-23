@@ -1,6 +1,6 @@
 // Stage 3 gate: the approvals/action UX routes operator verbs through the plugin_api
 // operator endpoint in BOTH shipped entries — the web tab bundle (dashboard/dist/index.js)
-// and the desktop plugin bundle (dashboard/desktop/plugin.js). A regression that dropped the
+// and the desktop plugin bundle (desktop/plugin.js). A regression that dropped the
 // operator transport wrapper (or reverted `operator: true`) would silently send approve/confirm
 // down the WS, where the sidecar blocks them — a dead approve button with no CI signal.
 //
@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const web = readFileSync(join(here, "..", "dashboard", "dist", "index.js"), "utf8");
-const desktop = readFileSync(join(here, "..", "dashboard", "desktop", "plugin.js"), "utf8");
+const desktop = readFileSync(join(here, "..", "desktop", "plugin.js"), "utf8");
 
 let n = 0;
 const failures = [];

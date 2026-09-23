@@ -3,6 +3,25 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.5.0
+
+### Added
+
+- Unified Hermes package layout with root `plugin.yaml`, native `register(ctx)`,
+  root `desktop/plugin.js`, dashboard backend, and an MIT license.
+- All 19 `boardstate_*` tools register natively from a committed schema generated from
+  the sidecar's own tool definitions. The Streamable HTTP MCP route remains optional.
+- Shared agent/dashboard sidecar lifecycle with explicit ownership, dashboard replacement
+  of agent-owned processes, and state-preserving handoff.
+
+### Changed
+
+- The Desktop page uses only `ctx.rest`, `ctx.socket`, and tracked SDK lifecycle cleanup;
+  it no longer reads `window.hermesDesktop` or constructs a tokenized WebSocket.
+- Live-data widgets return a clear dashboard-unavailable result when the agent starts the
+  sidecar before a dashboard is present.
+- CI validates against pinned Hermes upstream and checks generated tool-schema sync.
+
 ## 1.4.1
 
 ### Security

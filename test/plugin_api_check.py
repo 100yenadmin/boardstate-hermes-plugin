@@ -32,11 +32,12 @@ def main() -> int:
         if not cond:
             failures.append(name)
 
-    # Router exposes the browser WS bridge + a health probe + the MCP proxy.
+    # Router exposes the browser WS bridge + health + MCP + Desktop REST RPC.
     paths = {getattr(r, "path", None) for r in mod.router.routes}
     check("router mounts /ws", "/ws" in paths)
     check("router mounts /health", "/health" in paths)
     check("router mounts /mcp (agent MCP proxy)", "/mcp" in paths)
+    check("router mounts /rpc (Desktop ctx.rest request transport)", "/rpc" in paths)
 
     # The MCP proxy forwards to the sidecar with the per-spawn nonce (agent reachability).
     src2 = (DASHBOARD / "plugin_api.py").read_text()
@@ -48,7 +49,7 @@ def main() -> int:
     check("router mounts /widgets proxy", any("/widgets" in str(getattr(r, "path", "")) for r in mod.router.routes))
     check("widget proxy preserves the sandbox CSP", "content-security-policy" in src2)
 
-    # Sidecar lifecycle helpers exist.
+    # Sidecar lifecycle helpers are aliases/delegates to the one shared module.
     for fn in ("_ensure_sidecar", "_read_port", "_kill_sidecar", "_ws_upgrade_authorized"):
         check(f"has {fn}", hasattr(mod, fn))
 
@@ -57,17 +58,18 @@ def main() -> int:
     for fn in ("_try_adopt", "_spawn_sidecar", "_portfile_path", "_pid_alive", "_port_listening"):
         check(f"has {fn}", hasattr(mod, fn))
     ensure_src = inspect.getsource(mod._ensure_sidecar)
-    check("_ensure_sidecar adopts before spawning", "_try_adopt" in ensure_src)
+    check("_ensure_sidecar delegates as dashboard owner", 'ensure_sidecar("dashboard"' in ensure_src)
+    runtime_src = (DASHBOARD.parent / "boardstate_sidecar.py").read_text()
     spawn_src = inspect.getsource(mod._spawn_sidecar)
-    check("_spawn_sidecar publishes a port-file", "_portfile_path" in spawn_src and "write_text" in spawn_src)
-    check("adopted sidecar is marked not-owned", '"owned"] = False' in src2)
-    kill_src = inspect.getsource(mod._kill_sidecar)
-    check("_kill_sidecar reaps only owned sidecars", 'owned' in kill_src)
+    check("shared spawn publishes a port-file", "_write_record" in spawn_src)
+    check("shared runtime marks adoption not-owned", '"owned": False' in runtime_src)
+    check("shared runtime has dashboard-over-agent replacement", 'caller == "dashboard"' in runtime_src and '"agent"' in runtime_src)
+    check("shared runtime reaps only under its ownership/adopter rule", "should_terminate" in runtime_src)
 
     # Per-spawn nonce is wired: generated, passed via env, and appended to the upstream URL.
     src = (DASHBOARD / "plugin_api.py").read_text()
-    check("generates a nonce", "secrets.token_urlsafe" in src)
-    check("passes nonce via env", "BOARDSTATE_SIDECAR_NONCE" in src)
+    check("shared runtime generates a nonce", "secrets.token_urlsafe" in runtime_src)
+    check("shared runtime passes nonce via env", "BOARDSTATE_SIDECAR_NONCE" in runtime_src)
     check("appends nonce to upstream ws url", "?nonce=" in src)
     check("_ensure_sidecar returns (port, nonce)", "tuple[int, str]" in inspect.getsource(mod._ensure_sidecar))
 
@@ -105,15 +107,16 @@ def main() -> int:
     check("indeterminate/gated require the allowlist (loopback_single_user gate)", "loopback_single_user" in auth_src and "403" in auth_src)
 
     # ── SEC-1: the operator secret is a DEDICATED credential, never in the port file ──
-    spawn_src = inspect.getsource(mod._spawn_sidecar)
     check("generates a separate operator secret", spawn_src.count("secrets.token_urlsafe") >= 2)
     check("passes the operator secret via env (BOARDSTATE_OPERATOR_SECRET)", "BOARDSTATE_OPERATOR_SECRET" in spawn_src)
     check("stores the operator secret in-memory (_sidecar)", '"operator_secret"' in spawn_src)
-    # The port-file write records ONLY port/nonce/pid — never the operator secret.
-    portfile_write = spawn_src[spawn_src.index("pf.write_text"):spawn_src.index("pf.write_text") + 200]
-    check("port file records port + nonce + pid only", '"port": port' in portfile_write and '"nonce": nonce' in portfile_write)
-    check("operator secret is NEVER written to the port file", "operator_secret" not in portfile_write and "operatorSecret" not in portfile_write)
-    check("port file is chmod 600", "chmod" in spawn_src and "0o600" in spawn_src)
+    # The port-file records ownership but never the operator secret.
+    write_src = inspect.getsource(mod._runtime._write_record)
+    write_call = spawn_src.index("_write_record(")
+    record_literal = spawn_src[write_call:spawn_src.index('"adopters": []', write_call) + 16]
+    check("port file records port + nonce + pid + spawned_by", all(key in record_literal for key in ('"port"', '"nonce"', '"pid"', '"spawned_by"')))
+    check("operator secret is NEVER written to the port file", "operator_secret" not in record_literal and "operatorSecret" not in record_literal)
+    check("port file is chmod 600", "0o600" in write_src)
     # The operator route forwards the DEDICATED secret (not the adoption nonce) and refuses when absent.
     check("operator route forwards the operator secret to sidecar /operator?nonce=", '/operator?nonce={operator_secret}' in op_src)
     check("operator route forwards {method, params}", '"method": method' in op_src)

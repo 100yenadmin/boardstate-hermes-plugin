@@ -191,3 +191,22 @@ export function registerHermesDataRpc(
   }
   return methods;
 }
+
+/** Register the same live-data methods when no dashboard is attached, but fail
+ * with one explicit message instead of an unknown-method crash in the widget. */
+export function registerUnavailableHermesDataRpc(host: RpcHost): string[] {
+  const methods = Object.keys(HANDLERS);
+  for (const method of methods) {
+    host.registerRpc(
+      method,
+      (opts) => {
+        opts.respond(false, {
+          error:
+            "Live Hermes data is unavailable because Boardstate was started by the agent without a dashboard. Open the Board tab to reconnect live data.",
+        });
+      },
+      { scope: "read" },
+    );
+  }
+  return methods;
+}
