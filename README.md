@@ -36,6 +36,10 @@ Start `hermes dashboard` for the Web tab. The unified package also contributes a
 plugin; enable **Boardstate** under **Capabilities → Plugins** in Hermes Desktop. The two
 surfaces have separate enable switches by design.
 
+After you update or reinstall the plugin, quit and reopen Hermes Desktop. **Rescan** under
+**Capabilities → Plugins** copies the new Desktop files, but a Desktop plugin that is already
+loaded keeps running its old code until the app restarts.
+
 ### Profiles
 
 On Hermes 0.21.x, `hermes -p <name> dashboard` re-runs as the default profile with
@@ -214,8 +218,13 @@ native-tool dispatch, WebSocket auth, and the schema sync gate.
 
 ## Screenshots
 
-The catalog screenshots will be added under [`docs/screenshots/`](docs/screenshots/) after
-the orchestrated Web and Desktop capture pass.
+A board built by the agent through the native tools, in the Web **Board** tab:
+
+![Boardstate Board tab in the Hermes web dashboard](docs/screenshots/web-board.png)
+
+The same kind of board on the **Board** page in Hermes Desktop:
+
+![Boardstate Board page in Hermes Desktop](docs/screenshots/desktop-board.png)
 
 ## License
 
