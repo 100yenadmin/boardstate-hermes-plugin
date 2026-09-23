@@ -51,6 +51,10 @@ adheres to [Semantic Versioning](https://semver.org/).
 - Dashboard replacement now uses a nonce-authenticated loopback shutdown request, waits up to
   35 seconds for accepted native calls and connector cleanup to drain, and never signals a bare
   recorded pid. Windows therefore gets the same graceful path instead of `TerminateProcess`.
+- A successful identity re-probe of the dashboard's own live child preserves its process handle,
+  operator secret, and exit-cleanup ownership after a transient first-probe timeout.
+- Aborted native-tool HTTP responses settle the active-invocation counter, so authenticated
+  shutdown reaches connector cleanup promptly instead of waiting for the 30-second fail-safe.
 - The Desktop page no longer installs theme observers after it has unmounted.
 
 ## 1.4.1

@@ -776,6 +776,16 @@ async def _ensure_sidecar_impl(
                     "existing Boardstate sidecar did not stop; not signalling an unverified pid"
                 )
             if record:
+                own_proc = state.get("proc")
+                if (
+                    state.get("owned")
+                    and current_port
+                    and current_nonce
+                    and current_nonce == record.get("nonce")
+                    and getattr(own_proc, "pid", None) == record.get("pid")
+                    and getattr(own_proc, "returncode", 0) is None
+                ):
+                    return int(current_port), str(current_nonce)
                 _remember_adoption(directory, record, caller)
                 return int(record["port"]), str(record["nonce"])
             return await _spawn_sidecar(directory, caller, extra_env)

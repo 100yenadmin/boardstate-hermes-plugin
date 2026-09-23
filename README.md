@@ -111,6 +111,10 @@ Boardstate makes no third-party network request by default.
 
 Connectors are optional. For example, after installing OfficeCLI, an operator can create:
 
+Connector grants are scoped to the active Hermes profile: Boardstate keeps separate state for
+each `HERMES_HOME`/profile, while sessions within one profile are the same agent and
+intentionally share native-tool grants.
+
 ```json
 {
   "connectors": [

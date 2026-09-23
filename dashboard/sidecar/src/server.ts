@@ -287,6 +287,7 @@ const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
       invocationSettled();
     };
     res.once("finish", settleOnce);
+    res.once("close", settleOnce);
   }
   void operatorEndpoint
     .handle(req, res, pathname)

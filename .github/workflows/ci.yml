@@ -51,6 +51,9 @@ jobs:
       - name: Sidecar replacement drains accepted native invocations
         run: node test/sidecar-drain.mjs
 
+      - name: Aborted native invocation releases shutdown cleanup
+        run: node test/sidecar-abort-shutdown.mjs
+
       - name: Agent-scoped grants (MCP agent context threaded through the gate — CORRECT-2)
         run: node test/scoped-grant.mjs
 
@@ -112,6 +115,7 @@ jobs:
           node test/sidecar-smoke.mjs
           node test/mcp-liveness.mjs
           node test/sidecar-drain.mjs
+          node test/sidecar-abort-shutdown.mjs
           node test/operator-secret.mjs
           node test/invoke-timeout.mjs
           node test/operational-e2e.mjs

@@ -210,10 +210,59 @@ async def _case_unverified_pid() -> None:
                 os.environ["BOARDSTATE_HERMES_STATE_DIR"] = previous
 
 
+async def _case_owned_reprobe() -> None:
+    with tempfile.TemporaryDirectory(prefix="boardstate-owned-reprobe-") as tmp:
+        previous = os.environ.get("BOARDSTATE_HERMES_STATE_DIR")
+        os.environ["BOARDSTATE_HERMES_STATE_DIR"] = tmp
+        directory = Path(tmp)
+        original_probe = runtime._probe_record
+        pid = 0
+        proc: Any = None
+        try:
+            port, nonce = await runtime.ensure_sidecar("dashboard")
+            state = runtime._state_for(directory)
+            proc = state.get("proc")
+            pid = int(getattr(proc, "pid"))
+            secret = runtime.operator_secret()
+            assert secret, "dashboard-owned sidecar did not receive an operator secret"
+
+            probe_count = 0
+
+            async def timeout_then_succeed(record: dict[str, Any]) -> bool:
+                nonlocal probe_count
+                probe_count += 1
+                if probe_count == 1:
+                    return False
+                return await original_probe(record)
+
+            runtime._probe_record = timeout_then_succeed
+            reprobed_port, reprobed_nonce = await runtime._ensure_sidecar_impl("dashboard")
+            assert (reprobed_port, reprobed_nonce) == (port, nonce)
+            assert probe_count == 2, probe_count
+            assert state.get("owned") is True, "own child was downgraded to an adoption"
+            assert state.get("proc") is proc, "own child process handle was discarded"
+            assert runtime.operator_secret() == secret, "operator secret was discarded"
+            runtime._probe_record = original_probe
+            runtime._shutdown_owned_sidecar_sync(directory)
+            assert not runtime._pid_alive(pid), "exit cleanup left the owned sidecar running"
+            pid = 0
+        finally:
+            runtime._probe_record = original_probe
+            if pid and runtime._pid_alive(pid) and proc is not None:
+                proc.terminate()
+                await proc.wait()
+            runtime._states.pop(runtime._state_key(directory), None)
+            if previous is None:
+                os.environ.pop("BOARDSTATE_HERMES_STATE_DIR", None)
+            else:
+                os.environ["BOARDSTATE_HERMES_STATE_DIR"] = previous
+
+
 CASES: dict[str, Callable[[], Awaitable[None]]] = {
     "auth": _case_authenticated_endpoint,
     "drain": _case_drain_then_replace,
     "unverified": _case_unverified_pid,
+    "owned-reprobe": _case_owned_reprobe,
 }
 
 

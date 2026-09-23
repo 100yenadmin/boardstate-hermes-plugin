@@ -31305,6 +31305,7 @@ var httpServer = createServer((req, res) => {
       invocationSettled();
     };
     res.once("finish", settleOnce);
+    res.once("close", settleOnce);
   }
   void operatorEndpoint.handle(req, res, pathname).then((handledOperator) => {
     if (handledOperator) {
