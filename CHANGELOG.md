@@ -16,8 +16,12 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- The Desktop page uses only `ctx.rest`, `ctx.socket`, and tracked SDK lifecycle cleanup;
-  it no longer reads `window.hermesDesktop` or constructs a tokenized WebSocket.
+- The Desktop page uses only public SDK members: `ctx.register` with `ROUTES_AREA` and
+  `SIDEBAR_NAV_AREA`, `ctx.rest`, `ctx.socket`, `ctx.onDispose`, `ctx.setTimeout` when present
+  (with a fallback), and `host.notify`. It no longer reads `window.hermesDesktop` or
+  constructs a tokenized WebSocket.
+- Node.js is resolved from `HERMES_NODE_BIN`, then Hermes' own Node lookup, then `PATH`.
+- State directories are created with mode 0700.
 - Live-data widgets return a clear dashboard-unavailable result when the agent starts the
   sidecar before a dashboard is present.
 - The build rewrites ajv's `$data` meta-schema identifier (a GitHub raw URL, never fetched) so
@@ -57,6 +61,17 @@ adheres to [Semantic Versioning](https://semver.org/).
   shutdown reaches connector cleanup promptly instead of waiting for the 30-second fail-safe.
 - The Desktop page no longer installs theme observers after it has unmounted.
 - The Desktop page works on Hermes Desktop builds whose plugin SDK has no scoped timers.
+- Without Node.js, tools return "Boardstate needs Node.js >= 20 on PATH (or set
+  HERMES_NODE_BIN)" instead of a bare `FileNotFoundError`. After the plugin files are
+  removed mid-session, tools say so instead of suggesting `npm run build`, which only
+  applies to a git checkout.
+- A sidecar whose owner and adopters were all killed without cleanup (for example
+  `SIGKILL`) now shuts itself down within a few seconds instead of running on as an orphan.
+- README: corrected the security-scanner attributions (per finding and module) and the SDK
+  members the Desktop page uses, listed the real widget kinds, and rewrote the install
+  instructions (catalog form first, `--ref`/`--force` for the `owner/repo` form,
+  `hermes plugins enable`, profiles, uninstall); disclosed that the sidecar inherits the
+  Hermes environment.
 
 ## 1.4.1
 

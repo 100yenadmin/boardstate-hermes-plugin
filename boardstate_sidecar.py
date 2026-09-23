@@ -133,6 +133,23 @@ class _CurrentStateProxy(MutableMapping[str, Any]):
 _state: MutableMapping[str, Any] = _CurrentStateProxy()
 
 
+class BoardstateUnavailable(RuntimeError):
+    """A setup problem the agent should see verbatim (missing Node or plugin files)."""
+
+
+NODE_MISSING_MESSAGE = "Boardstate needs Node.js >= 20 on PATH (or set HERMES_NODE_BIN)"
+
+
+def _plugin_files_missing_message() -> str:
+    message = (
+        "Boardstate plugin files are missing (removed or mid-update); "
+        "restart the session or reinstall"
+    )
+    if (_ROOT / ".git").exists():
+        message += f" (in a git checkout, run `npm ci && npm run build` in {_ROOT})"
+    return message
+
+
 def sidecar_bundle() -> Path:
     return _SIDECAR_JS
 
@@ -416,7 +433,25 @@ async def _read_port(proc: "asyncio.subprocess.Process") -> int:
 
 
 def _node_bin() -> str:
-    return os.environ.get("HERMES_NODE_BIN") or shutil.which("node") or "node"
+    """HERMES_NODE_BIN, then Hermes' own Node resolver when available, then PATH."""
+    override = os.environ.get("HERMES_NODE_BIN")
+    if override:
+        return override
+    try:
+        from hermes_constants import find_node_executable
+    except ImportError:
+        find_node_executable = None
+    if find_node_executable is not None:
+        try:
+            resolved = find_node_executable("node")
+        except Exception:  # pragma: no cover - resolver is best effort
+            resolved = None
+        if resolved:
+            return resolved
+    resolved = shutil.which("node")
+    if not resolved:
+        raise BoardstateUnavailable(NODE_MISSING_MESSAGE)
+    return resolved
 
 
 def _register_atexit() -> None:
@@ -483,6 +518,8 @@ async def _spawn_sidecar(
     if spawned_by == "dashboard":
         env["BOARDSTATE_OPERATOR_SECRET"] = generated_operator_secret
     env["BOARDSTATE_SPAWNED_BY"] = spawned_by
+    # The sidecar's owner watchdog falls back to this pid until the port record names it.
+    env["BOARDSTATE_OWNER_PID"] = str(os.getpid())
     env["PORT"] = "0"
 
     log_fd = os.open(
@@ -499,6 +536,8 @@ async def _spawn_sidecar(
             env=env,
             start_new_session=os.name != "nt",
         )
+    except (FileNotFoundError, PermissionError) as exc:
+        raise BoardstateUnavailable(NODE_MISSING_MESSAGE) from exc
     finally:
         os.close(log_fd)
     try:
@@ -666,10 +705,8 @@ async def _ensure_sidecar_impl(
     state = _state_for(directory)
     async with _sidecar_lock_for(directory):
         if not _SIDECAR_JS.exists():
-            raise RuntimeError(
-                f"boardstate sidecar bundle missing: {_SIDECAR_JS} (run npm run build)"
-            )
-        directory.mkdir(parents=True, exist_ok=True)
+            raise BoardstateUnavailable(_plugin_files_missing_message())
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
 
         lock_fd = await _acquire_lifecycle_lock(directory)
         try:

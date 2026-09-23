@@ -44,6 +44,8 @@ def _handler(name: str):
         try:
             result = await _runtime.invoke_tool(name, args or {})
             return json.dumps(result, ensure_ascii=False)
+        except _runtime.BoardstateUnavailable as exc:
+            return json.dumps({"error": str(exc)}, ensure_ascii=False)
         except Exception as exc:
             return json.dumps(
                 {

@@ -7390,7 +7390,9 @@ var require_cross_spawn = __commonJS({
 });
 
 // dashboard/sidecar/src/server.ts
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { join as join2 } from "node:path";
 
 // node_modules/@boardstate/schema/dist/index.js
 var DATA_READ_RPC_ALLOWLIST = [
@@ -31380,4 +31382,44 @@ var shutdown = () => {
 requestSidecarShutdown = shutdown;
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+var spawnerPid = Number(process.env.BOARDSTATE_OWNER_PID);
+var recordPath = stateDirEnv ? join2(stateDirEnv, ".boardstate-sidecar.json") : void 0;
+var spawnerIsParent = Number.isInteger(spawnerPid) && process.ppid === spawnerPid;
+var pidAlive = (pid) => {
+  if (pid === spawnerPid && spawnerIsParent && process.ppid !== spawnerPid) return false;
+  try {
+    process.kill(pid, 0);
+  } catch (error2) {
+    return error2.code === "EPERM";
+  }
+  if (process.platform === "linux") {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      return !["Z", "X"].includes(stat.slice(stat.lastIndexOf(")") + 1).trim().split(" ")[0]);
+    } catch {
+      return true;
+    }
+  }
+  return true;
+};
+var recordHolders = () => {
+  try {
+    const record2 = JSON.parse(readFileSync(recordPath, "utf8"));
+    if (record2.nonce === sidecarNonce) {
+      const adopters = Array.isArray(record2.adopters) ? record2.adopters : [];
+      return [record2.owner_pid, ...adopters].filter((pid) => Number.isInteger(pid));
+    }
+  } catch {
+  }
+  return [spawnerPid];
+};
+if (sidecarNonce && recordPath && Number.isInteger(spawnerPid) && spawnerPid > 0) {
+  setInterval(() => {
+    const holders = recordHolders();
+    if (holders.length > 0 && !holders.some(pidAlive)) {
+      console.error("[boardstate] no live owner or adopter remains; shutting down");
+      shutdown();
+    }
+  }, 3e3).unref();
+}
 //# sourceMappingURL=server.js.map

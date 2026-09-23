@@ -98,7 +98,8 @@ def main() -> int:
     )
     try:
         plugins_url = f"http://127.0.0.1:{port}/api/dashboard/plugins"
-        deadline = time.monotonic() + 30
+        # A cold `hermes dashboard` start takes 18-30 s on CI runners; poll up to 90 s.
+        deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 raise AssertionError(f"dashboard exited early with code {process.returncode}")
@@ -110,7 +111,7 @@ def main() -> int:
                 pass
             time.sleep(0.2)
         else:
-            raise AssertionError("dashboard did not become ready within 30 seconds")
+            raise AssertionError("dashboard did not become ready within 90 seconds")
 
         assert isinstance(plugins, list), plugins
         assert any(item.get("name") == "boardstate" for item in plugins), plugins

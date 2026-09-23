@@ -181,6 +181,12 @@ jobs:
       - name: Graceful authenticated replacement drains and never signals an unverified pid
         run: python test/sidecar_graceful_replace.py
 
+      - name: Missing Node gives an actionable error; HERMES_NODE_BIN is honoured
+        run: python test/node_resolution.py
+
+      - name: Sidecar exits after its owner and adopters are SIGKILLed
+        run: python test/sidecar_owner_watchdog.py
+
   windows-lifecycle:
     runs-on: windows-latest
     steps:
@@ -258,6 +264,8 @@ jobs:
           python test/agent_operator_secret.py
           python test/shutdown_pid_reuse.py
           python test/sidecar_graceful_replace.py
+          python test/node_resolution.py
+          python test/sidecar_owner_watchdog.py
 
       - name: Install into an isolated Hermes home
         run: |

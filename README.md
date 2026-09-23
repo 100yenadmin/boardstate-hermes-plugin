@@ -2,7 +2,8 @@
 
 Boardstate gives Hermes a durable board that the agent can build with native tools. Open
 the **Board** tab in `hermes dashboard` or the **Board** page in Hermes Desktop, then ask
-Hermes to create tabs, add widgets, arrange a layout, or review its design. Changes are
+Hermes to create tabs, add widgets, arrange a layout, or review its design. Widgets include
+notes, markdown, tables, charts, KPI cards, live Hermes data, and approvals. Changes are
 stored as a validated workspace document and appear live when the dashboard socket is
 available.
 
@@ -11,24 +12,24 @@ backend, Desktop page, and loopback Node sidecar install from this repository to
 
 ## Install
 
-Boardstate requires Hermes 0.21.2 or newer and Node 20 or newer.
+Boardstate requires Hermes 0.21.2 or newer and Node.js 20 or newer. Boardstate looks for Node
+in `HERMES_NODE_BIN`, then in Hermes' own Node lookup, then on `PATH`.
 
 ```bash
-hermes plugins install 100yenadmin/boardstate-hermes-plugin
+hermes plugins install boardstate --enable
 ```
 
-Once it is in the Hermes catalog, the short name is equivalent:
+This installs the catalog entry at its reviewed pin. Hermes accepts the scanner's `caution`
+verdict for that pin without a prompt once the catalog entry is merged.
+
+The `owner/repo` form (`hermes plugins install 100yenadmin/boardstate-hermes-plugin`) is not
+reviewed or pinned. It prints the scanner findings and asks for confirmation; pass `--force`
+to accept them non-interactively, and `--ref <40-character sha>` to pin a commit.
+
+To enable an installed copy later:
 
 ```bash
-hermes plugins install boardstate
-```
-
-Enable it in the active Hermes profile:
-
-```yaml
-plugins:
-  enabled:
-    - boardstate
+hermes plugins enable boardstate
 ```
 
 Start `hermes dashboard` for the Web tab. The unified package also contributes a Desktop
@@ -44,6 +45,12 @@ the default profile's board. Install with `hermes plugins install …` (no `-p`)
 dashboard, and with `hermes -p <name> plugins install …` for that profile's agent tools. Hermes
 Desktop loads the Desktop half app-wide from `~/.hermes/desktop-plugins` once you switch it
 on under **Capabilities → Plugins**, and talks to the active profile's backend.
+
+### Uninstall
+
+Run `hermes plugins remove boardstate`. The board itself stays in
+`$HERMES_HOME/boardstate-state`; delete it with `rm -rf "$HERMES_HOME/boardstate-state"` if you
+no longer need it.
 
 ## Native agent tools
 
@@ -81,12 +88,18 @@ kind so the agent and dashboard do not create competing writers.
   with a dashboard-owned one. Both use the same state directory, so the board survives.
 - An agent-owned sidecar is stopped when its owner exits if no live agent process adopted
   it. A process never stops a sidecar whose port record has moved to another spawn.
+- If every process named in the sidecar's port record (its owner and any adopters) dies
+  without cleaning up, for example after `SIGKILL`, the sidecar notices within a few seconds
+  and shuts itself down.
 - Live Hermes data widgets use the authenticated dashboard API. When only the agent half is
   running, they show an explicit "open the Board tab" unavailable message instead of
   crashing.
 
-The Desktop plugin stays inside the public plugin SDK: `ctx.rest` carries Boardstate
-requests, `ctx.socket` carries server pushes, and `ctx.onDispose` removes injected styles.
+The Desktop plugin stays inside the public plugin SDK. It uses `ctx.register` with
+`ROUTES_AREA` and `SIDEBAR_NAV_AREA` for the page and its nav row, `ctx.rest` for Boardstate
+requests, `ctx.socket` for server pushes, `ctx.onDispose` for cleanup, `ctx.setTimeout` when
+the SDK provides it (with a disposed fallback timer on older SDKs), and `host.notify` for
+template errors.
 OAuth remotes support request/response traffic but the SDK intentionally provides no live
 socket there, so the page reports **live updates unavailable** instead of pretending to be
 live.
@@ -106,6 +119,9 @@ Boardstate makes no third-party network request by default.
 - Operator approve/confirm/deny verbs use a separate in-memory secret that is never written
   to the port record. In gated multi-user mode, `boardstate.operators.json` is also required.
 - Sidecar traffic never goes through an `HTTP(S)_PROXY` from the environment.
+- The sidecar inherits the Hermes process environment, so provider keys there are available
+  to connector `env` references. A dashboard-owned sidecar also receives the dashboard session
+  token so live Hermes data widgets can read the local dashboard API.
 - **Limit of the operator gate.** It keeps approvals off the agent's tool surface: no
   `boardstate_*` tool, MCP call or board WebSocket can approve or confirm anything. It is not
   a boundary against an agent that has unrestricted shell access as the same OS user. In
@@ -139,19 +155,36 @@ intentionally share native-tool grants.
 
 ## Security scanner notes
 
-`hermes plugins validate` reports `caution` for the committed
-`dashboard/sidecar/server.js` bundle. The bundle is generated from the pinned packages in
-`package-lock.json`; reviewers should still inspect every warning:
+`hermes plugins validate` reports `caution`. All five HIGH findings are in the committed
+`dashboard/sidecar/server.js` bundle, which is generated from the pinned packages in
+`package-lock.json`. Line numbers are for the 1.5.0 build; reviewers should still inspect
+every warning:
 
-- `dump_all_env`: code bundled from the MCP SDK filters an environment allowlist for child
-  processes. Boardstate does not return the host environment to an agent.
-- `exfil_service`: the optional Pipedream preset URL string in `@boardstate/broker` is
-  classified as a possible exfiltration service. It is inert until an operator authors and
-  approves that connector.
-- `sudo_usage`: the match is text in a bundled comment, not a command Boardstate executes.
-- Medium `char-code`, `base64`, and Unicode-escape matches come from generated dependency
-  code and data tables. The oversized-file warning is expected for the self-contained
-  sidecar and Desktop bundles.
+- `dump_all_env` at `server.js:3082`: ajv's compiler (`ajv/dist/compile`) names a schema
+  environment variable `env` (`env = env || new SchemaEnv(...)`). It does not touch
+  `process.env`.
+- `dump_all_env` at `server.js:7124`: `path-key` reads the name of the `PATH` key from
+  `process.env`.
+- `dump_all_env` at `server.js:7144`: `cross-spawn` resolves a connector command against
+  `process.env` (`PATH`).
+- `path-key` and `cross-spawn` are transitive dependencies of the MCP SDK's stdio client.
+  None of these returns the environment to an agent.
+- `exfil_service` at `server.js:28509`: the optional Pipedream preset URL string in the
+  bundled `@boardstate/broker` package. It is inert until an operator authors and approves
+  that connector.
+- `sudo_usage` at `server.js:25999`: a comment in the MCP SDK's stdio client
+  ("inspired by the default env inheritance of sudo"), not a command Boardstate executes.
+
+The MEDIUM and LOW findings are:
+
+- Character-code, base64, Unicode-escape and relative-path matches in the minified bundles:
+  `server.js`, `dashboard/dist/index.js`, `dashboard/vendor/boardstate-browser.js` and
+  `desktop/plugin.js`.
+- One oversized-file warning, for `server.js` only.
+- The repository's own CI install steps (`pip install`, `git clone` in
+  `.github/workflows/ci.yml`).
+- `subprocess` use in `test/`.
+- An example loopback dashboard address in a comment in `dashboard/sidecar/src/hermes-data.ts`.
 
 Catalog self-updater check: the catalog CI flags a bundled JS file that contains both a
 GitHub raw-content URL and a file-write call. In the sidecar bundle, the only such URL was

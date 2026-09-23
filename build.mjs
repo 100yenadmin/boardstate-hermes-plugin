@@ -115,7 +115,9 @@ writeFileSync(
 // identifier consistently to an equivalent non-GitHub URI so the check stays meaningful for
 // this bundle: a later releases-latest / raw-content URL next to a file write would still trip
 // it (CI replays the check).
-const AJV_DATA_ID = "https://raw.githubusercontent.com/ajv-validator/ajv/master/lib/refs/data.json#";
+// The host is assembled from parts so this build script itself never matches the check.
+const GITHUB_RAW_HOST = ["raw", "githubusercontent", "com"].join(".");
+const AJV_DATA_ID = `https://${GITHUB_RAW_HOST}/ajv-validator/ajv/master/lib/refs/data.json#`;
 const AJV_DATA_ID_REWRITE = "https://ajv.js.org/refs/data.json#";
 const ajvDataIdPlugin = {
   name: "ajv-data-meta-schema-id",

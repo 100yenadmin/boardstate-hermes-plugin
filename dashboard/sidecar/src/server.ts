@@ -16,7 +16,9 @@
 // by a separate `boardstate-mcp` process against the same dir is read on the next
 // control-plane read and rendered.
 
+import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { join } from "node:path";
 import { DashboardStore } from "@boardstate/core";
 import { FsStorageAdapter } from "@boardstate/core/node";
 import { validateWorkspaceDoc } from "@boardstate/schema";
@@ -377,3 +379,58 @@ const shutdown = (): void => {
 requestSidecarShutdown = shutdown;
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+
+// Owner watchdog. A Hermes process killed with SIGKILL never runs its exit cleanup, so an
+// agent- or dashboard-owned sidecar would otherwise outlive it. Every 3 s, read the port
+// record: while it is ours (same nonce), the holders are its current `owner_pid` plus its
+// `adopters` — the same set the Python lifecycle hands ownership between — so a sidecar that
+// any live process owns or has adopted is never stopped. Before the record names us (or
+// after it stops naming us), only the spawning pid can know our nonce, so it is the holder.
+// Inactive for a direct CLI/demo spawn (no nonce or owner pid).
+const spawnerPid = Number(process.env.BOARDSTATE_OWNER_PID);
+const recordPath = stateDirEnv ? join(stateDirEnv, ".boardstate-sidecar.json") : undefined;
+// Only trust a reparent signal when node is the spawner's direct child (not behind a shim).
+const spawnerIsParent = Number.isInteger(spawnerPid) && process.ppid === spawnerPid;
+const pidAlive = (pid: number): boolean => {
+  if (pid === spawnerPid && spawnerIsParent && process.ppid !== spawnerPid) return false;
+  try {
+    process.kill(pid, 0); // signal 0: existence check only, on POSIX and Windows
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+  if (process.platform === "linux") {
+    // An exited but unreaped holder is a zombie; like the Python lifecycle, count it as gone.
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      return !["Z", "X"].includes(stat.slice(stat.lastIndexOf(")") + 1).trim().split(" ")[0]);
+    } catch {
+      return true;
+    }
+  }
+  return true;
+};
+const recordHolders = (): number[] => {
+  try {
+    const record = JSON.parse(readFileSync(recordPath as string, "utf8")) as {
+      nonce?: unknown;
+      owner_pid?: unknown;
+      adopters?: unknown;
+    };
+    if (record.nonce === sidecarNonce) {
+      const adopters = Array.isArray(record.adopters) ? record.adopters : [];
+      return [record.owner_pid, ...adopters].filter((pid): pid is number => Number.isInteger(pid));
+    }
+  } catch {
+    /* absent or mid-rewrite: fall back to the spawner */
+  }
+  return [spawnerPid];
+};
+if (sidecarNonce && recordPath && Number.isInteger(spawnerPid) && spawnerPid > 0) {
+  setInterval(() => {
+    const holders = recordHolders();
+    if (holders.length > 0 && !holders.some(pidAlive)) {
+      console.error("[boardstate] no live owner or adopter remains; shutting down");
+      shutdown();
+    }
+  }, 3_000).unref();
+}
