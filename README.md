@@ -55,8 +55,9 @@ on under **Capabilities → Plugins**, and talks to the active profile's backend
 
 Run `hermes plugins remove boardstate`. The board itself stays in the `boardstate-state`
 directory of the profile's Hermes home: `$HERMES_HOME` when you set it, otherwise `~/.hermes` for
-the default profile and `~/.hermes/profiles/<name>` for a named profile. Delete that directory if
-you no longer need the board.
+the default profile and `~/.hermes/profiles/<name>` for a named profile. If you set
+`BOARDSTATE_HERMES_STATE_DIR`, the board is in that directory instead. Delete it if you no longer
+need the board.
 
 ## Native agent tools
 
