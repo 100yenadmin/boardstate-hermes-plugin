@@ -113,7 +113,8 @@ writeFileSync(
 // call. The only such URL in the sidecar bundle is ajv's `$data` meta-schema
 // IDENTIFIER (its `$id` and the one `$ref` pointing at it) — never fetched. Rewrite that
 // identifier consistently to an equivalent non-GitHub URI so the check stays meaningful for
-// this bundle: any real GitHub fetch added later would still trip it (CI replays the check).
+// this bundle: a later releases-latest / raw-content URL next to a file write would still trip
+// it (CI replays the check).
 const AJV_DATA_ID = "https://raw.githubusercontent.com/ajv-validator/ajv/master/lib/refs/data.json#";
 const AJV_DATA_ID_REWRITE = "https://ajv.js.org/refs/data.json#";
 const ajvDataIdPlugin = {

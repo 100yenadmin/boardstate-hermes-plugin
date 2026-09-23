@@ -83,8 +83,9 @@ jobs:
 
       - name: Hermes catalog self-updater check (replays plugin-catalog-ci.yml)
         run: |
-          HITS=$(git ls-files -z '*.js' '*.mjs' '*.cjs' '*.ts' \
-            | xargs -0 grep -lE 'releases/latest|raw\.githubusercontent\.com' \
+          # Same enumeration as upstream: recursive over the plugin dir (node_modules included).
+          HITS=$(grep -rlE 'releases/latest|raw\.githubusercontent\.com' \
+              --include='*.js' --include='*.mjs' --include='*.cjs' --include='*.ts' . \
             | xargs -r grep -lE 'writeTextFile|renamePath|writeFile\(' || true)
           if [ -n "$HITS" ]; then echo "::error::catalog self-updater check would fail: $HITS"; exit 1; fi
 
