@@ -101,5 +101,8 @@ jobs:
       - name: Tokenized asset proxy at runtime (traversal-jailed, CSP verbatim)
         run: python test/asset_proxy.py
 
+      - name: WebSocket upgrade auth (fail-closed compatibility + request boundary)
+        run: python test/ws_auth.py
+
       - name: Operator gate wire-contract (plugin_api → sidecar exact param shapes)
         run: python test/operator_wire.py
