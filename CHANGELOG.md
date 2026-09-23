@@ -28,6 +28,9 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 - WebSocket upgrade gate failed open on Hermes ≥ 2026-09-02
   (`web_server_chat` refactor); now fails closed.
+- Windows: the sidecar liveness probe no longer uses `os.kill(pid, 0)`, which CPython
+  maps to `TerminateProcess` on Windows; it queries the process handle instead. A
+  `windows-latest` CI job exercises the probe against a real child process.
 
 ## 1.4.0
 

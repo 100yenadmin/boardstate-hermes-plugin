@@ -131,6 +131,27 @@ jobs:
       - name: Native 19-tool registration + real-sidecar dispatch
         run: python test/native_plugin.py
 
+      - name: Liveness probe never signals the checked process
+        run: python test/pid_alive.py
+
+  windows-lifecycle:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Byte-compile the sidecar lifecycle module
+        run: python -m py_compile boardstate_sidecar.py
+
+      - name: Liveness probe never terminates the checked process (real Windows)
+        run: python test/pid_alive.py
+
+      - name: Windows lifecycle decisions use a cross-process lock
+        run: python test/windows_lock.py
+
   hermes-catalog-acceptance:
     runs-on: ubuntu-latest
     timeout-minutes: 20

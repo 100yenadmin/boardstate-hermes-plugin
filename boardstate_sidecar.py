@@ -220,7 +220,42 @@ def _release_lifecycle_lock(lock_fd: Optional[int]) -> None:
         os.close(lock_fd)
 
 
+def _win_pid_alive(pid: int) -> bool:
+    # os.kill(pid, 0) is NOT a probe on Windows: CPython routes every non-console
+    # signal through TerminateProcess, so "checking" a pid would kill it. Query
+    # the process handle instead.
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    process_query_limited_information = 0x1000
+    still_active = 259
+    error_access_denied = 5
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        # Access denied means the process exists but belongs to someone else.
+        return ctypes.get_last_error() == error_access_denied
+    try:
+        exit_code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return True
+        return exit_code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        return _win_pid_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -749,7 +784,8 @@ def _shutdown_owned_sidecar_sync(directory: Optional[Path] = None) -> None:
             stopped = _wait_pid_exit_sync(pid, 2.0)
             if not stopped:
                 try:
-                    os.kill(pid, signal.SIGKILL)
+                    # Windows has no SIGKILL; SIGTERM already maps to TerminateProcess there.
+                    os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
                 except ProcessLookupError:
                     pass
                 stopped = _wait_pid_exit_sync(pid, 2.0)
