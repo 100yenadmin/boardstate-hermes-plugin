@@ -158,6 +158,17 @@ def main() -> int:
     with _fake_hermes(web=web):
         check("legacy web_server auth fallback passes", mod._ws_upgrade_authorized(ws))
 
+    web = _fake_module(
+        "hermes_cli.web_server",
+        _ws_auth_ok=lambda _ws: True,
+        _ws_request_is_allowed=lambda _ws: False,
+    )
+    with _fake_hermes(web=web):
+        check(
+            "legacy web_server request boundary rejection fails closed",
+            not mod._ws_upgrade_authorized(ws),
+        )
+
     warning_capture = _WarningCapture()
     mod.log.addHandler(warning_capture)
     try:
