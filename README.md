@@ -98,11 +98,12 @@ Boardstate makes no third-party network request by default.
 - Sidecar traffic never goes through an `HTTP(S)_PROXY` from the environment.
 - **Limit of the operator gate.** It keeps approvals off the agent's tool surface: no
   `boardstate_*` tool, MCP call or board WebSocket can approve or confirm anything. It is not
-  a boundary against an agent that has unrestricted shell access as the same OS user. Such
-  an agent can read the loopback dashboard page, which carries the dashboard session token,
-  or a same-user process's environment. If approvals must hold against the agent itself, run
-  its terminal in a sandboxed backend (for example Docker, SSH or Modal) so its shell is not
-  the dashboard's user, or use gated multi-user mode with `boardstate.operators.json`.
+  a boundary against an agent that has unrestricted shell access as the same OS user. In
+  ungated loopback mode, such an agent can read the dashboard page, which carries the
+  dashboard session token. In any mode, it can read a same-user process's environment,
+  including the dashboard-owned sidecar's operator secret. If approvals must hold against the
+  agent itself, run the agent's terminal in an isolated backend (for example Docker, SSH or
+  Modal) or as a different OS user from the dashboard.
 - Approved custom widgets run in an opaque-origin iframe with a no-network Content Security
   Policy. Pending, rejected, and unknown widget assets all return 404.
 

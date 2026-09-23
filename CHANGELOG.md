@@ -36,7 +36,7 @@ adheres to [Semantic Versioning](https://semver.org/).
   never goes through an `HTTP(S)_PROXY` from the environment, so the nonce and operator secret
   cannot reach a proxy.
 - README states the operator gate's limit: it is not a boundary against an agent with
-  unrestricted same-user shell access (the loopback dashboard page carries its session token).
+  unrestricted same-user shell access; isolate the agent's terminal (backend or OS user).
 
 ### Fixed
 
