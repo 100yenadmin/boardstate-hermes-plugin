@@ -119,6 +119,8 @@ jobs:
   hermes-catalog-acceptance:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      HERMES_HOME: ${{ runner.temp }}/boardstate-hermes
     steps:
       - uses: actions/checkout@v4
 
@@ -140,7 +142,11 @@ jobs:
         run: git diff --exit-code -- dashboard/tools.schema.json dashboard/dist desktop dashboard/sidecar dashboard/vendor
 
       - name: Install pinned upstream Hermes
-        run: pip install "hermes-agent @ git+https://github.com/NousResearch/hermes-agent@38c289c0146ed8c8b2b767eca1fff6f5b7e6382e"
+        run: |
+          git clone --filter=blob:none https://github.com/NousResearch/hermes-agent.git "${RUNNER_TEMP}/hermes-agent"
+          git -C "${RUNNER_TEMP}/hermes-agent" checkout 38c289c0146ed8c8b2b767eca1fff6f5b7e6382e
+          test "$(git -C "${RUNNER_TEMP}/hermes-agent" rev-parse HEAD)" = 38c289c0146ed8c8b2b767eca1fff6f5b7e6382e
+          pip install -e "${RUNNER_TEMP}/hermes-agent"
 
       - name: Hermes catalog validation
         run: hermes plugins validate .
@@ -162,19 +168,13 @@ jobs:
           python test/native_plugin.py
 
       - name: Install into an isolated Hermes home
-        env:
-          HERMES_HOME: ${{ runner.temp }}/boardstate-hermes
         run: |
           mkdir -p "$HERMES_HOME/plugins"
           ln -s "$GITHUB_WORKSPACE" "$HERMES_HOME/plugins/boardstate"
           hermes plugins enable boardstate
 
       - name: Real PluginManager registration and dispatch
-        env:
-          HERMES_HOME: ${{ runner.temp }}/boardstate-hermes
         run: python test/real_hermes_plugin_manager.py
 
       - name: Real dashboard HTTP and WebSocket acceptance
-        env:
-          HERMES_HOME: ${{ runner.temp }}/boardstate-hermes
         run: python test/dashboard_real_hermes.py
