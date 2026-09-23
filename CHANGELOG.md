@@ -33,11 +33,16 @@ adheres to [Semantic Versioning](https://semver.org/).
 - Loopback sidecar traffic (native tools, dashboard proxy routes, the Desktop WebSocket bridge)
   never goes through an `HTTP(S)_PROXY` from the environment, so the nonce and operator secret
   cannot reach a proxy.
+- README states the operator gate's limit: it is not a boundary against an agent with
+  unrestricted same-user shell access (the loopback dashboard page carries its session token).
 
 ### Fixed
 
 - Zombie sidecars (a reaper that never waits, e.g. some container inits) count as exited on
   Linux, so replacement no longer times out.
+- Exit cleanup never signals a recorded pid it cannot prove is still the sidecar (our own
+  unreaped child, or a nonce-verified identity probe), so pid reuse after a sidecar crash can
+  no longer kill an unrelated process.
 - The port record is written atomically (temp file + rename); a crash mid-write can no longer
   leave a record that blocks every start. The refusal message names the file.
 - The sidecar closes connector clients before exiting, so handoffs do not orphan stdio connectors.

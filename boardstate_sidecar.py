@@ -299,6 +299,18 @@ async def _port_listening(port: int) -> bool:
     return True
 
 
+def _sidecar_identity_verified(
+    state: dict[str, Any], record: dict[str, Any], pid: int, nonce: str
+) -> bool:
+    """True only when ``pid`` is provably still this sidecar, so signalling it is safe."""
+    proc = state.get("proc")
+    # Our own child cannot have its pid reused until we reap it.
+    if proc is not None and getattr(proc, "pid", None) == pid and getattr(proc, "returncode", 0) is None:
+        return True
+    port = record.get("port")
+    return isinstance(port, int) and _probe_record_sync(port, nonce)
+
+
 def _probe_record_sync(port: int, nonce: str) -> bool:
     request = urllib.request.Request(
         f"http://127.0.0.1:{port}/internal/healthz?nonce={nonce}",
@@ -806,8 +818,19 @@ def _shutdown_owned_sidecar_sync(directory: Optional[Path] = None) -> None:
         elif not state.get("owned"):
             should_terminate = False
 
-        if should_terminate:
-            pid = int(record["pid"])
+        pid = int(record["pid"])
+        if should_terminate and not _sidecar_identity_verified(state, record, pid, nonce):
+            # The recorded pid may have been reused by an unrelated process after the
+            # sidecar died: never signal what we cannot prove is ours. Drop the record
+            # only when nothing lives at that pid; otherwise leave it for the next start.
+            should_terminate = False
+            if not _pid_alive(pid):
+                current = _read_record(directory)
+                if current and current.get("nonce") == nonce:
+                    _portfile_path(directory).unlink(missing_ok=True)
+            else:
+                log.warning("boardstate: sidecar pid %d did not verify; not signalling it", pid)
+        elif should_terminate:
             try:
                 os.kill(pid, signal.SIGTERM)
             except ProcessLookupError:

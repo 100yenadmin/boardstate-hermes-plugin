@@ -160,6 +160,9 @@ jobs:
       - name: Agent-owned sidecars carry no operator secret
         run: python test/agent_operator_secret.py
 
+      - name: Exit cleanup never signals an unverified recorded pid
+        run: python test/shutdown_pid_reuse.py
+
   windows-lifecycle:
     runs-on: windows-latest
     steps:
@@ -232,6 +235,7 @@ jobs:
           python test/desktop_ack.py
           python test/native_plugin.py
           python test/agent_operator_secret.py
+          python test/shutdown_pid_reuse.py
 
       - name: Install into an isolated Hermes home
         run: |

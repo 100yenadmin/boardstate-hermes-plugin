@@ -64,8 +64,9 @@ Boardstate starts one Node sidecar on an ephemeral `127.0.0.1` port. Every spawn
 random nonce. Its mode-0600 port record contains the port, nonce, process id, and owner
 kind so the agent and dashboard do not create competing writers.
 
-- An agent tool call can start the sidecar without the dashboard. Its random operator
-  secret is discarded, so operator-only verbs are unavailable.
+- An agent tool call can start the sidecar without the dashboard. That sidecar gets no
+  operator secret at all, so operator-only verbs are unavailable until the dashboard
+  replaces it.
 - When the dashboard finds an agent-owned sidecar, it terminates and replaces that process
   with a dashboard-owned one. Both use the same state directory, so the board survives.
 - An agent-owned sidecar is stopped when its owner exits if no live agent process adopted
@@ -94,6 +95,14 @@ Boardstate makes no third-party network request by default.
   decision. A changed connector manifest re-pends its grant.
 - Operator approve/confirm/deny verbs use a separate in-memory secret that is never written
   to the port record. In gated multi-user mode, `boardstate.operators.json` is also required.
+- Sidecar traffic never goes through an `HTTP(S)_PROXY` from the environment.
+- **Limit of the operator gate.** It keeps approvals off the agent's tool surface: no
+  `boardstate_*` tool, MCP call or board WebSocket can approve or confirm anything. It is not
+  a boundary against an agent that has unrestricted shell access as the same OS user. Such
+  an agent can read the loopback dashboard page, which carries the dashboard session token,
+  or a same-user process's environment. If approvals must hold against the agent itself, run
+  its terminal in a sandboxed backend (for example Docker, SSH or Modal) so its shell is not
+  the dashboard's user, or use gated multi-user mode with `boardstate.operators.json`.
 - Approved custom widgets run in an opaque-origin iframe with a no-network Content Security
   Policy. Pending, rejected, and unknown widget assets all return 404.
 
