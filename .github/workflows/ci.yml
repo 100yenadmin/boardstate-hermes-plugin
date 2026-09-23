@@ -246,15 +246,10 @@ jobs:
         run: python test/dashboard_real_hermes.py
 
       - name: Loopback sidecar traffic ignores environment proxies
-        env:
-          HTTP_PROXY: http://127.0.0.1:9
-          HTTPS_PROXY: http://127.0.0.1:9
-          ALL_PROXY: http://127.0.0.1:9
-          http_proxy: http://127.0.0.1:9
-          https_proxy: http://127.0.0.1:9
-          all_proxy: http://127.0.0.1:9
-          NO_PROXY: ""
-          no_proxy: ""
+        # Actions env keys are case-insensitive, so set the lowercase variants in the shell.
         run: |
+          export HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9
+          export http_proxy=$HTTP_PROXY https_proxy=$HTTPS_PROXY all_proxy=$ALL_PROXY
+          unset NO_PROXY no_proxy
           python test/native_plugin.py
           python test/dashboard_real_hermes.py
