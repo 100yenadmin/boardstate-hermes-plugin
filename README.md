@@ -138,6 +138,14 @@ dashboard, and approve only the requested tools you want. See
   code and data tables. The oversized-file warning is expected for the self-contained
   sidecar and Desktop bundles.
 
+Catalog self-updater check: the catalog CI flags a bundled JS file that contains both a
+GitHub raw-content URL and a file-write call. In the sidecar bundle, the only such URL was
+ajv's `$data` meta-schema **identifier** (its `$id` and the one `$ref` to it), which is never
+fetched. `build.mjs` rewrites that identifier consistently to `https://ajv.js.org/refs/data.json#`,
+so the check stays meaningful for this bundle. Any real GitHub fetch added later would still trip
+it, and this repository's CI replays the check on every build. Boardstate has no updater;
+updates arrive only through a new catalog pin plus `hermes plugins update boardstate`.
+
 `dangerous` scanner results are not accepted. Reproduce the reviewed artifacts with:
 
 ```bash

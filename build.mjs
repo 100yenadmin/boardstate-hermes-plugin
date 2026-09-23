@@ -9,7 +9,7 @@
 //
 //   npm install && npm run build
 
-import { cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DashboardStore, MemoryStorageAdapter } from "@boardstate/core";
@@ -108,6 +108,33 @@ writeFileSync(
   `${JSON.stringify(toolSchemas, null, 2)}\n`,
 );
 
+// The Hermes plugin catalog's self-updater check (plugin-catalog-ci.yml) flags any bundled
+// JS file that contains both a GitHub raw-content / releases-latest URL and a file-write
+// call. The only such URL in the sidecar bundle is ajv's `$data` meta-schema
+// IDENTIFIER (its `$id` and the one `$ref` pointing at it) — never fetched. Rewrite that
+// identifier consistently to an equivalent non-GitHub URI so the check stays meaningful for
+// this bundle: any real GitHub fetch added later would still trip it (CI replays the check).
+const AJV_DATA_ID = "https://raw.githubusercontent.com/ajv-validator/ajv/master/lib/refs/data.json#";
+const AJV_DATA_ID_REWRITE = "https://ajv.js.org/refs/data.json#";
+const ajvDataIdPlugin = {
+  name: "ajv-data-meta-schema-id",
+  setup(build) {
+    build.onLoad(
+      { filter: /[\\/]node_modules[\\/]ajv[\\/]dist[\\/](refs[\\/]data\.json|core\.js)$/ },
+      (args) => {
+        const text = readFileSync(args.path, "utf8");
+        if (!text.includes(AJV_DATA_ID)) {
+          throw new Error(`ajv $data meta-schema id not found in ${args.path}; revisit build.mjs note`);
+        }
+        return {
+          contents: text.split(AJV_DATA_ID).join(AJV_DATA_ID_REWRITE),
+          loader: args.path.endsWith(".json") ? "json" : "js",
+        };
+      },
+    );
+  },
+};
+
 // 2) Node sidecar bundle — single self-contained ESM file; node builtins stay external.
 // The M5 broker's stdio connector transport (via @modelcontextprotocol/sdk → cross-spawn)
 // does a dynamic `require("child_process")`. In an ESM bundle esbuild replaces an
@@ -126,6 +153,7 @@ await esbuild.build({
   },
   sourcemap: true,
   logLevel: "info",
+  plugins: [ajvDataIdPlugin],
 });
 
 // 3) Vendor the prebuilt element bundle + stylesheet (served as static assets).

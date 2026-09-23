@@ -20,6 +20,8 @@ adheres to [Semantic Versioning](https://semver.org/).
   it no longer reads `window.hermesDesktop` or constructs a tokenized WebSocket.
 - Live-data widgets return a clear dashboard-unavailable result when the agent starts the
   sidecar before a dashboard is present.
+- The build rewrites ajv's `$data` meta-schema identifier (a GitHub raw URL, never fetched) so
+  the catalog's self-updater check is not tripped by a false positive; CI replays that check.
 - CI validates against pinned Hermes upstream and checks generated tool-schema sync, runs the
   committed sidecar on Node 20 (the minimum), and runs the lifecycle probe on Windows.
 

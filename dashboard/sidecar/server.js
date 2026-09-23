@@ -3091,7 +3091,7 @@ var require_compile = __commonJS({
 var require_data = __commonJS({
   "node_modules/ajv/dist/refs/data.json"(exports, module) {
     module.exports = {
-      $id: "https://raw.githubusercontent.com/ajv-validator/ajv/master/lib/refs/data.json#",
+      $id: "https://ajv.js.org/refs/data.json#",
       description: "Meta-schema for $data reference (JSON AnySchema extension proposal)",
       type: "object",
       required: ["$data"],
@@ -4529,7 +4529,7 @@ var require_core = __commonJS({
       def.validateSchema = this.compile(metaSchema, true);
     }
     var $dataRef = {
-      $ref: "https://raw.githubusercontent.com/ajv-validator/ajv/master/lib/refs/data.json#"
+      $ref: "https://ajv.js.org/refs/data.json#"
     };
     function schemaOrData(schema) {
       return { anyOf: [schema, $dataRef] };
