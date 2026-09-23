@@ -8,6 +8,11 @@
 // hooks runtime, and checks that the page boots, that the socket-acknowledgement timer fires,
 // and that it is cancelled by an acknowledgement, by page unmount, and by plugin unload.
 //
+// It also loads the vendored element bundle (dashboard/vendor/boardstate-browser.js, the same
+// @boardstate/lit code the Desktop bundle inlines) and checks two widget renderers: a connected
+// notes widget shows its agent-written `props.text` when no state is persisted, and markdown
+// renders headings and GFM task items.
+//
 // Run after `npm run build`:  node test/desktop-sdk-compat.mjs
 
 import { readFileSync } from "node:fs";
@@ -101,6 +106,13 @@ Object.assign(globalThis, {
   window: globalThis,
   document: documentShim,
   HTMLElement: class HTMLElement extends FakeNode {},
+  HTMLTextAreaElement: class HTMLTextAreaElement extends FakeNode {
+    constructor() {
+      super("textarea");
+      this.value = "";
+      this.dataset = {};
+    }
+  },
   customElements: {
     get: (name) => registry.get(name),
     define: (name, ctor) => registry.set(name, ctor),
@@ -311,6 +323,46 @@ for (const [label, shape] of [
   check(`${label}: a cancelled timer never reports degraded`, !d.page.text().includes(DEGRADED));
   d.page.unmount();
 }
+
+// ---- vendored @boardstate/lit renderers (notes seed, markdown) ----
+const vendorPath = join(here, "..", "dashboard", "vendor", "boardstate-browser.js");
+const lit = await import(
+  `data:text/javascript;base64,${Buffer.from(readFileSync(vendorPath, "utf8")).toString("base64")}`
+);
+// A lit ref directive result carries its callback as the first directive value.
+const findRefCallback = (value) => {
+  if (!value || typeof value !== "object") return undefined;
+  if (Array.isArray(value.values) && typeof value.values[0] === "function" && value._$litDirective$) {
+    return value.values[0];
+  }
+  for (const nested of value.values ?? []) {
+    const found = findRefCallback(nested);
+    if (found) return found;
+  }
+  return undefined;
+};
+const notesWidget = {
+  id: "agent-note",
+  kind: "builtin:notes",
+  title: "Agent note",
+  props: { text: "Written by the agent" },
+};
+const noPersistedState = { get: async () => ({ state: undefined }), set: async () => undefined };
+const notesTemplate = lit.renderBuiltinWidget(notesWidget, undefined, { state: noPersistedState });
+const bindPad = findRefCallback(notesTemplate);
+const pad = new globalThis.HTMLTextAreaElement();
+bindPad?.(pad);
+await flush();
+check(
+  `connected notes widget shows props.text with no persisted state (got "${pad.value}")`,
+  pad.value === "Written by the agent",
+);
+const md = lit.toSanitizedMarkdownHtml("## A\n- [x] b");
+check(`markdown "## A" renders an <h2> (got ${md})`, /<h2>A<\/h2>/.test(md));
+check(
+  "markdown \"- [x] b\" renders a checked task glyph",
+  /<li class="dashboard-markdown__task-item"><span class="dashboard-markdown__task"[^>]*aria-label="checked"[^>]*>☑<\/span> b<\/li>/.test(md),
+);
 
 console.log(`\ndesktop-sdk-compat: ${n} checks`);
 if (failures.length) {
