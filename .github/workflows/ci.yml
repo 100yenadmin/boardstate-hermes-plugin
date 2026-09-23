@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build-and-smoke:
     runs-on: ubuntu-latest
@@ -44,6 +47,9 @@ jobs:
 
       - name: Invoke timeout (an unconfirmed mutation settles as parked, never hangs — CORRECT-1)
         run: node test/invoke-timeout.mjs
+
+      - name: Sidecar replacement drains accepted native invocations
+        run: node test/sidecar-drain.mjs
 
       - name: Agent-scoped grants (MCP agent context threaded through the gate — CORRECT-2)
         run: node test/scoped-grant.mjs
@@ -115,6 +121,9 @@ jobs:
 
       - name: Sidecar adoption and shutdown remain single-writer
         run: python test/sidecar_concurrency.py
+
+      - name: Windows lifecycle decisions use a cross-process lock
+        run: python test/windows_lock.py
 
       - name: Desktop live acknowledgement requires an upstream connection
         run: python test/desktop_ack.py

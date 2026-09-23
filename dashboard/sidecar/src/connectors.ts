@@ -150,7 +150,7 @@ export async function installConnectorsFromConfig(
           const registry = doc.capabilitiesRegistry ?? {};
           if (broker.connectorNames().some((name) => !registry[name])) {
             await workspace.refresh();
-            console.log("[boardstate] connector grants re-registered after a workspace replace");
+            console.error("[boardstate] connector grants re-registered after a workspace replace");
           }
         } catch {
           /* transient read/refresh failure — the next change retries */

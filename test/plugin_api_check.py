@@ -7,8 +7,10 @@ CI with only fastapi + websockets installed (no hermes_cli).
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import inspect
+import json
 import sys
 from pathlib import Path
 
@@ -48,6 +50,10 @@ def main() -> int:
     # (stripping it would un-jail every custom widget in the browser).
     check("router mounts /widgets proxy", any("/widgets" in str(getattr(r, "path", "")) for r in mod.router.routes))
     check("widget proxy preserves the sandbox CSP", "content-security-policy" in src2)
+    asset_response = asyncio.run(mod.assets_base(type("Request", (), {"base_url": "http://internal/"})()))
+    asset_payload = json.loads(asset_response.body)
+    check("web widget base is relative behind TLS termination", asset_payload["base"].startswith("/"))
+    check("desktop receives a separate absolute widget base", asset_payload["absoluteBase"].startswith("http://internal/"))
 
     # Sidecar lifecycle helpers are aliases/delegates to the one shared module.
     for fn in ("_ensure_sidecar", "_read_port", "_kill_sidecar", "_ws_upgrade_authorized"):

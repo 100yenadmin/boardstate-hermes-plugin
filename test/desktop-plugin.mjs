@@ -51,6 +51,7 @@ check("registers a route area", bundle.includes("ROUTES_AREA") || bundle.include
 check("registers a sidebar nav", bundle.includes("SIDEBAR_NAV_AREA") || bundle.includes("sidebar.nav"));
 check("uses ctx.rest for Boardstate requests", bundle.includes("/rpc"));
 check("uses ctx.socket for live pushes", bundle.includes("/ws"));
+check("uses the desktop-only absolute widget asset base", bundle.includes("absoluteBase"));
 check(
   "a reconnect ack cannot override an error state",
   source.includes('next === "live" && errorSticky'),

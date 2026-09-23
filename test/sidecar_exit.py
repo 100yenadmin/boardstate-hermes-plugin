@@ -59,6 +59,62 @@ def _foreign_listener_worker() -> None:
 
 
 def main() -> int:
+    # A cached port is not identity. Even when something is listening, the runtime
+    # must authenticate the current record before returning cached credentials.
+    with tempfile.TemporaryDirectory(prefix="boardstate-cached-identity-") as tmp:
+        previous = os.environ.get("BOARDSTATE_HERMES_STATE_DIR")
+        os.environ["BOARDSTATE_HERMES_STATE_DIR"] = tmp
+        sys.path.insert(0, str(ROOT))
+        import boardstate_sidecar as runtime
+
+        directory = Path(tmp)
+        state = runtime._state_for(directory)
+        state.update(
+            {
+                "port": 43210,
+                "nonce": "stale-nonce",
+                "owned": False,
+                "spawned_by": "dashboard",
+                "state_dir": directory,
+            }
+        )
+        original_read = runtime._read_record
+        original_probe = runtime._probe_record
+        original_listening = runtime._port_listening
+
+        async def fake_probe(_record):
+            return False
+
+        async def fake_listening(_port):
+            return True
+
+        runtime._read_record = lambda _directory: {
+            "port": 43210,
+            "nonce": "stale-nonce",
+            "pid": os.getpid(),
+            "spawned_by": "dashboard",
+            "owner_pid": os.getpid(),
+            "adopters": [],
+        }
+        runtime._probe_record = fake_probe
+        runtime._port_listening = fake_listening
+        try:
+            try:
+                asyncio.run(runtime._ensure_sidecar_impl("agent"))
+            except RuntimeError as exc:
+                assert "identity" in str(exc)
+            else:
+                raise AssertionError("cached listener bypassed the nonce-authenticated identity probe")
+        finally:
+            runtime._read_record = original_read
+            runtime._probe_record = original_probe
+            runtime._port_listening = original_listening
+            runtime._states.pop(runtime._state_key(directory), None)
+            if previous is None:
+                os.environ.pop("BOARDSTATE_HERMES_STATE_DIR", None)
+            else:
+                os.environ["BOARDSTATE_HERMES_STATE_DIR"] = previous
+
     with tempfile.TemporaryDirectory(prefix="boardstate-exit-") as tmp:
         directory = Path(tmp)
         env = os.environ.copy()

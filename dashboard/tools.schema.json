@@ -10,7 +10,7 @@
   },
   {
     "name": "boardstate_tab_create",
-    "description": "Create a dashboard tab. Slugs are lowercase letters, digits, and dashes, max 40 chars. Call dashboard_workspace_get first when you need the current document.",
+    "description": "Create a dashboard tab. Slugs are lowercase letters, digits, and dashes, max 40 chars. Call boardstate_workspace_get first when you need the current document.",
     "inputSchema": {
       "type": "object",
       "required": [
@@ -35,7 +35,7 @@
   },
   {
     "name": "boardstate_tab_update",
-    "description": "Update a dashboard tab title, icon, hidden state, or layout. Call dashboard_workspace_get first when you need the current document.",
+    "description": "Update a dashboard tab title, icon, hidden state, or layout. Call boardstate_workspace_get first when you need the current document.",
     "inputSchema": {
       "type": "object",
       "required": [
@@ -77,7 +77,7 @@
   },
   {
     "name": "boardstate_tab_delete",
-    "description": "Delete a dashboard tab and all widgets inside it. Call dashboard_workspace_get first when you need the current document.",
+    "description": "Delete a dashboard tab and all widgets inside it. Call boardstate_workspace_get first when you need the current document.",
     "inputSchema": {
       "type": "object",
       "required": [
@@ -94,7 +94,7 @@
   },
   {
     "name": "boardstate_tabs_reorder",
-    "description": "Set dashboard tab order. Missing existing tabs are appended. Call dashboard_workspace_get first when you need the current document.",
+    "description": "Set dashboard tab order. Missing existing tabs are appended. Call boardstate_workspace_get first when you need the current document.",
     "inputSchema": {
       "type": "object",
       "required": [
@@ -114,7 +114,7 @@
   },
   {
     "name": "boardstate_widget_add",
-    "description": "Add a widget to a tab. Grid x+w must fit within the 12-column dashboard grid. Call dashboard_workspace_get first when you need the current document.",
+    "description": "Add a widget to a tab. Grid x+w must fit within the 12-column dashboard grid. Call boardstate_workspace_get first when you need the current document.",
     "inputSchema": {
       "type": "object",
       "required": [
@@ -272,7 +272,7 @@
   },
   {
     "name": "boardstate_widget_update",
-    "description": "Patch a widget title, grid, visibility, bindings, or props. Call dashboard_workspace_get first when you need the current document.",
+    "description": "Patch a widget title, grid, visibility, bindings, or props. Call boardstate_workspace_get first when you need the current document.",
     "inputSchema": {
       "type": "object",
       "required": [
@@ -433,7 +433,7 @@
   },
   {
     "name": "boardstate_widget_move",
-    "description": "Move a widget by changing its grid or moving it to another tab. Call dashboard_workspace_get first when you need the current document.",
+    "description": "Move a widget by changing its grid or moving it to another tab. Call boardstate_workspace_get first when you need the current document.",
     "inputSchema": {
       "type": "object",
       "required": [
@@ -494,7 +494,7 @@
   },
   {
     "name": "boardstate_widget_remove",
-    "description": "Remove a widget from a tab. Call dashboard_workspace_get first when you need the current document.",
+    "description": "Remove a widget from a tab. Call boardstate_workspace_get first when you need the current document.",
     "inputSchema": {
       "type": "object",
       "required": [
@@ -516,7 +516,7 @@
   },
   {
     "name": "boardstate_layout_set",
-    "description": "Batch-update widget grids for one tab. Call dashboard_workspace_get first when you need the current document.",
+    "description": "Batch-update widget grids for one tab. Call boardstate_workspace_get first when you need the current document.",
     "inputSchema": {
       "type": "object",
       "required": [
@@ -587,7 +587,7 @@
   },
   {
     "name": "boardstate_workspace_replace",
-    "description": "Replace the full workspace document after local validation and size/schema caps. Call dashboard_workspace_get first when you need the current document.",
+    "description": "Replace the full workspace document after local validation and size/schema caps. Call boardstate_workspace_get first when you need the current document.",
     "inputSchema": {
       "type": "object",
       "required": [
@@ -624,7 +624,7 @@
   },
   {
     "name": "boardstate_design_review",
-    "description": "Run the design lint over the current workspace and return ranked findings ({ code, severity, tab, widgetId, message, suggestion }) — the agent's mirror for reviewing and improving its own board. Fix findings you agree with via the dashboard_* tools; findings are advisory, not errors.",
+    "description": "Run the design lint over the current workspace and return ranked findings ({ code, severity, tab, widgetId, message, suggestion }) — the agent's mirror for reviewing and improving its own board. Fix findings you agree with via the boardstate_* tools; findings are advisory, not errors.",
     "inputSchema": {
       "type": "object",
       "properties": {},
@@ -681,7 +681,7 @@
   },
   {
     "name": "boardstate_widget_scaffold",
-    "description": "Create a custom widget scaffold. Agent-authored scaffolds enter the registry as pending. Call dashboard_workspace_get first when you need the current document.",
+    "description": "Create a custom widget scaffold. Agent-authored scaffolds enter the registry as pending. Call boardstate_workspace_get first when you need the current document.",
     "inputSchema": {
       "type": "object",
       "required": [

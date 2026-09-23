@@ -28618,7 +28618,7 @@ async function installConnectorsFromConfig(host2, store2, options = {}) {
           const registry2 = doc.capabilitiesRegistry ?? {};
           if (broker.connectorNames().some((name) => !registry2[name])) {
             await workspace.refresh();
-            console.log("[boardstate] connector grants re-registered after a workspace replace");
+            console.error("[boardstate] connector grants re-registered after a workspace replace");
           }
         } catch {
         }
@@ -28751,8 +28751,9 @@ function registerUnavailableHermesDataRpc(host2) {
     host2.registerRpc(
       method,
       (opts) => {
-        opts.respond(false, {
-          error: "Live Hermes data is unavailable because Boardstate was started by the agent without a dashboard. Open the Board tab to reconnect live data."
+        opts.respond(false, void 0, {
+          code: "hermes_data_unavailable",
+          message: "Live Hermes data is unavailable because Boardstate was started by the agent without a dashboard. Open the Board tab to reconnect live data."
         });
       },
       { scope: "read" }
@@ -30802,6 +30803,7 @@ var StreamableHTTPServerTransport = class {
 var AGENT_TOOL_PREFIX = "dashboard_";
 var PUBLIC_TOOL_PREFIX = "boardstate_";
 var toPublicToolName = (agentName) => agentName.startsWith(AGENT_TOOL_PREFIX) ? `${PUBLIC_TOOL_PREFIX}${agentName.slice(AGENT_TOOL_PREFIX.length)}` : agentName;
+var toPublicToolText = (text) => typeof text === "string" ? text.replace(/\bdashboard_(?=[a-z*])/g, PUBLIC_TOOL_PREFIX) : text;
 var CONNECTOR_TOOL_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -30915,7 +30917,7 @@ async function createMcpEndpoint(host2, store2, options = {}) {
       const schema = agentToolToJsonSchema(tool);
       return {
         name: toPublicToolName(schema.name),
-        description: schema.description,
+        description: toPublicToolText(schema.description),
         inputSchema: schema.inputSchema
       };
     }),
@@ -31127,6 +31129,15 @@ function buildRedactor(secrets) {
 }
 
 // dashboard/sidecar/src/server.ts
+var ignoreBrokenPipe = (error2) => {
+  if (error2.code !== "EPIPE") {
+    setImmediate(() => {
+      throw error2;
+    });
+  }
+};
+process.stdout.on("error", ignoreBrokenPipe);
+process.stderr.on("error", ignoreBrokenPipe);
 var stateDirEnv = process.env.BOARDSTATE_STATE_DIR;
 var storage = new FsStorageAdapter(stateDirEnv ? { storageDir: stateDirEnv } : {});
 var store = new DashboardStore({ storage });
@@ -31216,15 +31227,15 @@ if (connectors) {
       `[boardstate] connector workspace not fully ready: ${err instanceof Error ? err.message : String(err)}`
     );
   });
-  console.log(
+  console.error(
     `[boardstate] connectors wired: ${connectors.broker.connectorNames().join(", ") || "(none)"}`
   );
 } else {
-  console.log(officeCliBootHint());
+  console.error(officeCliBootHint());
 }
 if (hermesUrl && hermesToken) {
   const dataMethods = registerHermesDataRpc(host, { baseUrl: hermesUrl, sessionToken: hermesToken });
-  console.log(`[boardstate] live Hermes data RPC methods: ${dataMethods.join(", ")}`);
+  console.error(`[boardstate] live Hermes data RPC methods: ${dataMethods.join(", ")}`);
 } else {
   registerUnavailableHermesDataRpc(host);
 }
@@ -31253,8 +31264,24 @@ var internalEndpoint = createInternalEndpoint(host, mcpEndpoint, {
   spawnedBy: process.env.BOARDSTATE_SPAWNED_BY === "agent" ? "agent" : "dashboard"
 });
 var operatorEndpoint = createOperatorEndpoint(host, { secret: operatorSecret });
+var activeInvocations = 0;
+var shutdownRequested = false;
+var invocationSettled = () => {
+  activeInvocations -= 1;
+  if (shutdownRequested && activeInvocations === 0) process.exit(0);
+};
 var httpServer = createServer((req, res) => {
   const pathname = (req.url ?? "/").split("?")[0];
+  if (pathname === "/tools/invoke") {
+    activeInvocations += 1;
+    let settled = false;
+    const settleOnce = () => {
+      if (settled) return;
+      settled = true;
+      invocationSettled();
+    };
+    res.once("finish", settleOnce);
+  }
   void operatorEndpoint.handle(req, res, pathname).then((handledOperator) => {
     if (handledOperator) {
       return void 0;
@@ -31317,8 +31344,13 @@ httpServer.listen(port, hostname, () => {
   );
 });
 var shutdown = () => {
-  httpServer.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 1e3).unref();
+  if (shutdownRequested) return;
+  shutdownRequested = true;
+  httpServer.close(() => {
+    if (activeInvocations === 0) process.exit(0);
+  });
+  if (activeInvocations === 0) process.exit(0);
+  setTimeout(() => process.exit(0), 3e4).unref();
 };
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

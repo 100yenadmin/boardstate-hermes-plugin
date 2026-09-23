@@ -39,6 +39,16 @@ import { createOperatorEndpoint } from "./operator.js";
 import { officeCliBootHint } from "./presets.js";
 import { buildRedactor } from "./redact.js";
 
+const ignoreBrokenPipe = (error: NodeJS.ErrnoException): void => {
+  if (error.code !== "EPIPE") {
+    setImmediate(() => {
+      throw error;
+    });
+  }
+};
+process.stdout.on("error", ignoreBrokenPipe);
+process.stderr.on("error", ignoreBrokenPipe);
+
 const stateDirEnv = process.env.BOARDSTATE_STATE_DIR;
 const storage = new FsStorageAdapter(stateDirEnv ? { storageDir: stateDirEnv } : {});
 const store = new DashboardStore({ storage });
@@ -178,13 +188,13 @@ if (connectors) {
       `[boardstate] connector workspace not fully ready: ${err instanceof Error ? err.message : String(err)}`,
     );
   });
-  console.log(
+  console.error(
     `[boardstate] connectors wired: ${connectors.broker.connectorNames().join(", ") || "(none)"}`,
   );
 } else {
   // No connectors yet — surface the first blessed connector's detect-or-instruct hint so an
   // operator sees the exact next step (install OfficeCLI, then author boardstate.connectors.json).
-  console.log(officeCliBootHint());
+  console.error(officeCliBootHint());
 }
 
 // Live Hermes data bindings. `<boardstate-view>` resolves a `source:"rpc"` binding by
@@ -194,7 +204,7 @@ if (connectors) {
 // widget shows an error cell. Only when plugin_api injected the Hermes credentials.
 if (hermesUrl && hermesToken) {
   const dataMethods = registerHermesDataRpc(host, { baseUrl: hermesUrl, sessionToken: hermesToken });
-  console.log(`[boardstate] live Hermes data RPC methods: ${dataMethods.join(", ")}`);
+  console.error(`[boardstate] live Hermes data RPC methods: ${dataMethods.join(", ")}`);
 } else {
   registerUnavailableHermesDataRpc(host);
 }
@@ -247,8 +257,25 @@ const internalEndpoint = createInternalEndpoint(host, mcpEndpoint, {
 // when no secret is configured (a direct CLI spawn drives the in-process host itself).
 const operatorEndpoint = createOperatorEndpoint(host, { secret: operatorSecret });
 
+let activeInvocations = 0;
+let shutdownRequested = false;
+const invocationSettled = (): void => {
+  activeInvocations -= 1;
+  if (shutdownRequested && activeInvocations === 0) process.exit(0);
+};
+
 const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
   const pathname = (req.url ?? "/").split("?")[0];
+  if (pathname === "/tools/invoke") {
+    activeInvocations += 1;
+    let settled = false;
+    const settleOnce = (): void => {
+      if (settled) return;
+      settled = true;
+      invocationSettled();
+    };
+    res.once("finish", settleOnce);
+  }
   void operatorEndpoint
     .handle(req, res, pathname)
     .then((handledOperator) => {
@@ -325,9 +352,14 @@ httpServer.listen(port, hostname, () => {
 });
 
 const shutdown = (): void => {
-  httpServer.close(() => process.exit(0));
-  // Fail-safe: don't hang forever if a socket is stuck.
-  setTimeout(() => process.exit(0), 1000).unref();
+  if (shutdownRequested) return;
+  shutdownRequested = true;
+  httpServer.close(() => {
+    if (activeInvocations === 0) process.exit(0);
+  });
+  if (activeInvocations === 0) process.exit(0);
+  // Fail-safe for a genuinely stuck request. Normal accepted calls drain first.
+  setTimeout(() => process.exit(0), 30_000).unref();
 };
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

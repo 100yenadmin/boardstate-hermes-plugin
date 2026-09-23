@@ -157,7 +157,14 @@ export function createHermesRpcResolver(config: HermesDataConfig): BindingResolv
 type RpcHost = {
   registerRpc: (
     method: string,
-    handler: (opts: { params?: unknown; respond: (ok: boolean, data: unknown) => void }) => unknown,
+    handler: (opts: {
+      params?: unknown;
+      respond: (
+        ok: boolean,
+        data?: unknown,
+        error?: { code: string; message: string },
+      ) => void;
+    }) => unknown,
     options: { scope: "read" | "write" },
   ) => void;
 };
@@ -200,8 +207,9 @@ export function registerUnavailableHermesDataRpc(host: RpcHost): string[] {
     host.registerRpc(
       method,
       (opts) => {
-        opts.respond(false, {
-          error:
+        opts.respond(false, undefined, {
+          code: "hermes_data_unavailable",
+          message:
             "Live Hermes data is unavailable because Boardstate was started by the agent without a dashboard. Open the Board tab to reconnect live data.",
         });
       },

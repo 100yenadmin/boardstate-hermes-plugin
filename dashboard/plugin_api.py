@@ -278,8 +278,14 @@ async def assets_base(request: "Request") -> "Response":
     credential). The returned base composes with the client's `${base}/widgets/...`."""
     # Same session posture as the operator route's loopback check: this endpoint rides
     # the dashboard's own /api gate (session token in loopback, cookie in gated mode).
+    relative_base = f"{_ASSET_ROUTE_PREFIX}/{_ASSET_TOKEN}"
     origin = str(request.base_url).rstrip("/")
-    return JSONResponse({"base": f"{origin}{_ASSET_ROUTE_PREFIX}/{_ASSET_TOKEN}"})
+    return JSONResponse(
+        {
+            "base": relative_base,
+            "absoluteBase": f"{origin}{relative_base}",
+        }
+    )
 
 
 _MCP_FWD_REQ_HEADERS = ("content-type", "accept", "mcp-session-id", "mcp-protocol-version", "last-event-id")

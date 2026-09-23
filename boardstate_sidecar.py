@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import errno
 import json
 import logging
 import os
@@ -45,6 +46,14 @@ try:
 except ImportError:  # pragma: no cover - Windows is best-effort
     fcntl = None  # type: ignore[assignment]
     _HAVE_FCNTL = False
+
+try:
+    import msvcrt
+
+    _HAVE_MSVCRT = True
+except ImportError:  # pragma: no cover - POSIX
+    msvcrt = None  # type: ignore[assignment]
+    _HAVE_MSVCRT = False
 
 
 def state_dir() -> Path:
@@ -150,16 +159,29 @@ def _lockfile_path(directory: Path) -> Path:
 
 async def _acquire_lifecycle_lock(directory: Path) -> Optional[int]:
     """Serialize every port-record decision across plugin processes."""
-    if not _HAVE_FCNTL:
-        return None
     lock_fd = os.open(str(_lockfile_path(directory)), os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        while True:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                await asyncio.sleep(0.02)
+        if _HAVE_FCNTL:
+            while True:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    await asyncio.sleep(0.02)
+        elif _HAVE_MSVCRT:
+            if os.fstat(lock_fd).st_size == 0:
+                os.write(lock_fd, b"0")
+            while True:
+                os.lseek(lock_fd, 0, os.SEEK_SET)
+                try:
+                    msvcrt.locking(lock_fd, msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                        raise
+                    await asyncio.sleep(0.02)
+        else:  # pragma: no cover - every supported runtime has one backend
+            raise RuntimeError("no cross-process lifecycle lock is available")
     except BaseException:
         os.close(lock_fd)
         raise
@@ -168,11 +190,17 @@ async def _acquire_lifecycle_lock(directory: Path) -> Optional[int]:
 
 def _acquire_lifecycle_lock_sync(directory: Path) -> Optional[int]:
     """Take the lifecycle lock without an executor (safe during atexit)."""
-    if not _HAVE_FCNTL:
-        return None
     lock_fd = os.open(str(_lockfile_path(directory)), os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if _HAVE_FCNTL:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        elif _HAVE_MSVCRT:
+            if os.fstat(lock_fd).st_size == 0:
+                os.write(lock_fd, b"0")
+            os.lseek(lock_fd, 0, os.SEEK_SET)
+            msvcrt.locking(lock_fd, msvcrt.LK_LOCK, 1)
+        else:  # pragma: no cover - every supported runtime has one backend
+            raise RuntimeError("no cross-process lifecycle lock is available")
     except BaseException:
         os.close(lock_fd)
         raise
@@ -183,7 +211,11 @@ def _release_lifecycle_lock(lock_fd: Optional[int]) -> None:
     if lock_fd is None:
         return
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        if _HAVE_FCNTL:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        elif _HAVE_MSVCRT:
+            os.lseek(lock_fd, 0, os.SEEK_SET)
+            msvcrt.locking(lock_fd, msvcrt.LK_UNLCK, 1)
     finally:
         os.close(lock_fd)
 
@@ -380,13 +412,22 @@ async def _spawn_sidecar(
     env["BOARDSTATE_SPAWNED_BY"] = spawned_by
     env["PORT"] = "0"
 
-    proc = await asyncio.create_subprocess_exec(
-        _node_bin(),
-        str(_SIDECAR_JS),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=env,
+    log_fd = os.open(
+        str(directory / ".boardstate-sidecar.log"),
+        os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+        0o600,
     )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            _node_bin(),
+            str(_SIDECAR_JS),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=log_fd,
+            env=env,
+            start_new_session=os.name != "nt",
+        )
+    finally:
+        os.close(log_fd)
     try:
         port = await _read_port(proc)
     except Exception:
@@ -417,10 +458,7 @@ async def _spawn_sidecar(
             "adopters": [],
         },
     )
-    state["drain_tasks"] = [
-        asyncio.create_task(_drain(proc.stdout, "out")),
-        asyncio.create_task(_drain(proc.stderr, "err")),
-    ]
+    state["drain_tasks"] = [asyncio.create_task(_drain(proc.stdout, "out"))]
     _register_atexit()
     log.info(
         "boardstate: %s sidecar up on 127.0.0.1:%d (state %s)",
@@ -496,12 +534,6 @@ async def _ensure_sidecar_impl(
     directory = state_dir()
     state = _state_for(directory)
     async with _sidecar_lock_for(directory):
-        current_port = state.get("port")
-        current_dir = state.get("state_dir")
-        if current_port and current_dir == directory and await _port_listening(int(current_port)):
-            if not (caller == "dashboard" and state.get("spawned_by") == "agent"):
-                return int(current_port), str(state["nonce"])
-
         if not _SIDECAR_JS.exists():
             raise RuntimeError(
                 f"boardstate sidecar bundle missing: {_SIDECAR_JS} (run npm run build)"
@@ -510,8 +542,45 @@ async def _ensure_sidecar_impl(
 
         lock_fd = await _acquire_lifecycle_lock(directory)
         try:
+            current_port = state.get("port")
+            current_nonce = state.get("nonce")
+            current_dir = state.get("state_dir")
+            cached_record = _read_record(directory)
+            cached_matches = bool(
+                current_port
+                and current_nonce
+                and current_dir == directory
+                and cached_record
+                and cached_record.get("port") == current_port
+                and cached_record.get("nonce") == current_nonce
+                and _pid_alive(int(cached_record["pid"]))
+                and await _probe_record(cached_record)
+            )
+            if cached_matches and not (
+                caller == "dashboard" and state.get("spawned_by") == "agent"
+            ):
+                return int(current_port), str(current_nonce)
+            if current_port and not cached_matches:
+                state.update(
+                    {
+                        "proc": None,
+                        "port": None,
+                        "nonce": None,
+                        "operator_secret": None,
+                        "owned": False,
+                        "spawned_by": None,
+                        "state_dir": None,
+                        "drain_tasks": [],
+                    }
+                )
+
             record = await _try_adopt(directory)
             owner_pid = record.get("owner_pid") if record else None
+            live_adopters = [
+                int(pid)
+                for pid in (record or {}).get("adopters", [])
+                if isinstance(pid, int) and _pid_alive(int(pid))
+            ]
             owner_is_dead = bool(
                 record
                 and (
@@ -520,7 +589,7 @@ async def _ensure_sidecar_impl(
                 )
             )
             if record and (
-                owner_is_dead
+                (owner_is_dead and not live_adopters)
                 or (caller == "dashboard" and record.get("spawned_by") == "agent")
             ):
                 await _terminate_record(directory, record)

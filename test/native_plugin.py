@@ -50,6 +50,7 @@ async def _run() -> None:
     assert {entry["toolset"] for entry in ctx.tools.values()} == {"boardstate"}
     assert all(entry.get("is_async") is True for entry in ctx.tools.values())
     assert all(entry["schema"]["name"] == name for name, entry in ctx.tools.items())
+    assert all("dashboard_" not in entry["schema"].get("description", "") for entry in ctx.tools.values())
 
     with tempfile.TemporaryDirectory(prefix="boardstate-native-") as tmp:
         previous = os.environ.get("BOARDSTATE_HERMES_STATE_DIR")

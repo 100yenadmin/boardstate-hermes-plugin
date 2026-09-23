@@ -42,27 +42,28 @@ async def _owner() -> None:
     print("OWNER_DONE", flush=True)
 
 
-async def _adopter() -> None:
+async def _adopter(role: str) -> None:
     sys.path.insert(0, str(ROOT))
     import boardstate_sidecar as runtime
 
-    print("ADOPTER_WAITING", flush=True)
-    await _wait_signal(runtime.state_dir() / "adopter.go")
+    label = role.upper()
+    print(f"{label}_WAITING", flush=True)
+    await _wait_signal(runtime.state_dir() / f"{role}.go")
     await runtime.ensure_sidecar("agent")
     workspace = await runtime.invoke_tool("boardstate_workspace_get", {})
     assert isinstance(workspace.get("doc", {}).get("tabs"), list)
     record = json.loads((runtime.state_dir() / ".boardstate-sidecar.json").read_text())
-    print(f"ADOPTER_READY {record['pid']}", flush=True)
-    await _wait_signal(runtime.state_dir() / "cleanup.go")
+    print(f"{label}_READY {record['pid']}", flush=True)
+    await _wait_signal(runtime.state_dir() / f"{role}-cleanup.go")
     runtime.shutdown_owned_sidecar()
-    print("ADOPTER_DONE", flush=True)
+    print(f"{label}_DONE", flush=True)
 
 
 def _worker(role: str) -> int:
     if role == "owner":
         asyncio.run(_owner())
-    elif role == "adopter":
-        asyncio.run(_adopter())
+    elif role in {"adopter", "joiner"}:
+        asyncio.run(_adopter(role))
     else:
         raise AssertionError(role)
     return 0
@@ -144,7 +145,36 @@ def main() -> int:
             if adopted_pid != owner_pid:
                 assert not _alive(owner_pid), "superseded owner sidecar is still alive"
 
-            (directory / "cleanup.go").touch()
+            # Normalize to the exact state produced when an owner exits while an
+            # adopter keeps its sidecar alive: dead owner PID + one live adopter.
+            record["owner_pid"] = owner.pid
+            record["adopters"] = [adopter.pid]
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            record_path.chmod(0o600)
+
+            # The original owner's PID is now dead while a recorded adopter remains.
+            # A later agent must join that healthy sidecar, not reap it as an orphan.
+            joiner = subprocess.Popen(
+                [*command, "joiner"],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            processes.append(joiner)
+            _line(joiner, "JOINER_WAITING")
+            (directory / "joiner.go").touch()
+            joined_pid = int(_line(joiner, "JOINER_READY").split()[1])
+            sidecar_pids.add(joined_pid)
+            assert joined_pid == adopted_pid, "dead owner caused a live adopted sidecar to be replaced"
+
+            (directory / "joiner-cleanup.go").touch()
+            _line(joiner, "JOINER_DONE")
+            joiner.wait(timeout=10)
+            assert joiner.returncode == 0
+            (directory / "adopter-cleanup.go").touch()
             _line(adopter, "ADOPTER_DONE")
             adopter.wait(timeout=10)
             assert adopter.returncode == 0

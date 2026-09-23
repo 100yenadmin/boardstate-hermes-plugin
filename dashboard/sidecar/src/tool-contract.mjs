@@ -8,6 +8,11 @@ export const toPublicToolName = (agentName) =>
     ? `${PUBLIC_TOOL_PREFIX}${agentName.slice(AGENT_TOOL_PREFIX.length)}`
     : agentName;
 
+export const toPublicToolText = (text) =>
+  typeof text === "string"
+    ? text.replace(/\bdashboard_(?=[a-z*])/g, PUBLIC_TOOL_PREFIX)
+    : text;
+
 export const CONNECTOR_TOOL_SCHEMA = {
   type: "object",
   additionalProperties: false,

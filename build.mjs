@@ -18,6 +18,7 @@ import esbuild from "esbuild";
 import {
   CONNECTOR_TOOL_DEFINITIONS,
   toPublicToolName,
+  toPublicToolText,
 } from "./dashboard/sidecar/src/tool-contract.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -92,7 +93,11 @@ const baseSchemas = createDashboardTools({
   broadcast: () => undefined,
 }).map((tool) => {
   const schema = agentToolToJsonSchema(tool);
-  return { ...schema, name: toPublicToolName(schema.name) };
+  return {
+    ...schema,
+    name: toPublicToolName(schema.name),
+    description: toPublicToolText(schema.description),
+  };
 });
 const toolSchemas = [...baseSchemas, ...CONNECTOR_TOOL_DEFINITIONS];
 if (toolSchemas.length !== 19 || new Set(toolSchemas.map((tool) => tool.name)).size !== 19) {

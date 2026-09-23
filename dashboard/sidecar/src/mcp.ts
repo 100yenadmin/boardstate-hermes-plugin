@@ -41,6 +41,7 @@ import {
 import {
   CONNECTOR_TOOL_DEFINITIONS,
   toPublicToolName,
+  toPublicToolText,
 } from "./tool-contract.mjs";
 
 // The single agent identity this MCP session acts as. Threaded into both the base dashboard
@@ -222,7 +223,7 @@ export async function createMcpEndpoint(
       const schema = agentToolToJsonSchema(tool);
       return {
         name: toPublicToolName(schema.name),
-        description: schema.description,
+        description: toPublicToolText(schema.description),
         inputSchema: schema.inputSchema,
       };
     }),

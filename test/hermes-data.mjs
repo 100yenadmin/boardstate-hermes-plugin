@@ -156,6 +156,63 @@ ws.close();
 proc.kill("SIGTERM");
 fake.close();
 
+// Without injected Hermes credentials the same RPC names stay registered, but
+// callers must receive the explicit typed error rather than a generic host error.
+const unavailable = spawn(process.execPath, [SIDECAR], {
+  env: {
+    ...process.env,
+    BOARDSTATE_STATE_DIR: mkdtempSync(join(tmpdir(), "bs-data-unavailable-")),
+    PORT: "0",
+    BOARDSTATE_SIDECAR_NONCE: `${NONCE}-unavailable`,
+  },
+  stdio: ["ignore", "pipe", "pipe"],
+});
+let unavailableBuf = "";
+const unavailablePort = await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error("no unavailable-sidecar handshake")), 15000);
+  unavailable.stdout.on("data", (data) => {
+    unavailableBuf += data.toString();
+    for (const line of unavailableBuf.split("\n")) {
+      try {
+        const payload = JSON.parse(line);
+        if (payload.boardstateSidecar?.port) {
+          clearTimeout(timer);
+          resolve(payload.boardstateSidecar.port);
+        }
+      } catch {
+        /* startup log */
+      }
+    }
+  });
+  unavailable.on("exit", (code) => reject(new Error(`unavailable sidecar exited ${code}`)));
+});
+const unavailableWs = new WebSocket(
+  `ws://127.0.0.1:${unavailablePort}/ws?nonce=${NONCE}-unavailable`,
+);
+await new Promise((resolve, reject) => {
+  unavailableWs.on("open", resolve);
+  unavailableWs.on("error", reject);
+});
+const unavailableReply = await new Promise((resolve, reject) => {
+  const id = "unavailable-rpc";
+  const timer = setTimeout(() => reject(new Error("unavailable rpc timeout")), 8000);
+  unavailableWs.on("message", (data) => {
+    const message = JSON.parse(data.toString());
+    if (message.id === id) {
+      clearTimeout(timer);
+      resolve(message);
+    }
+  });
+  unavailableWs.send(JSON.stringify({ id, method: "usage.status", params: {} }));
+});
+check(
+  "unavailable Hermes data returns a typed actionable error",
+  unavailableReply.error?.code === "hermes_data_unavailable" &&
+    unavailableReply.error?.message?.includes("Open the Board tab"),
+);
+unavailableWs.close();
+unavailable.kill("SIGTERM");
+
 if (failures.length) {
   console.error(`\n${failures.length} check(s) failed: ${failures.join(", ")}`);
   process.exit(1);

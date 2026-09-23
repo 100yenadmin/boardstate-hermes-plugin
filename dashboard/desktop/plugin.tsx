@@ -210,8 +210,8 @@ function BoardPage({
       // carry auth headers); fetched here through the plugin's authed REST door. No
       // base ⇒ builtins-only, no errors.
       try {
-        const ab = await rest<{ base?: string }>("/assets-base", { method: "GET" });
-        view.basePath = ab?.base ?? "";
+        const ab = await rest<{ absoluteBase?: string }>("/assets-base", { method: "GET" });
+        view.basePath = ab?.absoluteBase ?? "";
       } catch {
         view.basePath = "";
       }
