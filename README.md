@@ -35,6 +35,16 @@ Start `hermes dashboard` for the Web tab. The unified package also contributes a
 plugin; enable **Boardstate** under **Capabilities → Plugins** in Hermes Desktop. The two
 surfaces have separate enable switches by design.
 
+### Profiles
+
+On Hermes 0.21.x, `hermes -p <name> dashboard` re-runs as the default profile with
+`--open-profile <name>`. Web dashboard plugins load from the root `~/.hermes/plugins`, and
+their state comes from the dashboard process's `HERMES_HOME`, so the web **Board** tab shows
+the default profile's board. Install with `hermes plugins install …` (no `-p`) for the
+dashboard, and with `hermes -p <name> plugins install …` for that profile's agent tools. Hermes
+Desktop loads the Desktop half app-wide from `~/.hermes/desktop-plugins` once you switch it
+on under **Capabilities → Plugins**, and talks to the active profile's backend.
+
 ## Native agent tools
 
 No hand-written `mcp_servers` entry is needed. The package registers these 19 tools in the
@@ -111,10 +121,6 @@ Boardstate makes no third-party network request by default.
 
 Connectors are optional. For example, after installing OfficeCLI, an operator can create:
 
-Connector grants are scoped to the active Hermes profile: Boardstate keeps separate state for
-each `HERMES_HOME`/profile, while sessions within one profile are the same agent and
-intentionally share native-tool grants.
-
 ```json
 {
   "connectors": [
@@ -126,6 +132,10 @@ intentionally share native-tool grants.
 Save that as `$HERMES_HOME/boardstate-state/boardstate.connectors.json`, restart the
 dashboard, and approve only the requested tools you want. See
 [docs/connectors/officecli.md](docs/connectors/officecli.md).
+
+Connector grants are scoped to the active Hermes profile: Boardstate keeps separate state for
+each `HERMES_HOME`/profile, while sessions within one profile are the same agent and
+intentionally share native-tool grants.
 
 ## Security scanner notes
 

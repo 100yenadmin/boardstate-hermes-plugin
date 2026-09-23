@@ -81,6 +81,9 @@ jobs:
       - name: Desktop plugin bundle (loader-safe imports + contract + inlined boardstate)
         run: node test/desktop-plugin.mjs
 
+      - name: Desktop page boots on older and current Desktop SDKs (with and without scoped timers)
+        run: node test/desktop-sdk-compat.mjs
+
       - name: Operator UX wiring (web + desktop route approve/confirm through the gate)
         run: node test/operator-ux.mjs
 

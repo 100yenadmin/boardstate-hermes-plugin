@@ -301,13 +301,25 @@ export default {
     register: (c: { id: string; area: unknown; data?: unknown; render?: () => unknown }) => void;
     rest: OperatorRest;
     socket: PluginSocket;
-    setTimeout: PluginTimer;
+    // Scoped timers arrived after Hermes Desktop 0.21.x; older SDKs omit them.
+    setTimeout?: PluginTimer;
     onDispose: (fn: () => void) => void;
   }) {
     ensureElements();
     const style = ensureCss();
     if (style) ctx.onDispose(() => style.remove());
-    ctx.register({ id: "board-route", area: ROUTES_AREA, data: { path: "/board" }, render: () => <BoardPage rest={ctx.rest} socket={ctx.socket} setTimer={ctx.setTimeout} /> });
+    // Same contract as the SDK's scoped timer: cancelled on unload, and the returned
+    // disposer cancels early.
+    const setTimer: PluginTimer =
+      typeof ctx.setTimeout === "function"
+        ? ctx.setTimeout
+        : (fn, ms) => {
+            const id = globalThis.setTimeout(fn, ms);
+            const cancel = () => globalThis.clearTimeout(id);
+            ctx.onDispose(cancel);
+            return cancel;
+          };
+    ctx.register({ id: "board-route", area: ROUTES_AREA, data: { path: "/board" }, render: () => <BoardPage rest={ctx.rest} socket={ctx.socket} setTimer={setTimer} /> });
     // …reachable from a sidebar nav row.
     ctx.register({ id: "board-nav", area: SIDEBAR_NAV_AREA, data: { path: "/board", label: "Board", codicon: "dashboard" } });
   },

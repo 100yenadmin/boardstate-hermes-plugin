@@ -56,6 +56,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 - Aborted native-tool HTTP responses settle the active-invocation counter, so authenticated
   shutdown reaches connector cleanup promptly instead of waiting for the 30-second fail-safe.
 - The Desktop page no longer installs theme observers after it has unmounted.
+- The Desktop page works on Hermes Desktop builds whose plugin SDK has no scoped timers.
 
 ## 1.4.1
 
