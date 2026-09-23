@@ -120,7 +120,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      HERMES_HOME: ${{ runner.temp }}/boardstate-hermes
+      HERMES_HOME: /tmp/boardstate-hermes
     steps:
       - uses: actions/checkout@v4
 
