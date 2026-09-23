@@ -40,6 +40,8 @@ _NATIVE_HTTP_TIMEOUT_SECONDS = 30
 _NATIVE_CONFIRM_TIMEOUT_MS = 25_000
 _SIDECAR_DRAIN_WAIT_SECONDS = 35.0
 _ATEXIT_DRAIN_WAIT_SECONDS = 5.0
+# An orphaned sidecar's owner watchdog closes its listener and exits within ~2 s.
+_SELF_SHUTDOWN_WAIT_SECONDS = 5.0
 # Sidecar traffic is loopback-only and carries the nonce; never route it through an
 # HTTP(S)_PROXY from the environment.
 _DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -612,6 +614,12 @@ async def _terminate_record(directory: Path, record: dict[str, Any]) -> None:
                 "agent-owned Boardstate sidecar did not stop after SIGTERM"
             )
     elif not _pid_alive(pid):
+        stopped = True
+    elif shutdown_result == "unreachable" and await _wait_record_exit(
+        pid, None, _SELF_SHUTDOWN_WAIT_SECONDS
+    ):
+        # The sidecar was already stopping itself (its owner watchdog closes the listener
+        # before exiting); wait for that exit instead of calling it unverifiable.
         stopped = True
     else:
         if shutdown_result == "rejected":

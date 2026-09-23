@@ -82,6 +82,65 @@ def _cleanup(pid: int, *processes: subprocess.Popen) -> None:
         os.kill(pid, signal.SIGTERM)
 
 
+def _replace_self_stopping_sidecar() -> None:
+    """A replacement racing the watchdog finds the old sidecar's listener closed while the
+    process is still exiting; it must wait for that exit, not fail as unverifiable."""
+    import asyncio
+    import socket
+
+    sys.path.insert(0, str(ROOT))
+    import boardstate_sidecar as runtime
+
+    with tempfile.TemporaryDirectory(prefix="boardstate-watchdog-race-") as tmp:
+        previous = os.environ.get("BOARDSTATE_HERMES_STATE_DIR")
+        os.environ["BOARDSTATE_HERMES_STATE_DIR"] = tmp
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            closed_port = probe.getsockname()[1]
+        # A non-child that exits 1.5 s from now (the intermediate exits at once, so the
+        # grandchild is reparented and reaped like an orphaned sidecar).
+        launcher = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import subprocess, sys; "
+                "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(1.5)'], "
+                "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
+                "print(p.pid)",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        exiting_pid = int(launcher.stdout.strip())
+        runtime._write_record(
+            Path(tmp),
+            {
+                "port": closed_port,
+                "nonce": "self-stopping-sidecar",
+                "pid": exiting_pid,
+                "spawned_by": "dashboard",
+                "owner_pid": 999_999_999,
+                "adopters": [],
+            },
+        )
+        try:
+            port, _nonce = asyncio.run(runtime.ensure_sidecar("dashboard"))
+            record = runtime._read_record(Path(tmp))
+            assert record is not None and record["pid"] != exiting_pid, record
+            assert port == record["port"]
+            print("ok   replacement waits for a sidecar that is already stopping itself")
+        finally:
+            runtime.shutdown_owned_sidecar()
+            if _alive(exiting_pid):
+                os.kill(exiting_pid, signal.SIGTERM)
+            if previous is None:
+                os.environ.pop("BOARDSTATE_HERMES_STATE_DIR", None)
+            else:
+                os.environ["BOARDSTATE_HERMES_STATE_DIR"] = previous
+
+
 def main() -> int:
     if os.name == "nt":
         print("owner watchdog: SIGKILL cases are POSIX-only; skipped")
@@ -116,6 +175,8 @@ def main() -> int:
             print(f"ok   sidecar exited {took:.1f}s after its last adopter was SIGKILLed")
         finally:
             _cleanup(sidecar_pid, owner, adopter)
+
+    _replace_self_stopping_sidecar()
 
     print("owner watchdog: all checks passed")
     return 0
