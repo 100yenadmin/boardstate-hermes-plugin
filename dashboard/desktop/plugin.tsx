@@ -218,6 +218,9 @@ function BoardPage({
       } catch {
         view.basePath = "";
       }
+      // The page may have unmounted while /assets-base was in flight; cleanup already ran,
+      // so installing observers now would leak them.
+      if (disposed) return;
       applyDesktopTheme(view);
       obs = new MutationObserver(() => view && applyDesktopTheme(view));
       obs.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });

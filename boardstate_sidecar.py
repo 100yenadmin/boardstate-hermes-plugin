@@ -17,6 +17,7 @@ import os
 import secrets
 import shutil
 import signal
+import sys
 import threading
 import time
 import urllib.error
@@ -264,7 +265,20 @@ def _pid_alive(pid: int) -> bool:
         return True
     except OSError:
         return False
+    if sys.platform.startswith("linux") and _linux_pid_is_zombie(pid):
+        # A signalled sidecar whose reaper never waits (e.g. a container init that does not
+        # reap orphans) stays a zombie forever; it has exited and must count as gone.
+        return False
     return True
+
+
+def _linux_pid_is_zombie(pid: int) -> bool:
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+        # The state field follows the parenthesised command name, which may contain ")".
+        return stat.rsplit(")", 1)[1].split()[0] in {"Z", "X"}
+    except (OSError, IndexError):
+        return False
 
 
 async def _port_listening(port: int) -> bool:
@@ -332,12 +346,20 @@ def _read_record(directory: Path) -> Optional[dict[str, Any]]:
 
 
 def _write_record(directory: Path, record: dict[str, Any]) -> None:
+    # Write a complete generation beside the record and rename it into place, so a crash
+    # mid-write can never leave a truncated record that blocks every later start.
     path = _portfile_path(directory)
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        os.write(fd, json.dumps(record, separators=(",", ":")).encode("utf-8"))
-    finally:
-        os.close(fd)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, separators=(",", ":")))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     try:
         os.chmod(path, 0o600)
     except OSError:  # pragma: no cover - best effort on Windows
@@ -450,7 +472,12 @@ async def _spawn_sidecar(
     env.update(extra_env or {})
     env["BOARDSTATE_STATE_DIR"] = str(directory)
     env["BOARDSTATE_SIDECAR_NONCE"] = nonce
-    env["BOARDSTATE_OPERATOR_SECRET"] = generated_operator_secret
+    # Only a dashboard-owned sidecar gets an operator secret. An agent-owned one must not
+    # carry any: the agent could read it back from the child's environment (/proc/<pid>/environ)
+    # and approve its own pending actions. Without it the sidecar's /operator plane stays disabled.
+    env.pop("BOARDSTATE_OPERATOR_SECRET", None)
+    if spawned_by == "dashboard":
+        env["BOARDSTATE_OPERATOR_SECRET"] = generated_operator_secret
     env["BOARDSTATE_SPAWNED_BY"] = spawned_by
     env["PORT"] = "0"
 
@@ -588,7 +615,8 @@ async def _ensure_sidecar_impl(
             raw_record = _read_raw_record(directory)
             if record_path.exists() and raw_record is None:
                 raise RuntimeError(
-                    "unrecognized Boardstate sidecar record; refusing to overwrite it"
+                    f"unrecognized Boardstate sidecar record at {record_path}; refusing to "
+                    "overwrite it (delete the file if no Boardstate sidecar is running)"
                 )
             if raw_record is not None and _read_record(directory) is None:
                 raw_pid = raw_record.get("pid")

@@ -31266,9 +31266,17 @@ var internalEndpoint = createInternalEndpoint(host, mcpEndpoint, {
 var operatorEndpoint = createOperatorEndpoint(host, { secret: operatorSecret });
 var activeInvocations = 0;
 var shutdownRequested = false;
+var exiting = false;
+var exitAfterCleanup = () => {
+  if (exiting) return;
+  exiting = true;
+  const closing = connectors ? connectors.broker.close().catch(() => void 0) : Promise.resolve();
+  const bound = new Promise((resolve) => setTimeout(resolve, 1500).unref());
+  void Promise.race([closing, bound]).finally(() => process.exit(0));
+};
 var invocationSettled = () => {
   activeInvocations -= 1;
-  if (shutdownRequested && activeInvocations === 0) process.exit(0);
+  if (shutdownRequested && activeInvocations === 0) exitAfterCleanup();
 };
 var httpServer = createServer((req, res) => {
   const pathname = (req.url ?? "/").split("?")[0];
@@ -31347,9 +31355,9 @@ var shutdown = () => {
   if (shutdownRequested) return;
   shutdownRequested = true;
   httpServer.close(() => {
-    if (activeInvocations === 0) process.exit(0);
+    if (activeInvocations === 0) exitAfterCleanup();
   });
-  if (activeInvocations === 0) process.exit(0);
+  if (activeInvocations === 0) exitAfterCleanup();
   setTimeout(() => process.exit(0), 3e4).unref();
 };
 process.on("SIGINT", shutdown);

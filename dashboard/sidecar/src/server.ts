@@ -259,9 +259,19 @@ const operatorEndpoint = createOperatorEndpoint(host, { secret: operatorSecret }
 
 let activeInvocations = 0;
 let shutdownRequested = false;
+let exiting = false;
+// Close the connector broker's warm clients (stdio children) before exiting, so a sidecar
+// handoff never orphans them. Bounded well inside the parent's 2 s SIGTERM grace.
+const exitAfterCleanup = (): void => {
+  if (exiting) return;
+  exiting = true;
+  const closing = connectors ? connectors.broker.close().catch(() => undefined) : Promise.resolve();
+  const bound = new Promise<void>((resolve) => setTimeout(resolve, 1_500).unref());
+  void Promise.race([closing, bound]).finally(() => process.exit(0));
+};
 const invocationSettled = (): void => {
   activeInvocations -= 1;
-  if (shutdownRequested && activeInvocations === 0) process.exit(0);
+  if (shutdownRequested && activeInvocations === 0) exitAfterCleanup();
 };
 
 const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -355,9 +365,9 @@ const shutdown = (): void => {
   if (shutdownRequested) return;
   shutdownRequested = true;
   httpServer.close(() => {
-    if (activeInvocations === 0) process.exit(0);
+    if (activeInvocations === 0) exitAfterCleanup();
   });
-  if (activeInvocations === 0) process.exit(0);
+  if (activeInvocations === 0) exitAfterCleanup();
   // Fail-safe for a genuinely stuck request. Normal accepted calls drain first.
   setTimeout(() => process.exit(0), 30_000).unref();
 };

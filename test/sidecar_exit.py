@@ -17,11 +17,10 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
+    sys.path.insert(0, str(ROOT))
+    import boardstate_sidecar as runtime
+
+    return runtime._pid_alive(pid)
 
 
 async def _natural_exit_worker() -> None:

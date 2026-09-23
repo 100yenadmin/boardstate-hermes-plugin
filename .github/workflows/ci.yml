@@ -134,6 +134,9 @@ jobs:
       - name: Liveness probe never signals the checked process
         run: python test/pid_alive.py
 
+      - name: Agent-owned sidecars carry no operator secret
+        run: python test/agent_operator_secret.py
+
   windows-lifecycle:
     runs-on: windows-latest
     steps:
@@ -205,6 +208,7 @@ jobs:
           python test/profile_scope.py
           python test/desktop_ack.py
           python test/native_plugin.py
+          python test/agent_operator_secret.py
 
       - name: Install into an isolated Hermes home
         run: |

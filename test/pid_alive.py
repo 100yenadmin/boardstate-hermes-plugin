@@ -35,6 +35,15 @@ def main() -> int:
     check("own process reports alive", runtime._pid_alive(os.getpid()))
     if os.name == "nt":
         check("foreign system process reports alive", runtime._pid_alive(4))
+    if sys.platform.startswith("linux"):
+        zombie = subprocess.Popen([sys.executable, "-c", "pass"])
+        deadline = time.monotonic() + 10
+        # Do not wait(): the exited child stays a zombie until reaped.
+        while time.monotonic() < deadline and not runtime._linux_pid_is_zombie(zombie.pid):
+            time.sleep(0.05)
+        check("unreaped zombie child is a zombie", runtime._linux_pid_is_zombie(zombie.pid))
+        check("unreaped zombie child reports dead", not runtime._pid_alive(zombie.pid))
+        zombie.wait(timeout=10)
 
     if failures:
         print(f"\npid liveness: {len(failures)} failure(s)")

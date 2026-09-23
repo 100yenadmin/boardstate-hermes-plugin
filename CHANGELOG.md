@@ -22,15 +22,29 @@ adheres to [Semantic Versioning](https://semver.org/).
   sidecar before a dashboard is present.
 - CI validates against pinned Hermes upstream and checks generated tool-schema sync.
 
+### Security
+
+- Windows: the sidecar liveness probe no longer uses `os.kill(pid, 0)`, which CPython
+  maps to `TerminateProcess` on Windows; it queries the process handle instead. A
+  `windows-latest` CI job exercises the probe against a real child process.
+- An agent-owned sidecar no longer receives the operator secret in its environment, so an
+  agent with shell access cannot read it back and approve its own pending actions.
+
+### Fixed
+
+- Zombie sidecars (a reaper that never waits, e.g. some container inits) count as exited on
+  Linux, so replacement no longer times out.
+- The port record is written atomically (temp file + rename); a crash mid-write can no longer
+  leave a record that blocks every start. The refusal message names the file.
+- The sidecar closes connector clients before exiting, so handoffs do not orphan stdio connectors.
+- The Desktop page no longer installs theme observers after it has unmounted.
+
 ## 1.4.1
 
 ### Security
 
 - WebSocket upgrade gate failed open on Hermes ≥ 2026-09-02
   (`web_server_chat` refactor); now fails closed.
-- Windows: the sidecar liveness probe no longer uses `os.kill(pid, 0)`, which CPython
-  maps to `TerminateProcess` on Windows; it queries the process handle instead. A
-  `windows-latest` CI job exercises the probe against a real child process.
 
 ## 1.4.0
 
