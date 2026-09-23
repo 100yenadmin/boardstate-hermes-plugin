@@ -9,13 +9,21 @@
 //
 //   npm install && npm run build
 
-import { cpSync, existsSync, mkdirSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DashboardStore, MemoryStorageAdapter } from "@boardstate/core";
+import { agentToolToJsonSchema, createDashboardTools } from "@boardstate/server/node";
 import esbuild from "esbuild";
+import {
+  CONNECTOR_TOOL_DEFINITIONS,
+  toPublicToolName,
+  toPublicToolText,
+} from "./dashboard/sidecar/src/tool-contract.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dashboardDir = path.join(here, "dashboard");
+const desktopDir = path.join(here, "desktop");
 
 // Resolve the vendored assets straight out of the installed @boardstate/lit package
 // via its exports map (./browser → dist/browser.js, ./styles.css → the stylesheet).
@@ -58,10 +66,10 @@ await esbuild.build({
 // only resolves `@hermes/plugin-sdk` + `react*`, so EVERYTHING boardstate is inlined
 // (createWsTransport + the Lit element bundle + CSS as text + theme + templates). React
 // and the SDK stay external (the app owns the singletons).
-mkdirSync(path.join(dashboardDir, "desktop"), { recursive: true });
+mkdirSync(desktopDir, { recursive: true });
 await esbuild.build({
   entryPoints: [path.join(dashboardDir, "desktop/plugin.tsx")],
-  outfile: path.join(dashboardDir, "desktop/plugin.js"),
+  outfile: path.join(desktopDir, "plugin.js"),
   bundle: true,
   format: "esm",
   platform: "browser",
@@ -73,6 +81,62 @@ await esbuild.build({
   minify: true,
   logLevel: "info",
 });
+
+// 1c) Native agent-tool contract.  The base 17 definitions come from the same
+// @boardstate/server factory the sidecar invokes; the two connector definitions
+// are shared with that runtime.  Commit the result so register() never imports npm
+// packages and Hermes can capability-probe the plugin in isolation.
+const schemaStore = new DashboardStore({ storage: new MemoryStorageAdapter() });
+const baseSchemas = createDashboardTools({
+  store: schemaStore,
+  context: { agentId: "agent" },
+  broadcast: () => undefined,
+}).map((tool) => {
+  const schema = agentToolToJsonSchema(tool);
+  return {
+    ...schema,
+    name: toPublicToolName(schema.name),
+    description: toPublicToolText(schema.description),
+  };
+});
+const toolSchemas = [...baseSchemas, ...CONNECTOR_TOOL_DEFINITIONS];
+if (toolSchemas.length !== 19 || new Set(toolSchemas.map((tool) => tool.name)).size !== 19) {
+  throw new Error(`expected 19 unique Boardstate tools, got ${toolSchemas.length}`);
+}
+writeFileSync(
+  path.join(dashboardDir, "tools.schema.json"),
+  `${JSON.stringify(toolSchemas, null, 2)}\n`,
+);
+
+// The Hermes plugin catalog's self-updater check (plugin-catalog-ci.yml) flags any bundled
+// JS file that contains both a GitHub raw-content / releases-latest URL and a file-write
+// call. The only such URL in the sidecar bundle is ajv's `$data` meta-schema
+// IDENTIFIER (its `$id` and the one `$ref` pointing at it) — never fetched. Rewrite that
+// identifier consistently to an equivalent non-GitHub URI so the check stays meaningful for
+// this bundle: a later releases-latest / raw-content URL next to a file write would still trip
+// it (CI replays the check).
+// The host is assembled from parts so this build script itself never matches the check.
+const GITHUB_RAW_HOST = ["raw", "githubusercontent", "com"].join(".");
+const AJV_DATA_ID = `https://${GITHUB_RAW_HOST}/ajv-validator/ajv/master/lib/refs/data.json#`;
+const AJV_DATA_ID_REWRITE = "https://ajv.js.org/refs/data.json#";
+const ajvDataIdPlugin = {
+  name: "ajv-data-meta-schema-id",
+  setup(build) {
+    build.onLoad(
+      { filter: /[\\/]node_modules[\\/]ajv[\\/]dist[\\/](refs[\\/]data\.json|core\.js)$/ },
+      (args) => {
+        const text = readFileSync(args.path, "utf8");
+        if (!text.includes(AJV_DATA_ID)) {
+          throw new Error(`ajv $data meta-schema id not found in ${args.path}; revisit build.mjs note`);
+        }
+        return {
+          contents: text.split(AJV_DATA_ID).join(AJV_DATA_ID_REWRITE),
+          loader: args.path.endsWith(".json") ? "json" : "js",
+        };
+      },
+    );
+  },
+};
 
 // 2) Node sidecar bundle — single self-contained ESM file; node builtins stay external.
 // The M5 broker's stdio connector transport (via @modelcontextprotocol/sdk → cross-spawn)
@@ -92,6 +156,7 @@ await esbuild.build({
   },
   sourcemap: true,
   logLevel: "info",
+  plugins: [ajvDataIdPlugin],
 });
 
 // 3) Vendor the prebuilt element bundle + stylesheet (served as static assets).

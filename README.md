@@ -1,183 +1,236 @@
-# boardstate-hermes-plugin
+# Boardstate for Hermes
 
-> **The board your agent builds with you — durable, auditable, operator-governed.**
+Boardstate gives Hermes a durable board that the agent can build with native tools. Open
+the **Board** tab in `hermes dashboard` or the **Board** page in Hermes Desktop, then ask
+Hermes to create tabs, add widgets, arrange a layout, or review its design. Widgets include
+notes, markdown, tables, charts, KPI cards, live Hermes data, and approvals. Changes are
+stored as a validated workspace document and appear live when the dashboard socket is
+available.
 
-A drop-in plugin for [Hermes](https://github.com/NousResearch/hermes-agent) that adds a
-live **Board** to both the web dashboard (`hermes dashboard`) and the **desktop app**:
-a layout-as-data workspace the Hermes agent **builds and operates through tools** — and
-that you co-own, audit, and govern. Built on [Boardstate](https://github.com/100yenadmin/boardstate)
-(`@boardstate/*` on npm, MIT — a 45k-line workspace library).
+Boardstate is one unified Hermes plugin: the agent tools, Web dashboard tab, Python
+backend, Desktop page, and loopback Node sidecar install from this repository together.
 
-![One unedited take: the agent composes the board; a template binds live data; a real OfficeCLI grant is approved; the mutation parks; confirming produces an actual .docx](.github/media/hero.gif)
+## Install
 
-**Upstream:** bundling PRs are open on Hermes — tracker
-[hermes-agent#66413](https://github.com/NousResearch/hermes-agent/issues/66413), web
-[PR #66381](https://github.com/NousResearch/hermes-agent/pull/66381), desktop
-[PR #66425](https://github.com/NousResearch/hermes-agent/pull/66425).
-
-## Features
-
-- **The agent builds the board live.** A networked MCP endpoint (19 `boardstate_*`
-  tools) rides the plugin backend against the same single host the browser watches —
-  widgets appear as the agent works, no reload.
-- **Live Hermes data, zero config.** Usage, sessions, instances, and cron widgets
-  self-bind to the dashboard's own REST surface — real numbers, graceful empty states,
-  never an error cell. Credentials stay server-side.
-- **16 built-in widget kinds** — stat cards, charts (line/bar/area/sparkline/gauge),
-  tables, markdown, notes, activity, action buttons/forms, chat, and the live
-  data-source widgets — plus **one-click templates**: Agent HQ · Usage & Cost ·
-  Sessions Monitor · Office Ops.
-- **Sandboxed custom widgets.** Install a widget bundle (a game, a calculator, a
-  tracker); it lands **pending** (assets uniformly 404), you approve it, and it mounts
-  in an opaque-origin iframe with a no-network CSP — served through a tokenized,
-  traversal-jailed asset route. The library's 2048, installed, approved, and played
-  inside Hermes:
-
-  ![The library's 2048 bundle: pending → approved → mounted sandboxed → played](.github/media/game-2048.gif)
-
-- **The operational layer.** Connect external MCP tools (an **OfficeCLI** preset ships)
-  through operator-governed grants: the agent *requests* tools, you approve per-tool;
-  reads pass a manifest-hash gate (a connector that changes its tools re-pends);
-  **mutations always park for your confirm** — bounded, never hangs. Every grant is
-  visible and revocable in the approvals widget.
-- **Native to Hermes, both design systems.** Theme tokens alias to the host palette and
-  follow live swaps (![swap](.github/media/theme-swap.gif) shows a whole-palette swap);
-  the web skin matches the dashboard's own design language (numerically, against the
-  kanban page), the desktop skin the app's macOS language. The library ships 20 locales.
-
-## Security model (designed for review)
-
-- Browser connects only to the dashboard origin; auth is the dashboard's own WS gate.
-  The Node sidecar binds loopback-only behind a per-spawn nonce; **one sidecar per
-  state dir** (port-file adoption, `chmod 600`) so web + desktop never double-write.
-- **Operator verbs** (approve / confirm / deny) are unreachable from the browser WS and
-  the agent MCP surface. They flow only through an authenticated plugin route gated by a
-  dedicated per-spawn **operator secret (never persisted)** plus a
-  `boardstate.operators.json` allowlist (absent ⇒ loopback-only; gated multi-user ⇒
-  denied without an allowlist).
-- **Connector config never leaves the server**: length-agnostic, longest-first redaction
-  (command/url/args/env values + the nonce) on every agent-facing error; anti-rug-pull
-  manifest-hash re-pend on every agent-reachable connector call.
-- **Custom-widget assets**: approved-only with uniform 404, sandbox CSP preserved
-  verbatim through the proxy, traversal segments rejected before any upstream request.
-- Hardened through three independent adversarial review passes plus an external review
-  round; the holes they found ship with **revert-checked** regression tests.
-
-## Architecture
-
-```
-browser  <boardstate-view>                     desktop app  (single-file ESM plugin)
-   │  ws   /api/plugins/boardstate/ws  ←──────────┘  (same backend, desktop bridge)
-   │  http /api/plugins/boardstate/mcp   ◄─ Hermes agent (StreamableHTTP, 19 tools)
-   │  http /api/plugins/boardstate/operator  ◄─ approvals UI (session + allowlist)
-   │  http /boardstate-widget-assets/<token>/…  ◄─ custom-widget iframes (capability token)
-   ▼
-plugin_api.py — WS bridge · MCP proxy · operator gate · tokenized asset route · sidecar lifecycle
-   ▼            (per-spawn nonce + operator secret, injected via env, never persisted)
-sidecar/server.js — ONE host, one writer:  control plane · live Hermes data RPCs ·
-   connector broker (boardstate.connectors.json) · pending-action engine · /widgets (CSP)
-   ▼
-$HERMES_HOME/boardstate-state/dashboard/workspace.json   ← the board IS this document
-```
-
-The board is a **validated document** — one writer, every mutation through gated verbs —
-which is what makes undo, history, export/import, templates, and audit possible.
-
-## Install (web dashboard)
-
-Requires Node ≥ 20 on the machine running `hermes dashboard`.
+Boardstate requires Hermes 0.21.2 or newer and Node.js 20 or newer. Boardstate looks for Node
+in `HERMES_NODE_BIN`, then in Hermes' own Node lookup, then on `PATH`.
 
 ```bash
-mkdir -p ~/.hermes/plugins/boardstate
-cp -r dashboard ~/.hermes/plugins/boardstate/dashboard
-# enable it in ~/.hermes/config.yaml:   plugins: { enabled: [boardstate] }
-hermes dashboard          # the Board tab appears after Skills
+hermes plugins install boardstate --enable
 ```
 
-### Install (desktop app)
+This installs the catalog entry at its reviewed pin, and Hermes accepts the scanner's `caution`
+verdict for that pin without a prompt. The bare name resolves only after the Hermes plugin catalog
+lists Boardstate; until then, use the `owner/repo` form below.
 
-The desktop frontend is a single file on the desktop plugin surface (backend above must
-also be installed):
+The `owner/repo` form (`hermes plugins install 100yenadmin/boardstate-hermes-plugin`) is not
+reviewed or pinned. It prints the scanner findings and asks for confirmation; pass `--force`
+to accept them non-interactively, and `--ref <40-character sha>` to pin a commit.
+
+To enable an installed copy later:
 
 ```bash
-mkdir -p ~/.hermes/desktop-plugins/boardstate
-cp dashboard/desktop/plugin.js ~/.hermes/desktop-plugins/boardstate/plugin.js
+hermes plugins enable boardstate
 ```
 
-The app hot-loads it — a **Board** entry appears in the sidebar (real-Electron proven):
+Start `hermes dashboard` for the Web tab. The unified package also contributes a Desktop
+plugin; enable **Boardstate** under **Capabilities → Plugins** in Hermes Desktop. The two
+surfaces have separate enable switches by design.
 
-![The Board inside the real Hermes desktop app — live template data, macOS design language](.github/media/desktop-board.png)
+After you update or reinstall the plugin, quit and reopen Hermes Desktop. **Rescan** under
+**Capabilities → Plugins** copies the new Desktop files, but a Desktop plugin that is already
+loaded keeps running its old code until the app restarts.
 
-### Let the agent build it
+### Profiles
 
-Register the plugin's MCP endpoint so Hermes builds and operates the board via tools —
-in `~/.hermes/config.yaml` (or a profile):
+On Hermes 0.21.x, `hermes -p <name> dashboard` re-runs as the default profile with
+`--open-profile <name>`. Web dashboard plugins load from the root `~/.hermes/plugins`, and
+their state comes from the dashboard process's `HERMES_HOME`, so the web **Board** tab shows
+the default profile's board. Install with `hermes plugins install …` (no `-p`) for the
+dashboard, and with `hermes -p <name> plugins install …` for that profile's agent tools. Hermes
+Desktop loads the Desktop half app-wide from `~/.hermes/desktop-plugins` once you switch it
+on under **Capabilities → Plugins**, and talks to the active profile's backend.
 
-```yaml
-mcp_servers:
-  boardstate:
-    url: http://127.0.0.1:9119/api/plugins/boardstate/mcp   # your dashboard port
-    headers:
-      X-Hermes-Session-Token: <dashboard session token>
-```
+### Uninstall
 
-### Connect external tools (the operational layer)
+Run `hermes plugins remove boardstate`. The board itself stays in `boardstate-state` under the
+profile's Hermes home (`~/.hermes` by default, `~/.hermes/profiles/<name>` for a named profile).
+If you no longer need it, delete that directory, for example:
 
 ```bash
-# state dir = $HERMES_HOME/boardstate-state
-cat > ~/.hermes/boardstate-state/boardstate.connectors.json <<'EOF'
-{ "connectors": [ { "name": "officecli", "transport": "stdio", "command": "officecli", "args": ["mcp"] } ] }
-EOF
+rm -rf "${HERMES_HOME:-$HOME/.hermes}/boardstate-state"
 ```
 
-Restart; the approvals widget shows the connector's **requested** grant. Approve the
-tools you want — nothing runs until you do. See [docs/connectors/officecli.md](docs/connectors/officecli.md).
+## Native agent tools
 
-### Config
+No hand-written `mcp_servers` entry is needed. The package registers these 19 tools in the
+`boardstate` toolset:
 
-| Setting | Default | Notes |
-|---------|---------|-------|
-| Board state dir | `$HERMES_HOME/boardstate-state` | `BOARDSTATE_HERMES_STATE_DIR` overrides |
-| Node binary | `node` on `PATH` | `HERMES_NODE_BIN` overrides |
-| Connectors | none | operator-authored `boardstate.connectors.json` in the state dir — never the board doc |
-| Operator allowlist | none (loopback-only) | `boardstate.operators.json`; **required** in gated multi-user mode |
-| Mutation confirm timeout | 300 000 ms | `BOARDSTATE_MUTATION_TIMEOUT_MS` (must be > 0) |
+- `boardstate_workspace_get`
+- `boardstate_tab_create`, `boardstate_tab_update`, `boardstate_tab_delete`,
+  `boardstate_tabs_reorder`
+- `boardstate_widget_add`, `boardstate_widget_update`, `boardstate_widget_move`,
+  `boardstate_widget_remove`
+- `boardstate_layout_set`, `boardstate_workspace_replace`, `boardstate_undo`
+- `boardstate_widget_catalog`, `boardstate_design_review`,
+  `boardstate_widget_scaffold`, `boardstate_data_read`
+- `boardstate_tool_search`, `boardstate_connector_read`,
+  `boardstate_connector_invoke`
 
-## Do / Observe
+The two connector invocation tools and `boardstate_tool_search` are always discoverable.
+Without an operator-authored connector configuration they return a clear
+`no connectors configured` error.
 
-| Do | Observe |
-|----|---------|
-| Open the **Board** tab (web or desktop) | renders in the active theme; follows a palette swap live |
-| Ask the agent to add a widget | it appears live, no reload |
-| Click **Agent HQ** | live usage / sessions / instances / cron — zero error cells |
-| Author `boardstate.connectors.json`, restart | approvals widget shows the **requested** grant |
-| Approve, then run the Office Ops action | it **parks**; confirm; a real `.docx` lands |
-| Install + approve a widget bundle (e.g. `twenty48`) | pending assets 404; approved → mounts sandboxed, playable |
-| Kill Node / uninstall | dashboard unaffected; the tab degrades to a clear message |
+The existing Streamable HTTP MCP endpoint remains available as an optional compatibility
+path at `/api/plugins/boardstate/mcp`, but normal Hermes use should rely on the native tools.
 
-## Dev loop
+## What runs
+
+Boardstate starts one Node sidecar on an ephemeral `127.0.0.1` port. Every spawn gets a
+random nonce. Its mode-0600 port record contains the port, nonce, process id, and owner
+kind so the agent and dashboard do not create competing writers.
+
+- An agent tool call can start the sidecar without the dashboard. That sidecar gets no
+  operator secret at all, so operator-only verbs are unavailable until the dashboard
+  replaces it.
+- When the dashboard finds an agent-owned sidecar, it terminates and replaces that process
+  with a dashboard-owned one. Both use the same state directory, so the board survives.
+- An agent-owned sidecar is stopped when its owner exits if no live agent process adopted
+  it. A process never stops a sidecar whose port record has moved to another spawn.
+- If every process named in the sidecar's port record (its owner and any adopters) dies
+  without cleaning up, for example after `SIGKILL`, the sidecar notices within a few seconds
+  and shuts itself down.
+- Live Hermes data widgets use the authenticated dashboard API. When only the agent half is
+  running, they show an explicit "open the Board tab" unavailable message instead of
+  crashing.
+
+The Desktop plugin stays inside the public plugin SDK. It uses `ctx.register` with
+`ROUTES_AREA` and `SIDEBAR_NAV_AREA` for the page and its nav row, `ctx.rest` for Boardstate
+requests, `ctx.socket` for server pushes, `ctx.onDispose` for cleanup, `ctx.setTimeout` when
+the SDK provides it (with a disposed fallback timer on older SDKs), and `host.notify` for
+template errors.
+OAuth remotes support request/response traffic but the SDK intentionally provides no live
+socket there, so the page reports **live updates unavailable** instead of pretending to be
+live.
+
+## Network and security disclosure
+
+Boardstate makes no third-party network request by default.
+
+- The sidecar, dashboard bridge, native tool wrapper, and optional MCP path communicate on
+  loopback only. Live Hermes widgets call the local Hermes dashboard API.
+- External connectors are opt-in. Only an operator-authored
+  `$HERMES_HOME/boardstate-state/boardstate.connectors.json` can enable one. A connector may
+  spawn its configured local command or contact its configured remote MCP URL; those are
+  the only runtime paths that can reach outside Hermes.
+- Connector reads require an approved grant. Connector mutations park for an operator
+  decision. A changed connector manifest re-pends its grant.
+- Operator approve/confirm/deny verbs use a separate in-memory secret that is never written
+  to the port record. In gated multi-user mode, `boardstate.operators.json` is also required.
+- Sidecar traffic never goes through an `HTTP(S)_PROXY` from the environment.
+- The sidecar inherits the Hermes process environment, so provider keys there are available
+  to connector `env` references. A dashboard-owned sidecar also receives the dashboard session
+  token so live Hermes data widgets can read the local dashboard API.
+- **Limit of the operator gate.** It keeps approvals off the agent's tool surface: no
+  `boardstate_*` tool, MCP call or board WebSocket can approve or confirm anything. It is not
+  a boundary against an agent that has unrestricted shell access as the same OS user. In
+  ungated loopback mode, such an agent can read the dashboard page, which carries the
+  dashboard session token. In any mode, it can read a same-user process's environment,
+  including the dashboard-owned sidecar's operator secret. If approvals must hold against the
+  agent itself, run the agent's terminal in an isolated backend (for example Docker, SSH or
+  Modal) or as a different OS user from the dashboard.
+- Approved custom widgets run in an opaque-origin iframe with a no-network Content Security
+  Policy. Pending, rejected, and unknown widget assets all return 404.
+
+## Connector configuration
+
+Connectors are optional. For example, after installing OfficeCLI, an operator can create:
+
+```json
+{
+  "connectors": [
+    { "name": "officecli", "transport": "stdio", "command": "officecli", "args": ["mcp"] }
+  ]
+}
+```
+
+Save that as `$HERMES_HOME/boardstate-state/boardstate.connectors.json`, restart the
+dashboard, and approve only the requested tools you want. See
+[docs/connectors/officecli.md](docs/connectors/officecli.md).
+
+Connector grants are scoped to the active Hermes profile: Boardstate keeps separate state for
+each `HERMES_HOME`/profile, while sessions within one profile are the same agent and
+intentionally share native-tool grants.
+
+## Security scanner notes
+
+`hermes plugins validate` reports `caution`. All five HIGH findings are in the committed
+`dashboard/sidecar/server.js` bundle, which is generated from the pinned packages in
+`package-lock.json`. Line numbers are for the 1.5.0 build; reviewers should still inspect
+every warning:
+
+- `dump_all_env` at `server.js:3082`: ajv's compiler (`ajv/dist/compile`) names a schema
+  environment variable `env` (`env = env || new SchemaEnv(...)`). It does not touch
+  `process.env`.
+- `dump_all_env` at `server.js:7124`: `path-key` reads the name of the `PATH` key from
+  `process.env`.
+- `dump_all_env` at `server.js:7144`: `cross-spawn` resolves a connector command against
+  `process.env` (`PATH`).
+- `path-key` and `cross-spawn` are transitive dependencies of the MCP SDK's stdio client.
+  None of these returns the environment to an agent.
+- `exfil_service` at `server.js:28509`: the optional Pipedream preset URL string in the
+  bundled `@boardstate/broker` package. It is inert until an operator authors and approves
+  that connector.
+- `sudo_usage` at `server.js:25999`: a comment in the MCP SDK's stdio client
+  ("inspired by the default env inheritance of sudo"), not a command Boardstate executes.
+
+The MEDIUM and LOW findings are:
+
+- Character-code, base64, Unicode-escape and relative-path matches in the minified bundles:
+  `server.js`, `dashboard/dist/index.js`, `dashboard/vendor/boardstate-browser.js` and
+  `desktop/plugin.js`.
+- One oversized-file warning, for `server.js` only.
+- The repository's own CI install steps (`pip install`, `git clone` in
+  `.github/workflows/ci.yml`).
+- `subprocess` use in `test/`.
+- An example loopback dashboard address in a comment in `dashboard/sidecar/src/hermes-data.ts`.
+
+Catalog self-updater check: the catalog CI flags a bundled JS file that contains both a
+GitHub raw-content URL and a file-write call. In the sidecar bundle, the only such URL was
+ajv's `$data` meta-schema **identifier** (its `$id` and the one `$ref` to it), which is never
+fetched. `build.mjs` rewrites that identifier consistently to `https://ajv.js.org/refs/data.json#`,
+so the check stays meaningful for this bundle: a later `releases/latest` or
+`raw.githubusercontent.com` URL next to a file write would still trip it. This repository's CI
+replays the check, with upstream's exact file enumeration, on every build. Boardstate has no updater;
+updates arrive only through a new catalog pin plus `hermes plugins update boardstate`.
+
+`dangerous` scanner results are not accepted. Reproduce the reviewed artifacts with:
 
 ```bash
-npm ci && npm run build   # web tab + desktop plugin + sidecar + vendored bundles (npm-pinned @boardstate/*)
+npm ci && npm run build && git diff --exit-code
 ```
 
-### Tests (all run in CI — 18 node suites + 4 python)
+## Development and tests
 
-| Highlights | Proves |
-|------|--------|
-| `operational-e2e.mjs` | the full loop headless: request → approve → invoke → **park** → confirm → result |
-| `custom-widget.mjs` | pending assets 404; approved serves with the CSP jail |
-| `rugpull-repend.mjs` | manifest drift re-pends the grant, never executes (revert-checked) |
-| `secret-redaction.mjs` | connector config — incl. env values — never reaches the agent surface (revert-checked) |
-| `operator-secret.mjs` | port-file knowledge cannot drive the operator plane |
-| `invoke-timeout.mjs` | an unconfirmed mutation settles as parked, never hangs |
-| `asset_proxy.py` | tokenized asset route at runtime: traversal-jailed, CSP forwarded verbatim |
-| `ws_auth.py` | WS auth follows current/legacy Hermes gates and fails closed |
-| `operator_wire.py` | the operator gate's wire contract, incl. gated-mode 403s |
-| + sidecar smoke, MCP liveness, data wire-contract, chat translator, theme (48), templates (27), skins, desktop bundle contract (14) | every seam has a test |
+The build produces the Web bundle, root `desktop/plugin.js`, sidecar bundle, vendored Lit
+assets, and `dashboard/tools.schema.json`. The schema is generated from the same Boardstate
+tool factory and connector definitions the sidecar invokes.
 
-Full history in [CHANGELOG.md](CHANGELOG.md) (v1.0.0 → v1.4.1).
+CI keeps the existing sidecar, connector, operator, widget, theme, Web, Desktop, and Python
+tests. It also pins Hermes upstream commit
+`38c289c0146ed8c8b2b767eca1fff6f5b7e6382e` and runs plugin validate, doctor, compat,
+native-tool dispatch, WebSocket auth, and the schema sync gate.
+
+## Screenshots
+
+A board built by the agent through the native tools, in the Web **Board** tab:
+
+![Boardstate Board tab in the Hermes web dashboard](docs/screenshots/web-board.png)
+
+The same kind of board on the **Board** page in Hermes Desktop:
+
+![Boardstate Board page in Hermes Desktop](docs/screenshots/desktop-board.png)
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

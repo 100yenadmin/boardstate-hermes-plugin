@@ -41,13 +41,13 @@ in-process bridge.
 from __future__ import annotations
 
 import asyncio
-import atexit
 import importlib
+import importlib.util
 import json
 import logging
 import os
 import secrets
-import shutil
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -58,97 +58,38 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 log = logging.getLogger(__name__)
 
+# All sidecar traffic is loopback and carries the nonce or operator secret: never let an
+# HTTP(S)_PROXY from the environment see it. httpx uses trust_env=False; websockets >= 15
+# reads proxies from the environment unless proxy=None (older versions never proxy).
+try:
+    _WS_DIRECT = {"proxy": None} if int(websockets.__version__.split(".")[0]) >= 15 else {}
+except (AttributeError, ValueError):  # pragma: no cover - unparseable version
+    _WS_DIRECT = {}
+
 router = APIRouter()
 
 _DASHBOARD_DIR = Path(__file__).resolve().parent
-_SIDECAR_JS = _DASHBOARD_DIR / "sidecar" / "server.js"
+_RUNTIME_NAME = "_boardstate_shared_sidecar_runtime_v150"
+_runtime_path = _DASHBOARD_DIR.parent / "boardstate_sidecar.py"
+_runtime = sys.modules.get(_RUNTIME_NAME)
+if _runtime is None:
+    _runtime_spec = importlib.util.spec_from_file_location(_RUNTIME_NAME, _runtime_path)
+    if _runtime_spec is None or _runtime_spec.loader is None:
+        raise RuntimeError("could not load Boardstate sidecar runtime")
+    _runtime = importlib.util.module_from_spec(_runtime_spec)
+    sys.modules[_RUNTIME_NAME] = _runtime
+    _runtime_spec.loader.exec_module(_runtime)
 
-try:
-    import fcntl  # POSIX file locking (macOS/Linux). Absent on Windows → best-effort.
-
-    _HAVE_FCNTL = True
-except ImportError:  # pragma: no cover - Windows
-    _HAVE_FCNTL = False
-
-# ONE sidecar per STATE DIR, shared across backend processes. `hermes dashboard` (web)
-# and the desktop app each run their own Python backend; without cross-process sharing
-# they would each spawn a sidecar and both `FsStorageAdapter` would read-modify-write the
-# same `workspace.json` → silent lost updates (the exact hazard fs-watch was rejected
-# over). A port-file in the state dir lets a second backend ADOPT the first's sidecar
-# (single writer). `_sidecar_lock` serializes within a process; a POSIX file lock closes
-# the cross-process first-connect race. `owned` marks whether WE spawned it (reap only
-# our own on exit).
-_sidecar_lock = asyncio.Lock()
-# ``operator_secret`` (SEC-1) is the DEDICATED credential for the sidecar's /operator endpoint.
-# Unlike ``nonce`` (the /ws + /mcp adoption credential, published to the port file so a second
-# backend can render the board), it is NEVER written to disk — only THIS spawning process holds
-# it — so knowing the port-file contents is not sufficient to drive operator actions. An adopted
-# (not-spawned) sidecar has ``operator_secret = None`` here → operator actions are unavailable on
-# that backend (documented, acceptable).
-_sidecar: dict = {"proc": None, "port": None, "nonce": None, "operator_secret": None, "owned": False}
-_atexit_registered = False
-
-
-def _portfile_path(state_dir: Path) -> Path:
-    return state_dir / ".boardstate-sidecar.json"
-
-
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:  # exists, owned by another user — treat as alive
-        return True
-    except OSError:
-        return False
-    return True
-
-
-async def _port_listening(port: int) -> bool:
-    """A live sidecar accepts a loopback TCP connection on its port."""
-    try:
-        _, writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", port), timeout=1.0)
-    except Exception:
-        return False
-    writer.close()
-    try:
-        await writer.wait_closed()
-    except Exception:
-        pass
-    return True
-
-
-async def _try_adopt(state_dir: Path) -> Optional[tuple[int, str]]:
-    """Adopt a sidecar recorded in the port-file iff its pid is alive AND its port is
-    listening — so a stale/dead record (crash, port reuse) is ignored, not adopted."""
-    try:
-        rec = json.loads(_portfile_path(state_dir).read_text())
-    except Exception:
-        return None
-    port, nonce, pid = rec.get("port"), rec.get("nonce"), rec.get("pid")
-    if not (isinstance(port, int) and isinstance(nonce, str) and nonce):
-        return None
-    if isinstance(pid, int) and not _pid_alive(pid):
-        return None
-    if not await _port_listening(port):
-        return None
-    return port, nonce
-
-
-def _state_dir() -> Path:
-    """Where the sidecar keeps board state. Honors an explicit override, else a
-    per-HERMES_HOME directory so isolated dashboards don't share a board."""
-    override = os.environ.get("BOARDSTATE_HERMES_STATE_DIR")
-    if override:
-        return Path(override)
-    hermes_home = os.environ.get("HERMES_HOME")
-    base = Path(hermes_home) if hermes_home else (Path.home() / ".hermes")
-    return base / "boardstate-state"
-
-
-def _node_bin() -> str:
-    return os.environ.get("HERMES_NODE_BIN") or shutil.which("node") or "node"
+_SIDECAR_JS = _runtime.sidecar_bundle()
+_sidecar = _runtime._state
+_portfile_path = _runtime._portfile_path
+_pid_alive = _runtime._pid_alive
+_port_listening = _runtime._port_listening
+_try_adopt = _runtime._try_adopt
+_read_port = _runtime._read_port
+_spawn_sidecar = _runtime._spawn_sidecar
+_state_dir = _runtime.state_dir
+_kill_sidecar = _runtime.shutdown_owned_sidecar
 
 
 def _hermes_data_credentials() -> tuple[Optional[str], Optional[str]]:
@@ -210,167 +151,13 @@ def _ws_upgrade_authorized(ws: "WebSocket") -> bool:
 # Sidecar lifecycle.
 # ---------------------------------------------------------------------------
 
-async def _drain(stream: Optional[asyncio.StreamReader], label: str) -> None:
-    if stream is None:
-        return
-    try:
-        while True:
-            line = await stream.readline()
-            if not line:
-                return
-            log.info("boardstate-sidecar[%s]: %s", label, line.decode(errors="replace").rstrip())
-    except Exception:  # pragma: no cover - best-effort logging
-        return
-
-
-async def _read_port(proc: "asyncio.subprocess.Process") -> int:
-    """Read the sidecar's announced port from its stdout JSON handshake line."""
-    assert proc.stdout is not None
-    while True:
-        line = await asyncio.wait_for(proc.stdout.readline(), timeout=20.0)
-        if not line:
-            raise RuntimeError("boardstate sidecar exited before announcing its port")
-        try:
-            data = json.loads(line.decode().strip())
-        except Exception:
-            continue  # non-JSON log noise before the handshake
-        info = data.get("boardstateSidecar") if isinstance(data, dict) else None
-        if isinstance(info, dict) and "port" in info:
-            return int(info["port"])
-
-
-def _kill_sidecar() -> None:
-    # Reap ONLY a sidecar this process spawned (never one we adopted from another
-    # backend), and clear the port-file so the next start doesn't adopt a corpse.
-    if not _sidecar.get("owned"):
-        return
-    proc = _sidecar.get("proc")
-    if proc is not None and proc.returncode is None:
-        try:
-            proc.terminate()
-        except Exception:
-            pass
-    try:
-        _portfile_path(_state_dir()).unlink(missing_ok=True)
-    except Exception:
-        pass
-
-
-async def _spawn_sidecar(state_dir: Path) -> tuple[int, str]:
-    """Spawn a fresh sidecar and record it in the port-file. Caller holds the locks."""
-    global _atexit_registered
-
-    # Per-spawn shared secret: the sidecar's WS/MCP gate (verifyClient) requires it as a
-    # `?nonce=` query param, so a random other local process can't drive the control plane just
-    # by finding the ephemeral loopback port. Published to the port file for adoption.
-    nonce = secrets.token_urlsafe(32)
-    # SEC-1: a SEPARATE operator secret for the sidecar's /operator endpoint — NEVER written to
-    # the port file, so port-file knowledge alone cannot approve/confirm/deny. Only this process
-    # holds it.
-    operator_secret = secrets.token_urlsafe(32)
-
-    env = os.environ.copy()
-    env["BOARDSTATE_STATE_DIR"] = str(state_dir)
-    env["BOARDSTATE_SIDECAR_NONCE"] = nonce
-    env["BOARDSTATE_OPERATOR_SECRET"] = operator_secret
-    env.setdefault("PORT", "0")  # ephemeral loopback port
-
-    # Inject the dashboard base URL + session token so the sidecar can resolve
-    # `source:"rpc"` data bindings (sessions/usage/status/cron) against Hermes REST.
-    # Server-side only — the credential never enters the board document or a browser.
-    # Best-effort: without it the sidecar simply serves no live Hermes data (graceful).
+async def _ensure_sidecar() -> tuple[int, str]:
+    extra_env: dict[str, str] = {}
     hermes_url, hermes_token = _hermes_data_credentials()
     if hermes_url and hermes_token:
-        env["HERMES_DASHBOARD_URL"] = hermes_url
-        env["HERMES_SESSION_TOKEN"] = hermes_token
-
-    proc = await asyncio.create_subprocess_exec(
-        _node_bin(),
-        str(_SIDECAR_JS),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=env,
-    )
-    try:
-        port = await _read_port(proc)
-    except Exception:
-        try:
-            proc.terminate()
-        except Exception:
-            pass
-        raise
-
-    _sidecar["proc"] = proc
-    _sidecar["port"] = port
-    _sidecar["nonce"] = nonce
-    _sidecar["operator_secret"] = operator_secret  # in-memory only; NEVER persisted (SEC-1)
-    _sidecar["owned"] = True
-    # Publish port + adoption nonce for other backend processes (single writer per state dir).
-    # The operator secret is DELIBERATELY excluded — adoption grants board rendering, not the
-    # operator plane. chmod 600 so only this user can even read the adoption record.
-    try:
-        pf = _portfile_path(state_dir)
-        pf.write_text(json.dumps({"port": port, "nonce": nonce, "pid": os.getpid()}))
-        try:
-            os.chmod(pf, 0o600)
-        except OSError:  # pragma: no cover - best-effort (e.g. Windows)
-            pass
-    except Exception as exc:  # pragma: no cover - non-fatal
-        log.warning("boardstate: could not write sidecar port-file: %s", exc)
-    # Keep draining both streams so the pipe buffers never fill and stall node.
-    asyncio.create_task(_drain(proc.stdout, "out"))
-    asyncio.create_task(_drain(proc.stderr, "err"))
-    if not _atexit_registered:
-        atexit.register(_kill_sidecar)
-        _atexit_registered = True
-    log.info("boardstate: sidecar up on 127.0.0.1:%d (state %s)", port, state_dir)
-    return port, nonce
-
-
-async def _ensure_sidecar() -> tuple[int, str]:
-    async with _sidecar_lock:
-        # (1) This process already owns/adopted a live sidecar.
-        proc = _sidecar.get("proc")
-        if _sidecar.get("port") and (proc is None or proc.returncode is None):
-            if proc is None:  # adopted (not ours) — re-confirm it's still listening
-                if await _port_listening(int(_sidecar["port"])):
-                    return int(_sidecar["port"]), str(_sidecar["nonce"])
-            else:
-                return int(_sidecar["port"]), str(_sidecar["nonce"])
-
-        if not _SIDECAR_JS.exists():
-            raise RuntimeError(f"boardstate sidecar bundle missing: {_SIDECAR_JS} (run the build)")
-
-        state_dir = _state_dir()
-        state_dir.mkdir(parents=True, exist_ok=True)
-
-        # (2) Cross-process critical section: under a POSIX file lock, adopt a live
-        # sidecar for this state dir, else spawn one. The lock closes the race where two
-        # backends both find no port-file and both spawn.
-        lock_fd = None
-        if _HAVE_FCNTL:
-            try:
-                lock_fd = os.open(str(state_dir / ".boardstate-sidecar.lock"), os.O_CREAT | os.O_RDWR, 0o600)
-                await asyncio.get_running_loop().run_in_executor(None, fcntl.flock, lock_fd, fcntl.LOCK_EX)
-            except Exception:  # pragma: no cover - lock best-effort
-                if lock_fd is not None:
-                    os.close(lock_fd)
-                    lock_fd = None
-        try:
-            adopted = await _try_adopt(state_dir)
-            if adopted:
-                _sidecar["proc"] = None  # not ours: never reap it
-                _sidecar["owned"] = False
-                _sidecar["port"], _sidecar["nonce"] = adopted
-                log.info("boardstate: adopted existing sidecar on 127.0.0.1:%d (state %s)", adopted[0], state_dir)
-                return adopted
-            return await _spawn_sidecar(state_dir)
-        finally:
-            if lock_fd is not None:
-                try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                finally:
-                    os.close(lock_fd)
+        extra_env["HERMES_DASHBOARD_URL"] = hermes_url
+        extra_env["HERMES_SESSION_TOKEN"] = hermes_token
+    return await _runtime.ensure_sidecar("dashboard", extra_env=extra_env)
 
 
 # ---------------------------------------------------------------------------
@@ -438,7 +225,7 @@ async def _proxy_widget_asset(asset_path: str) -> "Response":
         return Response(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE)
     url = f"http://127.0.0.1:{port}/widgets/{safe_path}"
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
             upstream = await client.get(url)
     except Exception as exc:
         log.warning("boardstate: widget asset upstream error: %s", exc)
@@ -499,7 +286,14 @@ async def assets_base(request: "Request") -> "Response":
     credential). The returned base composes with the client's `${base}/widgets/...`."""
     # Same session posture as the operator route's loopback check: this endpoint rides
     # the dashboard's own /api gate (session token in loopback, cookie in gated mode).
-    return JSONResponse({"base": f"{_ASSET_ROUTE_PREFIX}/{_ASSET_TOKEN}"})
+    relative_base = f"{_ASSET_ROUTE_PREFIX}/{_ASSET_TOKEN}"
+    origin = str(request.base_url).rstrip("/")
+    return JSONResponse(
+        {
+            "base": relative_base,
+            "absoluteBase": f"{origin}{relative_base}",
+        }
+    )
 
 
 _MCP_FWD_REQ_HEADERS = ("content-type", "accept", "mcp-session-id", "mcp-protocol-version", "last-event-id")
@@ -518,7 +312,7 @@ async def mcp_proxy(request: "Request") -> "Response":
     fwd_headers = {h: request.headers[h] for h in _MCP_FWD_REQ_HEADERS if h in request.headers}
     url = f"http://127.0.0.1:{port}/mcp?nonce={nonce}"
 
-    client = httpx.AsyncClient(timeout=None)
+    client = httpx.AsyncClient(timeout=None, trust_env=False)
     try:
         upstream_req = client.build_request(request.method, url, content=body, headers=fwd_headers)
         upstream = await client.send(upstream_req, stream=True)
@@ -538,6 +332,57 @@ async def mcp_proxy(request: "Request") -> "Response":
             await client.aclose()
 
     return StreamingResponse(_iter(), status_code=upstream.status_code, headers=resp_headers)
+
+
+# ---------------------------------------------------------------------------
+# Desktop request transport: ctx.rest POSTs one Boardstate RPC here.  The
+# dashboard auth gate protects this route; the sidecar still requires its
+# per-spawn nonce.  Operator-only methods remain on /operator and are rejected
+# by the sidecar's internal endpoint.
+# ---------------------------------------------------------------------------
+
+@router.post("/rpc")
+async def rpc_proxy(request: "Request") -> "Response":
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "body must be JSON { method, params }"},
+        )
+    if not isinstance(payload, dict) or not isinstance(payload.get("method"), str):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "body must be JSON { method, params }"},
+        )
+    try:
+        port, nonce = await _ensure_sidecar()
+    except Exception as exc:
+        log.warning("boardstate: sidecar unavailable for RPC: %s", exc)
+        return JSONResponse(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"error": "sidecar unavailable"},
+        )
+    try:
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
+            upstream = await client.post(
+                f"http://127.0.0.1:{port}/rpc?nonce={nonce}",
+                json={
+                    "method": payload["method"],
+                    "params": payload.get("params") or {},
+                },
+            )
+    except Exception as exc:
+        log.warning("boardstate: RPC upstream error: %s", exc)
+        return JSONResponse(
+            status_code=http_status.HTTP_502_BAD_GATEWAY,
+            content={"error": "sidecar RPC upstream error"},
+        )
+    try:
+        body = upstream.json()
+    except Exception:
+        body = {"error": upstream.text}
+    return JSONResponse(status_code=upstream.status_code, content=body)
 
 
 # ---------------------------------------------------------------------------
@@ -685,7 +530,7 @@ async def operator(request: "Request") -> "Response":
     url = f"http://127.0.0.1:{port}/operator?nonce={operator_secret}"
     log.info("boardstate: operator %s by %s", method, principal)
     try:
-        async with httpx.AsyncClient(timeout=None) as client:
+        async with httpx.AsyncClient(timeout=None, trust_env=False) as client:
             upstream = await client.post(url, json={"method": method, "params": params})
     except Exception as exc:
         log.warning("boardstate: operator upstream error: %s", exc)
@@ -723,7 +568,18 @@ async def board_ws(ws: WebSocket) -> None:
 
     uri = f"ws://127.0.0.1:{port}/ws?nonce={nonce}"
     try:
-        async with websockets.connect(uri, max_size=2 ** 20) as upstream:
+        async with websockets.connect(uri, max_size=2 ** 20, **_WS_DIRECT) as upstream:
+            # ctx.socket is receive-only and has no open callback. Ack only
+            # after the upstream connection exists, so Desktop never turns a
+            # failed reconnect into a false "live" state.
+            await ws.send_text(
+                json.dumps(
+                    {
+                        "event": "boardstate.desktop.connected",
+                        "payload": {"ok": True},
+                    }
+                )
+            )
             await _bridge(ws, upstream)
     except WebSocketDisconnect:
         return

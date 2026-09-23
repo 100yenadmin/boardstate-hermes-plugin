@@ -16,7 +16,9 @@
 // by a separate `boardstate-mcp` process against the same dir is read on the next
 // control-plane read and rendered.
 
+import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { join } from "node:path";
 import { DashboardStore } from "@boardstate/core";
 import { FsStorageAdapter } from "@boardstate/core/node";
 import { validateWorkspaceDoc } from "@boardstate/schema";
@@ -28,11 +30,26 @@ import {
   registerBoardstateRpc,
 } from "@boardstate/server/node";
 import { installConnectorsFromConfig, type ConnectorWorkspace } from "./connectors.js";
-import { createHermesRpcResolver, registerHermesDataRpc } from "./hermes-data.js";
+import {
+  createHermesRpcResolver,
+  registerHermesDataRpc,
+  registerUnavailableHermesDataRpc,
+} from "./hermes-data.js";
+import { createInternalEndpoint } from "./internal.js";
 import { createMcpEndpoint } from "./mcp.js";
 import { createOperatorEndpoint } from "./operator.js";
 import { officeCliBootHint } from "./presets.js";
 import { buildRedactor } from "./redact.js";
+
+const ignoreBrokenPipe = (error: NodeJS.ErrnoException): void => {
+  if (error.code !== "EPIPE") {
+    setImmediate(() => {
+      throw error;
+    });
+  }
+};
+process.stdout.on("error", ignoreBrokenPipe);
+process.stderr.on("error", ignoreBrokenPipe);
 
 const stateDirEnv = process.env.BOARDSTATE_STATE_DIR;
 const storage = new FsStorageAdapter(stateDirEnv ? { storageDir: stateDirEnv } : {});
@@ -173,13 +190,13 @@ if (connectors) {
       `[boardstate] connector workspace not fully ready: ${err instanceof Error ? err.message : String(err)}`,
     );
   });
-  console.log(
+  console.error(
     `[boardstate] connectors wired: ${connectors.broker.connectorNames().join(", ") || "(none)"}`,
   );
 } else {
   // No connectors yet — surface the first blessed connector's detect-or-instruct hint so an
   // operator sees the exact next step (install OfficeCLI, then author boardstate.connectors.json).
-  console.log(officeCliBootHint());
+  console.error(officeCliBootHint());
 }
 
 // Live Hermes data bindings. `<boardstate-view>` resolves a `source:"rpc"` binding by
@@ -189,7 +206,9 @@ if (connectors) {
 // widget shows an error cell. Only when plugin_api injected the Hermes credentials.
 if (hermesUrl && hermesToken) {
   const dataMethods = registerHermesDataRpc(host, { baseUrl: hermesUrl, sessionToken: hermesToken });
-  console.log(`[boardstate] live Hermes data RPC methods: ${dataMethods.join(", ")}`);
+  console.error(`[boardstate] live Hermes data RPC methods: ${dataMethods.join(", ")}`);
+} else {
+  registerUnavailableHermesDataRpc(host);
 }
 
 // Approved custom-widget assets resolve under the sidecar's own `/widgets` route
@@ -228,6 +247,12 @@ const mcpEndpoint = await createMcpEndpoint(host, store, {
       }
     : {}),
 });
+let requestSidecarShutdown = (): void => undefined;
+const internalEndpoint = createInternalEndpoint(host, mcpEndpoint, {
+  nonce: sidecarNonceForMcp,
+  spawnedBy: process.env.BOARDSTATE_SPAWNED_BY === "agent" ? "agent" : "dashboard",
+  requestShutdown: () => requestSidecarShutdown(),
+});
 
 // The operator DECISION seam: a DEDICATED-secret-gated in-process HTTP endpoint the parent
 // `plugin_api` bridge (and ONLY it) forwards operator approve/confirm/deny to. Operator verbs
@@ -236,15 +261,47 @@ const mcpEndpoint = await createMcpEndpoint(host, store, {
 // when no secret is configured (a direct CLI spawn drives the in-process host itself).
 const operatorEndpoint = createOperatorEndpoint(host, { secret: operatorSecret });
 
+let activeInvocations = 0;
+let shutdownRequested = false;
+let exiting = false;
+// Close the connector broker's warm clients (stdio children) before exiting, so a sidecar
+// handoff never orphans them. Bounded well inside the parent's 2 s SIGTERM grace.
+const exitAfterCleanup = (): void => {
+  if (exiting) return;
+  exiting = true;
+  const closing = connectors ? connectors.broker.close().catch(() => undefined) : Promise.resolve();
+  const bound = new Promise<void>((resolve) => setTimeout(resolve, 1_500).unref());
+  void Promise.race([closing, bound]).finally(() => process.exit(0));
+};
+const invocationSettled = (): void => {
+  activeInvocations -= 1;
+  if (shutdownRequested && activeInvocations === 0) exitAfterCleanup();
+};
+
 const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
   const pathname = (req.url ?? "/").split("?")[0];
+  if (pathname === "/tools/invoke") {
+    activeInvocations += 1;
+    let settled = false;
+    const settleOnce = (): void => {
+      if (settled) return;
+      settled = true;
+      invocationSettled();
+    };
+    res.once("finish", settleOnce);
+    res.once("close", settleOnce);
+  }
   void operatorEndpoint
     .handle(req, res, pathname)
     .then((handledOperator) => {
       if (handledOperator) {
         return undefined;
       }
-      return mcpEndpoint.handle(req, res, pathname).then((handledMcp) => {
+      return internalEndpoint.handle(req, res, pathname).then((handledInternal) => {
+        if (handledInternal) {
+          return undefined;
+        }
+        return mcpEndpoint.handle(req, res, pathname).then((handledMcp) => {
         if (handledMcp) {
           return undefined;
         }
@@ -261,6 +318,7 @@ const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
           res.statusCode = 404;
           res.end("not found");
         });
+      });
       });
     })
     .catch(() => {
@@ -309,9 +367,69 @@ httpServer.listen(port, hostname, () => {
 });
 
 const shutdown = (): void => {
-  httpServer.close(() => process.exit(0));
-  // Fail-safe: don't hang forever if a socket is stuck.
-  setTimeout(() => process.exit(0), 1000).unref();
+  if (shutdownRequested) return;
+  shutdownRequested = true;
+  httpServer.close(() => {
+    if (activeInvocations === 0) exitAfterCleanup();
+  });
+  if (activeInvocations === 0) exitAfterCleanup();
+  // Fail-safe for a genuinely stuck request. Normal accepted calls drain first.
+  setTimeout(() => process.exit(0), 30_000).unref();
 };
+requestSidecarShutdown = shutdown;
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+
+// Owner watchdog. A Hermes process killed with SIGKILL never runs its exit cleanup, so an
+// agent- or dashboard-owned sidecar would otherwise outlive it. Every 3 s, read the port
+// record: while it is ours (same nonce), the holders are its current `owner_pid` plus its
+// `adopters` — the same set the Python lifecycle hands ownership between — so a sidecar that
+// any live process owns or has adopted is never stopped. While a readable record names a
+// different sidecar (before ours is written), only the spawning pid can know our nonce, so
+// it is the holder. A missing or unreadable record skips the tick: after a handoff the
+// spawner may be gone while an adopter still owns us. Inactive for a direct CLI/demo spawn
+// (no nonce or owner pid).
+const spawnerPid = Number(process.env.BOARDSTATE_OWNER_PID);
+const recordPath = stateDirEnv ? join(stateDirEnv, ".boardstate-sidecar.json") : undefined;
+// Only trust a reparent signal when node is the spawner's direct child (not behind a shim).
+const spawnerIsParent = Number.isInteger(spawnerPid) && process.ppid === spawnerPid;
+const pidAlive = (pid: number): boolean => {
+  if (pid === spawnerPid && spawnerIsParent && process.ppid !== spawnerPid) return false;
+  try {
+    process.kill(pid, 0); // signal 0: existence check only, on POSIX and Windows
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+  if (process.platform === "linux") {
+    // An exited but unreaped holder is a zombie; like the Python lifecycle, count it as gone.
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      return !["Z", "X"].includes(stat.slice(stat.lastIndexOf(")") + 1).trim().split(" ")[0]);
+    } catch {
+      return true;
+    }
+  }
+  return true;
+};
+const recordHolders = (): number[] | null => {
+  let record: { nonce?: unknown; owner_pid?: unknown; adopters?: unknown };
+  try {
+    record = JSON.parse(readFileSync(recordPath as string, "utf8"));
+  } catch {
+    return null; // missing, unreadable, or a transient read error: decide on a later tick
+  }
+  if (record.nonce === sidecarNonce) {
+    const adopters = Array.isArray(record.adopters) ? record.adopters : [];
+    return [record.owner_pid, ...adopters].filter((pid): pid is number => Number.isInteger(pid));
+  }
+  return [spawnerPid];
+};
+if (sidecarNonce && recordPath && Number.isInteger(spawnerPid) && spawnerPid > 0) {
+  setInterval(() => {
+    const holders = recordHolders();
+    if (holders && holders.length > 0 && !holders.some(pidAlive)) {
+      console.error("[boardstate] no live owner or adopter remains; shutting down");
+      shutdown();
+    }
+  }, 3_000).unref();
+}

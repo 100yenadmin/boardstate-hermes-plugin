@@ -1,18 +1,18 @@
 {
   "name": "boardstate-hermes-plugin",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "private": true,
   "description": "Drop-in Hermes dashboard tab that renders a live Boardstate board.",
   "license": "MIT",
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "clean": "rm -rf dashboard/dist/index.js dashboard/dist/index.js.map dashboard/sidecar/server.js dashboard/sidecar/server.js.map dashboard/vendor/boardstate-browser.js dashboard/vendor/boardstate.css"
+    "clean": "rm -rf dashboard/dist/index.js dashboard/dist/index.js.map desktop/plugin.js dashboard/sidecar/server.js dashboard/sidecar/server.js.map dashboard/vendor/boardstate-browser.js dashboard/vendor/boardstate.css dashboard/tools.schema.json"
   },
   "devDependencies": {
     "@boardstate/broker": "^0.3.4",
     "@boardstate/core": "^1.8.0",
-    "@boardstate/lit": "^0.9.0",
+    "@boardstate/lit": "^0.9.1",
     "@boardstate/schema": "^1.8.0",
     "@boardstate/server": "^1.8.0",
     "@modelcontextprotocol/sdk": "^1.29.0",

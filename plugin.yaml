@@ -1,0 +1,29 @@
+name: boardstate
+version: "1.5.0"
+description: "Live agent-built Boardstate board for Hermes Web and Desktop."
+author: 100yenadmin
+kind: standalone
+requires_hermes: ">=0.21.2"
+provides_tools:
+  - boardstate_workspace_get
+  - boardstate_tab_create
+  - boardstate_tab_update
+  - boardstate_tab_delete
+  - boardstate_tabs_reorder
+  - boardstate_widget_add
+  - boardstate_widget_update
+  - boardstate_widget_move
+  - boardstate_widget_remove
+  - boardstate_layout_set
+  - boardstate_workspace_replace
+  - boardstate_undo
+  - boardstate_widget_catalog
+  - boardstate_design_review
+  - boardstate_tool_search
+  - boardstate_widget_scaffold
+  - boardstate_data_read
+  - boardstate_connector_read
+  - boardstate_connector_invoke
+provides_hooks: []
+provides_middleware: []
+requires_env: []

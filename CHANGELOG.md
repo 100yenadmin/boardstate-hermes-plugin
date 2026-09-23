@@ -3,6 +3,82 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.5.0
+
+### Added
+
+- Unified Hermes package layout with root `plugin.yaml`, native `register(ctx)`,
+  root `desktop/plugin.js`, dashboard backend, and an MIT license.
+- All 19 `boardstate_*` tools register natively from a committed schema generated from
+  the sidecar's own tool definitions. The Streamable HTTP MCP route remains optional.
+- Shared agent/dashboard sidecar lifecycle with explicit ownership, dashboard replacement
+  of agent-owned processes, and state-preserving handoff.
+
+### Changed
+
+- The Desktop page uses only public SDK members: `ctx.register` with `ROUTES_AREA` and
+  `SIDEBAR_NAV_AREA`, `ctx.rest`, `ctx.socket`, `ctx.onDispose`, `ctx.setTimeout` when present
+  (with a fallback), and `host.notify`. It no longer reads `window.hermesDesktop` or
+  constructs a tokenized WebSocket.
+- Node.js is resolved from `HERMES_NODE_BIN`, then Hermes' own Node lookup, then `PATH`.
+- State directories are created with mode 0700.
+- Live-data widgets return a clear dashboard-unavailable result when the agent starts the
+  sidecar before a dashboard is present.
+- The build rewrites ajv's `$data` meta-schema identifier (a GitHub raw URL, never fetched) so
+  the catalog's self-updater check is not tripped by a false positive; CI replays that check.
+- CI validates against pinned Hermes upstream and checks generated tool-schema sync, runs the
+  committed sidecar on Node 20 (the minimum), and runs the lifecycle probe on Windows.
+
+### Security
+
+- Windows: the sidecar liveness probe no longer uses `os.kill(pid, 0)`, which CPython
+  maps to `TerminateProcess` on Windows; it queries the process handle instead. A
+  `windows-latest` CI job exercises the probe against a real child process.
+- An agent-owned sidecar no longer receives the operator secret in its environment, so an
+  agent with shell access cannot read it back and approve its own pending actions.
+- Loopback sidecar traffic (native tools, dashboard proxy routes, the Desktop WebSocket bridge)
+  never goes through an `HTTP(S)_PROXY` from the environment, so the nonce and operator secret
+  cannot reach a proxy.
+- README states the operator gate's limit: it is not a boundary against an agent with
+  unrestricted same-user shell access; isolate the agent's terminal (backend or OS user).
+
+### Fixed
+
+- Zombie sidecars (a reaper that never waits, e.g. some container inits) count as exited on
+  Linux, so replacement no longer times out.
+- Exit cleanup never signals a recorded pid it cannot prove is still the sidecar (our own
+  unreaped child, or a nonce-verified identity probe), so pid reuse after a sidecar crash can
+  no longer kill an unrelated process.
+- The port record is written atomically (temp file + rename); a crash mid-write can no longer
+  leave a record that blocks every start. The refusal message names the file.
+- The sidecar closes connector clients before exiting, so handoffs do not orphan stdio connectors.
+- Dashboard replacement now uses a nonce-authenticated loopback shutdown request, waits up to
+  35 seconds for accepted native calls and connector cleanup to drain, and never signals a bare
+  recorded pid. Windows therefore gets the same graceful path instead of `TerminateProcess`.
+- A successful identity re-probe of the dashboard's own live child preserves its process handle,
+  operator secret, and exit-cleanup ownership after a transient first-probe timeout.
+- Aborted native-tool HTTP responses settle the active-invocation counter, so authenticated
+  shutdown reaches connector cleanup promptly instead of waiting for the 30-second fail-safe.
+- The Desktop page no longer installs theme observers after it has unmounted.
+- The Desktop page works on Hermes Desktop builds whose plugin SDK has no scoped timers.
+- Desktop board inputs (the notes textarea) follow the dark theme instead of rendering white.
+- Agent-written notes show their text on a connected board; markdown task lists, headings followed by
+  lists, and inline code render correctly (@boardstate/lit 0.9.1).
+- Without Node.js, tools return "Boardstate needs Node.js >= 20 on PATH (or set
+  HERMES_NODE_BIN)" instead of a bare `FileNotFoundError`. After the plugin files are
+  removed mid-session, tools say so instead of suggesting `npm run build`, which only
+  applies to a git checkout.
+- A sidecar whose owner and adopters were all killed without cleanup (for example
+  `SIGKILL`) now shuts itself down within a few seconds instead of running on as an orphan.
+- A port record whose pid is alive but serves no sidecar (for example after pid reuse) no
+  longer blocks every tool call and dashboard request: after the sidecar drain limit (35 s)
+  the stale record is dropped and a fresh sidecar starts. The pid is never signalled.
+- README: corrected the security-scanner attributions (per finding and module) and the SDK
+  members the Desktop page uses, listed the real widget kinds, and rewrote the install
+  instructions (catalog form first, `--ref`/`--force` for the `owner/repo` form,
+  `hermes plugins enable`, profiles, uninstall); disclosed that the sidecar inherits the
+  Hermes environment.
+
 ## 1.4.1
 
 ### Security

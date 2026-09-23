@@ -157,7 +157,14 @@ export function createHermesRpcResolver(config: HermesDataConfig): BindingResolv
 type RpcHost = {
   registerRpc: (
     method: string,
-    handler: (opts: { params?: unknown; respond: (ok: boolean, data: unknown) => void }) => unknown,
+    handler: (opts: {
+      params?: unknown;
+      respond: (
+        ok: boolean,
+        data?: unknown,
+        error?: { code: string; message: string },
+      ) => void;
+    }) => unknown,
     options: { scope: "read" | "write" },
   ) => void;
 };
@@ -185,6 +192,26 @@ export function registerHermesDataRpc(
       async (opts) => {
         const data = await HANDLERS[method](get, obj(opts?.params));
         opts.respond(true, data);
+      },
+      { scope: "read" },
+    );
+  }
+  return methods;
+}
+
+/** Register the same live-data methods when no dashboard is attached, but fail
+ * with one explicit message instead of an unknown-method crash in the widget. */
+export function registerUnavailableHermesDataRpc(host: RpcHost): string[] {
+  const methods = Object.keys(HANDLERS);
+  for (const method of methods) {
+    host.registerRpc(
+      method,
+      (opts) => {
+        opts.respond(false, undefined, {
+          code: "hermes_data_unavailable",
+          message:
+            "Live Hermes data is unavailable because Boardstate was started by the agent without a dashboard. Open the Board tab to reconnect live data.",
+        });
       },
       { scope: "read" },
     );

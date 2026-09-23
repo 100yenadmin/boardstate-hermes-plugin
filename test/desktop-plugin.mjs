@@ -1,4 +1,4 @@
-// Structural gate for the desktop plugin bundle (dashboard/desktop/plugin.js).
+// Structural gate for the unified package Desktop bundle (desktop/plugin.js).
 //
 // The desktop loader executes plugin.js as ESM and REJECTS any import except
 // `@hermes/plugin-sdk` / `react*` — so a stray bundled import (a boardstate package
@@ -13,7 +13,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const bundle = readFileSync(join(here, "..", "dashboard", "desktop", "plugin.js"), "utf8");
+const bundle = readFileSync(join(here, "..", "desktop", "plugin.js"), "utf8");
+const source = readFileSync(join(here, "..", "dashboard", "desktop", "plugin.tsx"), "utf8");
 
 let n = 0;
 const failures = [];
@@ -42,12 +43,25 @@ check('declares id "boardstate"', /["']boardstate["']/.test(bundle));
 // boardstate is inlined (not left as an external import).
 check("does NOT import @boardstate/* (inlined)", ![...specifiers].some((s) => s.startsWith("@boardstate/")));
 check("registers <boardstate-view> (element bundle inlined)", bundle.includes("boardstate-view"));
-check("createWsTransport inlined", bundle.includes("createWsTransport") || /WebSocket/.test(bundle));
+check("does not construct a raw WebSocket", !/new\s+WebSocket\s*\(/.test(bundle));
+check("does not use window.hermesDesktop", !bundle.includes("window.hermesDesktop"));
 
 // Desktop contract wired.
 check("registers a route area", bundle.includes("ROUTES_AREA") || bundle.includes("routes"));
 check("registers a sidebar nav", bundle.includes("SIDEBAR_NAV_AREA") || bundle.includes("sidebar.nav"));
-check("sources the desktop connection", bundle.includes("getConnection"));
+check("uses ctx.rest for Boardstate requests", bundle.includes("/rpc"));
+check("uses ctx.socket for live pushes", bundle.includes("/ws"));
+check("uses the desktop-only absolute widget asset base", bundle.includes("absoluteBase"));
+check(
+  "no reconnect status can override an initialization error",
+  source.includes('errorSticky && next !== "error"'),
+);
+check(
+  "a desktop socket acknowledgement refetches missed board changes",
+  source.includes('listeners.get("boardstate.changed")'),
+);
+check("registers dispose cleanup", bundle.includes("onDispose"));
+check("guards custom-element registration", bundle.includes("customElements.get"));
 check("applies a template via workspace.replace", bundle.includes("dashboard.workspace.replace"));
 check("maps to desktop --ui-* tokens", bundle.includes("--ui-"));
 

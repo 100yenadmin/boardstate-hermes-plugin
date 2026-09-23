@@ -2919,11 +2919,6 @@ function mapChart(widget, value) {
 		label: props.label === true
 	};
 }
-/** Coerce a persisted state blob to the editable text. Stored blob is the raw string. */
-function notesTextFromState(state) {
-	if (typeof state === "string") return state;
-	return "";
-}
 const SLOT_PATTERN = /\{([A-Za-z0-9_]+)\}/g;
 const FIELD_TYPES = /* @__PURE__ */ new Set([
 	"text",
@@ -5782,21 +5777,27 @@ function renderInline(escaped) {
 	out = out.replace(/(^|[^_])_([^_]+)_/g, (_m, lead, inner) => `${lead}<em>${inner}</em>`);
 	return out;
 }
-/** Render one non-list block (heading / blockquote / paragraph). */
+/** An ATX heading line (CommonMark: the heading ends at the newline). */
+const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*))?$/;
+/** Render one non-list block (blockquote / paragraph). */
 function renderBlock(block) {
 	const lines = block.split("\n");
-	const heading = /^(#{1,6})\s+(.*)$/.exec(lines[0] ?? "");
-	if (heading && lines.length === 1) {
-		const level = heading[1].length;
-		return `<h${level}>${renderInline(escapeHtml(heading[2]))}</h${level}>`;
-	}
 	if (lines.every((line) => line.startsWith(">"))) return `<blockquote>${lines.map((line) => renderInline(escapeHtml(line.replace(/^>\s?/, "")))).join("<br>")}</blockquote>`;
 	return `<p>${lines.map((line) => renderInline(escapeHtml(line))).join("<br>")}</p>`;
 }
+/** Render one list item; a GFM `[ ]` / `[x]` task marker becomes a glyph span. */
+function renderListItem(item) {
+	const task = /^\[([ xX])\]\s+(.*)$/.exec(item);
+	if (!task) return `<li>${renderInline(escapeHtml(item))}</li>`;
+	const checked = task[1] !== " ";
+	return `<li class="dashboard-markdown__task-item">${`<span class="dashboard-markdown__task" role="img" aria-label="${checked ? "checked" : "unchecked"}">${checked ? "☑" : "☐"}</span>`} ${renderInline(escapeHtml(task[2]))}</li>`;
+}
 /** Render a bullet (`-`/`*`) or ordered (`1.`) list block. */
 function renderList(block, ordered) {
-	const items = block.split("\n").map((line) => line.replace(ordered ? /^\s*\d+\.\s+/ : /^\s*[-*]\s+/, "")).map((item) => `<li>${renderInline(escapeHtml(item))}</li>`).join("");
-	return ordered ? `<ol>${items}</ol>` : `<ul>${items}</ul>`;
+	const items = block.split("\n").map((line) => line.replace(ordered ? /^\s*\d+\.\s+/ : /^\s*[-*]\s+/, "")).map(renderListItem).join("");
+	if (!ordered) return `<ul>${items}</ul>`;
+	const start = Number.parseInt(/^\s*(\d+)\./.exec(block)?.[1] ?? "1", 10);
+	return Number.isSafeInteger(start) && start !== 1 ? `<ol start="${start}">${items}</ol>` : `<ol>${items}</ol>`;
 }
 function isUnorderedList(block) {
 	return block.split("\n").every((line) => /^\s*[-*]\s+/.test(line));
@@ -5817,6 +5818,7 @@ function toSanitizedMarkdownHtml(source) {
 	const rawLines = source.replace(/\r\n?/g, "\n").split("\n");
 	const html = [];
 	let paragraph = [];
+	let paragraphKind = "";
 	const flushParagraph = () => {
 		if (paragraph.length === 0) return;
 		const block = paragraph.join("\n");
@@ -5842,6 +5844,18 @@ function toSanitizedMarkdownHtml(source) {
 			flushParagraph();
 			continue;
 		}
+		const heading = HEADING.exec(line);
+		if (heading) {
+			flushParagraph();
+			const level = heading[1].length;
+			html.push(`<h${level}>${renderInline(escapeHtml(heading[2] ?? ""))}</h${level}>`);
+			continue;
+		}
+		let kind = isUnorderedList(line) ? "ul" : isOrderedList(line) ? "ol" : "p";
+		const continuation = /^(?: {4}| {0,3}\t)/.test(line) || /^\s*(?:[-*]|\d+\.)\s*$/.test(line) || kind === "ol" && Number.parseInt(line.trim(), 10) !== 1;
+		if (paragraphKind === "p" && paragraph.length > 0 && continuation) kind = "p";
+		if (kind !== paragraphKind) flushParagraph();
+		paragraphKind = kind;
 		paragraph.push(line);
 	}
 	flushParagraph();
@@ -6490,20 +6504,26 @@ function notesSeedText(widget) {
 	return "";
 }
 /**
-* Callback ref that hydrates the textarea from the widget's persisted state, then
-* wires debounced persistence on input. The `ref` directive calls this with the
+* Callback ref that shows the author/agent `seed` at once, hydrates the textarea
+* from the widget's persisted state, then wires debounced persistence on input. A
+* persisted string (even an empty one the user saved) wins over the seed; the seed
+* is never written back until the user edits. The `ref` directive calls this with the
 * element on connect (and `undefined` on disconnect). All state errors are
 * swallowed: a failed load/save leaves the pad usable rather than throwing into
 * the cell's error boundary.
 */
-function bindNotesEditor(state) {
+function bindNotesEditor(state, seed) {
 	return (element) => {
 		if (!(element instanceof HTMLTextAreaElement)) return;
 		const textarea = element;
+		if (textarea.dataset.notesPersisted !== "1" && textarea.dataset.notesDirty !== "1") textarea.value = seed;
 		if (textarea.dataset.notesBound === "1") return;
 		textarea.dataset.notesBound = "1";
 		state.get().then((result) => {
-			if (textarea.dataset.notesDirty !== "1") textarea.value = notesTextFromState(result.state);
+			if (typeof result.state === "string" && textarea.dataset.notesDirty !== "1") {
+				textarea.dataset.notesPersisted = "1";
+				textarea.value = result.state;
+			}
 		}).catch(() => {});
 		let timer;
 		textarea.addEventListener("input", () => {
@@ -6543,7 +6563,7 @@ ${seed}</textarea>
         data-test-id="dashboard-notes-pad"
         aria-label=${widget.title}
         placeholder=${placeholder}
-        ${n(bindNotesEditor(ctx.state))}
+        ${n(bindNotesEditor(ctx.state, notesSeedText(widget)))}
       ></textarea>
     </div>
   `;

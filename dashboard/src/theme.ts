@@ -56,7 +56,9 @@ export const BS_TO_DESKTOP: Record<string, string[]> = {
   "--bs-card-highlight": ["--ui-row-active-background", "--ui-bg-elevated"],
   "--bs-border": ["--ui-stroke-secondary"],
   "--bs-border-strong": ["--ui-stroke-primary"],
-  "--bs-input": ["--ui-bg-input", "--ui-control-active-background"],
+  // Not --ui-bg-input: the app pins it to #fcfcfc with no dark override (a white field on a
+  // dark board). --ui-bg-card is a translucent accent + ink tint that follows the theme.
+  "--bs-input": ["--ui-bg-card", "--ui-control-active-background"],
   "--bs-text": ["--ui-text-primary"],
   "--bs-text-strong": ["--ui-text-primary"],
   "--bs-text-muted": ["--ui-text-tertiary"],

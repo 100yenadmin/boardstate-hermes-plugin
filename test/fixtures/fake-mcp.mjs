@@ -96,6 +96,9 @@ function buildFakeMcpServer(state = {}) {
     const args = request.params.arguments ?? {};
     switch (name) {
       case "echo":
+        if (Number(state.echoDelayMs) > 0) {
+          await new Promise((resolve) => setTimeout(resolve, Number(state.echoDelayMs)));
+        }
         return textResult({ text: args.text });
       case "add":
         return textResult({ sum: Number(args.a) + Number(args.b) });

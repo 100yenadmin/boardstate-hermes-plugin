@@ -8,40 +8,40 @@
 //
 // Backend: identical to the web plugin. The desktop app spawns the same Python backend,
 // so `/api/plugins/boardstate/*` (WS bridge + MCP proxy + sidecar) already exists. We
-// build the same WS URL the web tab uses, sourcing base + token from the desktop bridge
-// (`window.hermesDesktop.getConnection()`) instead of the web SDK's `buildWsUrl`.
+// use only the scoped SDK doors: ctx.rest for requests and ctx.socket for pushes.
 
 import { host, ROUTES_AREA, SIDEBAR_NAV_AREA } from "@hermes/plugin-sdk";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createWsTransport, type WsTransport } from "@boardstate/core";
-import "@boardstate/lit/browser"; // side effect: registers <boardstate-view> + builtins
+import type { Transport } from "@boardstate/core";
+import { BoardstateHeaderElement, BoardstateViewElement } from "@boardstate/lit/browser";
 import boardstateCss from "../vendor/boardstate.css"; // esbuild text loader → string
 import skinDesktopCss from "./skin-desktop.css"; // Hermes DESKTOP skin (macOS language)
 import { BS_TO_DESKTOP, aliasChain, themeBase } from "../src/theme";
 import { TEMPLATES } from "../src/templates";
 import { withOperatorGate } from "../src/operator-transport";
 
-type Connection = { baseUrl: string; token: string; authMode?: string };
-declare global {
-  interface Window {
-    hermesDesktop?: { getConnection?: () => Promise<Connection | null> };
+// The vendored Lit module guards its own registrations; repeat the guard here so
+// hot reload remains explicit at the plugin seam too.
+function ensureElements(): void {
+  if (!customElements.get("boardstate-view")) {
+    customElements.define("boardstate-view", BoardstateViewElement);
+  }
+  if (!customElements.get("boardstate-header")) {
+    customElements.define("boardstate-header", BoardstateHeaderElement);
   }
 }
 
 // Inject the Boardstate stylesheet once (the desktop app has no manifest `css` hook).
-let cssInjected = false;
-function ensureCss(): void {
-  if (cssInjected || document.querySelector("style[data-boardstate]")) {
-    cssInjected = true;
-    return;
-  }
+function ensureCss(): HTMLStyleElement | null {
+  const existing = document.querySelector<HTMLStyleElement>("style[data-boardstate]");
+  if (existing) return null;
   const style = document.createElement("style");
   style.setAttribute("data-boardstate", "");
   // Boardstate base sheet first, then the DESKTOP skin (macOS design language) so
   // the skin's scoped class-level rules win over the bundle's own defaults.
   style.textContent = `${boardstateCss as unknown as string}\n${skinDesktopCss as unknown as string}`;
   document.head.appendChild(style);
-  cssInjected = true;
+  return style;
 }
 
 // Same var()-alias theme adapter as the web tab, against the desktop `--ui-*` tokens.
@@ -67,10 +67,97 @@ type ViewElement = HTMLElement & { transport?: unknown; connected?: boolean; bas
  *  `/api/plugins/boardstate/operator`); resolve the sidecar's raw RPC result. */
 type OperatorRest = <T>(path: string, opts?: { method?: string; body?: unknown }) => Promise<T>;
 
-function BoardPage({ operatorRest }: { operatorRest?: OperatorRest }) {
+type PluginSocket = (path: string, onMessage: (data: unknown) => void) => () => void;
+type PluginTimer = (fn: () => void, ms: number) => () => void;
+type DesktopStatus = "connecting" | "live" | "degraded" | "error";
+
+type SdkTransport = Transport & {
+  readonly ready: Promise<void>;
+  readonly closed: boolean;
+  close: () => void;
+};
+
+/** Adapt the receive-only Desktop SDK socket plus REST requests to Boardstate's
+ * tiny Transport interface.  OAuth remotes still support REST; if ctx.socket is
+ * a no-op, the acknowledgement timeout reports a clear degraded state. */
+function createSdkTransport(
+  rest: OperatorRest,
+  socket: PluginSocket,
+  setTimer: PluginTimer,
+  onStatus: (status: DesktopStatus, detail?: string) => void,
+): SdkTransport {
+  const listeners = new Map<string, Set<(payload: unknown) => void>>();
+  let closed = false;
+  let acknowledged = false;
+  const cancelAckTimeout = setTimer(() => {
+    if (!closed && !acknowledged) {
+      onStatus(
+        "degraded",
+        "Board requests work, but live updates are unavailable on this connection.",
+      );
+    }
+  }, 2500);
+  const disposeSocket = socket("/ws", (message) => {
+    if (typeof message !== "object" || message === null) return;
+    const frame = message as { event?: unknown; payload?: unknown };
+    if (frame.event === "boardstate.desktop.connected") {
+      acknowledged = true;
+      cancelAckTimeout();
+      onStatus("live");
+      // Socket events are lossy across a disconnect. An empty changed event bypasses
+      // the version short-circuit and makes <boardstate-view> refetch the workspace.
+      for (const listener of listeners.get("boardstate.changed") ?? []) listener({});
+      return;
+    }
+    if (typeof frame.event !== "string") return;
+    for (const listener of listeners.get(frame.event) ?? []) listener(frame.payload);
+  });
+
+  return {
+    ready: Promise.resolve(),
+    get closed() {
+      return closed;
+    },
+    async request(method: string, params?: unknown): Promise<unknown> {
+      if (closed) throw new Error("Boardstate transport is closed");
+      const response = await rest<{ result?: unknown; error?: unknown }>("/rpc", {
+        method: "POST",
+        body: { method, params: params ?? {} },
+      });
+      if (response && response.error) throw new Error(String(response.error));
+      return response?.result;
+    },
+    addEventListener(event, listener) {
+      const bucket = listeners.get(event) ?? new Set();
+      bucket.add(listener);
+      listeners.set(event, bucket);
+      return () => {
+        bucket.delete(listener);
+        if (!bucket.size) listeners.delete(event);
+      };
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      cancelAckTimeout();
+      disposeSocket();
+      listeners.clear();
+    },
+  };
+}
+
+function BoardPage({
+  rest,
+  socket,
+  setTimer,
+}: {
+  rest: OperatorRest;
+  socket: PluginSocket;
+  setTimer: PluginTimer;
+}) {
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const transportRef = useRef<WsTransport | undefined>(undefined);
-  const [status, setStatus] = useState<"connecting" | "live" | "error">("connecting");
+  const transportRef = useRef<SdkTransport | undefined>(undefined);
+  const [status, setStatus] = useState<DesktopStatus>("connecting");
   const [detail, setDetail] = useState("");
   const [applying, setApplying] = useState("");
 
@@ -89,37 +176,33 @@ function BoardPage({ operatorRest }: { operatorRest?: OperatorRest }) {
   }, []);
 
   useEffect(() => {
-    ensureCss();
     let disposed = false;
-    let transport: WsTransport | undefined;
+    let transport: SdkTransport | undefined;
     let view: ViewElement | undefined;
     let obs: MutationObserver | undefined;
+    let errorSticky = false;
+    const updateStatus = (next: DesktopStatus, message = "") => {
+      if (next === "error") errorSticky = true;
+      if (errorSticky && next !== "error") return;
+      if (!disposed) {
+        setStatus(next);
+        setDetail(message);
+      }
+    };
 
     (async () => {
-      const conn = await window.hermesDesktop?.getConnection?.().catch(() => null);
-      if (disposed) return;
-      if (!conn) {
-        setStatus("error");
-        setDetail("No desktop gateway connection.");
-        return;
-      }
-      if (conn.authMode === "oauth") {
-        // WS tickets are single-use / core-managed on OAuth remotes; the token-URL WS
-        // won't authenticate. Surface it rather than half-connect. (Poll fallback: TODO.)
-        setStatus("error");
-        setDetail("The live board needs a local gateway (OAuth remote not yet supported).");
-        return;
-      }
-      const wsBase = conn.baseUrl.replace(/^http/, "ws");
-      const wsUrl = `${wsBase}/api/plugins/boardstate/ws?token=${encodeURIComponent(conn.token)}`;
-      // Route the four operator verbs through the plugin_api operator endpoint via the
-      // desktop REST door (the WS + MCP stay blocked); everything else rides the WS.
       const sendOperator = async (method: string, params: unknown): Promise<unknown> => {
-        if (!operatorRest) throw new Error("operator endpoint unavailable");
-        const res = await operatorRest<{ result?: unknown }>("/operator", { method: "POST", body: { method, params } });
+        const res = await rest<{ result?: unknown; error?: unknown }>("/operator", {
+          method: "POST",
+          body: { method, params },
+        });
+        if (res?.error) throw new Error(String(res.error));
         return res?.result;
       };
-      transport = withOperatorGate(createWsTransport(wsUrl), sendOperator);
+      transport = withOperatorGate(
+        createSdkTransport(rest, socket, setTimer, updateStatus),
+        sendOperator,
+      );
       transportRef.current = transport;
       view = document.createElement("boardstate-view") as ViewElement;
       view.transport = transport;
@@ -130,11 +213,14 @@ function BoardPage({ operatorRest }: { operatorRest?: OperatorRest }) {
       // carry auth headers); fetched here through the plugin's authed REST door. No
       // base ⇒ builtins-only, no errors.
       try {
-        const ab = operatorRest ? await operatorRest<{ base?: string }>("/assets-base", { method: "GET" }) : undefined;
-        view.basePath = ab?.base ? `${conn.baseUrl.replace(/\/+$/, "")}${ab.base}` : "";
+        const ab = await rest<{ absoluteBase?: string }>("/assets-base", { method: "GET" });
+        view.basePath = ab?.absoluteBase ?? "";
       } catch {
         view.basePath = "";
       }
+      // The page may have unmounted while /assets-base was in flight; cleanup already ran,
+      // so installing observers now would leak them.
+      if (disposed) return;
       applyDesktopTheme(view);
       obs = new MutationObserver(() => view && applyDesktopTheme(view));
       obs.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
@@ -142,15 +228,12 @@ function BoardPage({ operatorRest }: { operatorRest?: OperatorRest }) {
       view.style.display = "block";
       view.style.height = "100%";
       hostRef.current?.appendChild(view);
-      transport.ready
-        .then(() => !disposed && setStatus("live"))
-        .catch((err: unknown) => {
-          if (!disposed) {
-            setStatus("error");
-            setDetail(err instanceof Error ? err.message : String(err));
-          }
-        });
-    })();
+      await transport.request("dashboard.workspace.get", {});
+      // Socket acknowledgement promotes this to "live". Until then the adapter's
+      // timeout changes the state to the explicit OAuth/no-push degraded message.
+    })().catch((error: unknown) => {
+      updateStatus("error", error instanceof Error ? error.message : String(error));
+    });
 
     return () => {
       disposed = true;
@@ -163,7 +246,7 @@ function BoardPage({ operatorRest }: { operatorRest?: OperatorRest }) {
       }
       if (view && view.parentNode) view.parentNode.removeChild(view);
     };
-  }, []);
+  }, [rest, setTimer, socket]);
 
   const dotColor = status === "live" ? "var(--ui-green, #6aa84f)" : status === "error" ? "var(--ui-red, #e06c75)" : "var(--ui-yellow, #d0a94f)";
 
@@ -172,9 +255,15 @@ function BoardPage({ operatorRest }: { operatorRest?: OperatorRest }) {
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, fontSize: 12 }}>
         <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, display: "inline-block" }} />
         <span style={{ opacity: 0.8 }}>
-          {status === "live" ? "Board connected" : status === "error" ? `Board unavailable${detail ? `: ${detail}` : ""}` : "Connecting to board…"}
+          {status === "live"
+            ? "Board connected"
+            : status === "degraded"
+              ? detail
+              : status === "error"
+                ? `Board unavailable${detail ? `: ${detail}` : ""}`
+                : "Connecting to board…"}
         </span>
-        {status === "live" ? (
+        {status === "live" || status === "degraded" ? (
           <span style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, marginLeft: 8 }}>
             <span style={{ opacity: 0.7 }}>Templates:</span>
             {TEMPLATES.map((tpl) => (
@@ -210,11 +299,27 @@ export default {
   name: "Board",
   register(ctx: {
     register: (c: { id: string; area: unknown; data?: unknown; render?: () => unknown }) => void;
-    rest?: OperatorRest;
+    rest: OperatorRest;
+    socket: PluginSocket;
+    // Scoped timers arrived after Hermes Desktop 0.21.x; older SDKs omit them.
+    setTimeout?: PluginTimer;
+    onDispose: (fn: () => void) => void;
   }) {
-    // A full page in the workspace pane… The plugin's namespaced REST door (`ctx.rest`) is
-    // threaded in as the operator transport's send path (→ /api/plugins/boardstate/operator).
-    ctx.register({ id: "board-route", area: ROUTES_AREA, data: { path: "/board" }, render: () => <BoardPage operatorRest={ctx.rest} /> });
+    ensureElements();
+    const style = ensureCss();
+    if (style) ctx.onDispose(() => style.remove());
+    // Same contract as the SDK's scoped timer: cancelled on unload, and the returned
+    // disposer cancels early.
+    const setTimer: PluginTimer =
+      typeof ctx.setTimeout === "function"
+        ? ctx.setTimeout
+        : (fn, ms) => {
+            const id = globalThis.setTimeout(fn, ms);
+            const cancel = () => globalThis.clearTimeout(id);
+            ctx.onDispose(cancel);
+            return cancel;
+          };
+    ctx.register({ id: "board-route", area: ROUTES_AREA, data: { path: "/board" }, render: () => <BoardPage rest={ctx.rest} socket={ctx.socket} setTimer={setTimer} /> });
     // …reachable from a sidebar nav row.
     ctx.register({ id: "board-nav", area: SIDEBAR_NAV_AREA, data: { path: "/board", label: "Board", codicon: "dashboard" } });
   },
