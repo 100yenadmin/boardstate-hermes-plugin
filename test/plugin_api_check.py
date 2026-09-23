@@ -65,6 +65,10 @@ def main() -> int:
     check("shared runtime marks adoption not-owned", '"owned": False' in runtime_src)
     check("shared runtime has dashboard-over-agent replacement", 'caller == "dashboard"' in runtime_src and '"agent"' in runtime_src)
     check("shared runtime reaps only under its ownership/adopter rule", "should_terminate" in runtime_src)
+    check("runtime loop signals ready from inside the running loop", "loop.call_soon(ready.set)" in runtime_src)
+    internal_src = (DASHBOARD / "sidecar" / "src" / "internal.ts").read_text()
+    check("internal nonce comparisons use timingSafeEqual", "timingSafeEqual" in internal_src)
+    check("sidecar identity probe is nonce authenticated", '"/internal/healthz"' in internal_src)
 
     # Per-spawn nonce is wired: generated, passed via env, and appended to the upstream URL.
     src = (DASHBOARD / "plugin_api.py").read_text()

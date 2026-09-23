@@ -1,5 +1,6 @@
 /** Non-MCP loopback endpoints used by the unified plugin's two adapters. */
 
+import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { OPERATOR_ONLY_METHODS, type InProcessHost } from "@boardstate/server/node";
 import type { McpEndpoint } from "./mcp.js";
@@ -41,26 +42,45 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+function secretsEqual(actual: string | null, expected: string): boolean {
+  if (actual === null) return false;
+  const actualBytes = Buffer.from(actual);
+  const expectedBytes = Buffer.from(expected);
+  return (
+    actualBytes.length === expectedBytes.length &&
+    timingSafeEqual(actualBytes, expectedBytes)
+  );
+}
+
 export function createInternalEndpoint(
   host: InProcessHost,
   tools: McpEndpoint,
-  options: { nonce?: string },
+  options: { nonce?: string; spawnedBy?: "agent" | "dashboard" },
 ) {
   const nonce = options.nonce;
   return {
     async handle(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> {
-      if (pathname !== "/rpc" && pathname !== "/tools/invoke") return false;
-      if (req.method !== "POST") {
-        send(res, 405, { error: "POST required" });
-        return true;
-      }
+      const identityProbe = pathname === "/internal/healthz";
+      if (!identityProbe && pathname !== "/rpc" && pathname !== "/tools/invoke") return false;
       if (!nonce) {
         send(res, 403, { error: "internal endpoint disabled" });
         return true;
       }
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
-      if (url.searchParams.get("nonce") !== nonce) {
+      if (!secretsEqual(url.searchParams.get("nonce"), nonce)) {
         send(res, 401, { error: "unauthorized" });
+        return true;
+      }
+      if (identityProbe) {
+        if (req.method !== "GET") {
+          send(res, 405, { error: "GET required" });
+        } else {
+          send(res, 200, { ok: true });
+        }
+        return true;
+      }
+      if (req.method !== "POST") {
+        send(res, 405, { error: "POST required" });
         return true;
       }
 
@@ -77,11 +97,29 @@ export function createInternalEndpoint(
           const name = payload.name;
           const args = payload.args;
           if (typeof name !== "string") throw new Error("tool name is required");
+          if (
+            name === "boardstate_connector_invoke" &&
+            options.spawnedBy === "agent" &&
+            tools.hasConnectors
+          ) {
+            send(res, 409, {
+              error: "This connector action needs the dashboard to confirm. Open the Board tab, then retry.",
+            });
+            return true;
+          }
+          const requestedTimeout = payload.timeoutMs;
+          const mutationTimeoutMs =
+            typeof requestedTimeout === "number" &&
+            Number.isFinite(requestedTimeout) &&
+            requestedTimeout > 0
+              ? requestedTimeout
+              : undefined;
           const result = await tools.invokeTool(
             name,
             typeof args === "object" && args !== null && !Array.isArray(args)
               ? (args as Record<string, unknown>)
               : {},
+            mutationTimeoutMs === undefined ? undefined : { mutationTimeoutMs },
           );
           send(res, 200, { result });
           return true;

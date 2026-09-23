@@ -28762,6 +28762,7 @@ function registerUnavailableHermesDataRpc(host2) {
 }
 
 // dashboard/sidecar/src/internal.ts
+import { timingSafeEqual } from "node:crypto";
 var MAX_BODY_BYTES = 1024 * 1024;
 var OPERATOR_METHODS = new Set(OPERATOR_ONLY_METHODS);
 async function readJson(req) {
@@ -28796,22 +28797,37 @@ function send(res, status, body) {
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(body));
 }
+function secretsEqual(actual, expected) {
+  if (actual === null) return false;
+  const actualBytes = Buffer.from(actual);
+  const expectedBytes = Buffer.from(expected);
+  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
+}
 function createInternalEndpoint(host2, tools, options) {
   const nonce = options.nonce;
   return {
     async handle(req, res, pathname) {
-      if (pathname !== "/rpc" && pathname !== "/tools/invoke") return false;
-      if (req.method !== "POST") {
-        send(res, 405, { error: "POST required" });
-        return true;
-      }
+      const identityProbe = pathname === "/internal/healthz";
+      if (!identityProbe && pathname !== "/rpc" && pathname !== "/tools/invoke") return false;
       if (!nonce) {
         send(res, 403, { error: "internal endpoint disabled" });
         return true;
       }
       const url2 = new URL(req.url ?? "/", "http://127.0.0.1");
-      if (url2.searchParams.get("nonce") !== nonce) {
+      if (!secretsEqual(url2.searchParams.get("nonce"), nonce)) {
         send(res, 401, { error: "unauthorized" });
+        return true;
+      }
+      if (identityProbe) {
+        if (req.method !== "GET") {
+          send(res, 405, { error: "GET required" });
+        } else {
+          send(res, 200, { ok: true });
+        }
+        return true;
+      }
+      if (req.method !== "POST") {
+        send(res, 405, { error: "POST required" });
         return true;
       }
       let payload;
@@ -28826,9 +28842,18 @@ function createInternalEndpoint(host2, tools, options) {
           const name = payload.name;
           const args = payload.args;
           if (typeof name !== "string") throw new Error("tool name is required");
+          if (name === "boardstate_connector_invoke" && options.spawnedBy === "agent" && tools.hasConnectors) {
+            send(res, 409, {
+              error: "This connector action needs the dashboard to confirm. Open the Board tab, then retry."
+            });
+            return true;
+          }
+          const requestedTimeout = payload.timeoutMs;
+          const mutationTimeoutMs2 = typeof requestedTimeout === "number" && Number.isFinite(requestedTimeout) && requestedTimeout > 0 ? requestedTimeout : void 0;
           const result2 = await tools.invokeTool(
             name,
-            typeof args === "object" && args !== null && !Array.isArray(args) ? args : {}
+            typeof args === "object" && args !== null && !Array.isArray(args) ? args : {},
+            mutationTimeoutMs2 === void 0 ? void 0 : { mutationTimeoutMs: mutationTimeoutMs2 }
           );
           send(res, 200, { result: result2 });
           return true;
@@ -30854,7 +30879,7 @@ async function createMcpEndpoint(host2, store2, options = {}) {
     },
     {
       ...CONNECTOR_TOOL_DEFINITIONS[1],
-      execute: async (args) => {
+      execute: async (args, invocation) => {
         if (!connectors2) throw new Error("no connectors configured");
         const invoked = await host2.request(
           "dashboard.action.invoke",
@@ -30864,7 +30889,9 @@ async function createMcpEndpoint(host2, store2, options = {}) {
         if (invoked && invoked.pending === true && typeof invoked.id === "string") {
           try {
             return frameExternal(
-              await connectors2.confirmAndExecute(invoked.id, { timeoutMs: mutationTimeoutMs2 })
+              await connectors2.confirmAndExecute(invoked.id, {
+                timeoutMs: invocation?.mutationTimeoutMs ?? mutationTimeoutMs2
+              })
             );
           } catch (error2) {
             if (error2 instanceof Error && error2.code === "action_timeout") {
@@ -30899,7 +30926,7 @@ async function createMcpEndpoint(host2, store2, options = {}) {
     }))
   ];
   const safeError = (error2) => redactSecrets2(error2 instanceof Error ? error2.message : String(error2));
-  const invokeTool = async (publicName, args) => {
+  const invokeTool = async (publicName, args, invocation) => {
     if (publicName === "boardstate_tool_search" && !toolSearch) {
       throw new Error("no connectors configured");
     }
@@ -30909,7 +30936,7 @@ async function createMcpEndpoint(host2, store2, options = {}) {
       return details;
     }
     const gated = gatedByName.get(publicName);
-    if (gated) return gated.execute(args);
+    if (gated) return gated.execute(args, invocation);
     throw new Error(`unknown tool: ${publicName}`);
   };
   function makeServer() {
@@ -30955,6 +30982,7 @@ async function createMcpEndpoint(host2, store2, options = {}) {
     return req.method === "POST";
   }
   return {
+    hasConnectors: Boolean(connectors2),
     listTools,
     invokeTool,
     safeError,
@@ -31221,7 +31249,8 @@ var mcpEndpoint = await createMcpEndpoint(host, store, {
   } : {}
 });
 var internalEndpoint = createInternalEndpoint(host, mcpEndpoint, {
-  nonce: sidecarNonceForMcp
+  nonce: sidecarNonceForMcp,
+  spawnedBy: process.env.BOARDSTATE_SPAWNED_BY === "agent" ? "agent" : "dashboard"
 });
 var operatorEndpoint = createOperatorEndpoint(host, { secret: operatorSecret });
 var httpServer = createServer((req, res) => {

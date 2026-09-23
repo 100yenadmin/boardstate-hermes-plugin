@@ -110,8 +110,14 @@ jobs:
       - name: Shared sidecar ownership replacement preserves state
         run: python test/sidecar_runtime.py
 
+      - name: Process exit reaps sidecars and verifies identity before replacement
+        run: python test/sidecar_exit.py
+
       - name: Sidecar adoption and shutdown remain single-writer
         run: python test/sidecar_concurrency.py
+
+      - name: Desktop live acknowledgement requires an upstream connection
+        run: python test/desktop_ack.py
 
       - name: Native 19-tool registration + real-sidecar dispatch
         run: python test/native_plugin.py
@@ -164,7 +170,10 @@ jobs:
           python test/ws_auth.py
           python test/operator_wire.py
           python test/sidecar_runtime.py
+          python test/sidecar_exit.py
           python test/sidecar_concurrency.py
+          python test/profile_scope.py
+          python test/desktop_ack.py
           python test/native_plugin.py
 
       - name: Install into an isolated Hermes home

@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const bundle = readFileSync(join(here, "..", "desktop", "plugin.js"), "utf8");
+const source = readFileSync(join(here, "..", "dashboard", "desktop", "plugin.tsx"), "utf8");
 
 let n = 0;
 const failures = [];
@@ -50,6 +51,10 @@ check("registers a route area", bundle.includes("ROUTES_AREA") || bundle.include
 check("registers a sidebar nav", bundle.includes("SIDEBAR_NAV_AREA") || bundle.includes("sidebar.nav"));
 check("uses ctx.rest for Boardstate requests", bundle.includes("/rpc"));
 check("uses ctx.socket for live pushes", bundle.includes("/ws"));
+check(
+  "a reconnect ack cannot override an error state",
+  source.includes('next === "live" && errorSticky'),
+);
 check("registers dispose cleanup", bundle.includes("onDispose"));
 check("guards custom-element registration", bundle.includes("customElements.get"));
 check("applies a template via workspace.replace", bundle.includes("dashboard.workspace.replace"));

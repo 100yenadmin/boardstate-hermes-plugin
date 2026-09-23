@@ -20,6 +20,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator, MutableMapping
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -29,20 +30,13 @@ SpawnedBy = Literal["dashboard", "agent"]
 
 _ROOT = Path(__file__).resolve().parent
 _SIDECAR_JS = _ROOT / "dashboard" / "sidecar" / "server.js"
-_sidecar_lock = asyncio.Lock()
-_state: dict[str, Any] = {
-    "proc": None,
-    "port": None,
-    "nonce": None,
-    "operator_secret": None,
-    "owned": False,
-    "spawned_by": None,
-    "state_dir": None,
-    "drain_tasks": [],
-}
+_states: dict[str, dict[str, Any]] = {}
+_sidecar_locks: dict[str, asyncio.Lock] = {}
 _atexit_registered = False
 _runtime_loop: Optional[asyncio.AbstractEventLoop] = None
 _runtime_loop_guard = threading.Lock()
+_NATIVE_HTTP_TIMEOUT_SECONDS = 30
+_NATIVE_CONFIRM_TIMEOUT_MS = 25_000
 
 try:
     import fcntl
@@ -57,9 +51,72 @@ def state_dir() -> Path:
     override = os.environ.get("BOARDSTATE_HERMES_STATE_DIR")
     if override:
         return Path(override)
-    hermes_home = os.environ.get("HERMES_HOME")
-    base = Path(hermes_home) if hermes_home else (Path.home() / ".hermes")
+    try:
+        from hermes_constants import get_hermes_home
+    except ImportError:
+        hermes_home = os.environ.get("HERMES_HOME")
+        base = Path(hermes_home) if hermes_home else (Path.home() / ".hermes")
+    else:
+        base = Path(get_hermes_home())
     return base / "boardstate-state"
+
+
+def _state_key(directory: Path) -> str:
+    return os.path.normcase(str(directory.expanduser().resolve(strict=False)))
+
+
+def _new_state(directory: Path) -> dict[str, Any]:
+    return {
+        "proc": None,
+        "port": None,
+        "nonce": None,
+        "operator_secret": None,
+        "owned": False,
+        "spawned_by": None,
+        "state_dir": directory,
+        "drain_tasks": [],
+    }
+
+
+def _state_for(directory: Optional[Path] = None) -> dict[str, Any]:
+    selected = directory or state_dir()
+    key = _state_key(selected)
+    state = _states.get(key)
+    if state is None:
+        state = _new_state(selected)
+        _states[key] = state
+    return state
+
+
+def _sidecar_lock_for(directory: Path) -> asyncio.Lock:
+    key = _state_key(directory)
+    lock = _sidecar_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _sidecar_locks[key] = lock
+    return lock
+
+
+class _CurrentStateProxy(MutableMapping[str, Any]):
+    """Compatibility view used by plugin_api, resolved to the active profile."""
+
+    def __getitem__(self, key: str) -> Any:
+        return _state_for()[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        _state_for()[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del _state_for()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(_state_for())
+
+    def __len__(self) -> int:
+        return len(_state_for())
+
+
+_state: MutableMapping[str, Any] = _CurrentStateProxy()
 
 
 def sidecar_bundle() -> Path:
@@ -97,9 +154,25 @@ async def _acquire_lifecycle_lock(directory: Path) -> Optional[int]:
         return None
     lock_fd = os.open(str(_lockfile_path(directory)), os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        await asyncio.get_running_loop().run_in_executor(
-            None, fcntl.flock, lock_fd, fcntl.LOCK_EX
-        )
+        while True:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                await asyncio.sleep(0.02)
+    except BaseException:
+        os.close(lock_fd)
+        raise
+    return lock_fd
+
+
+def _acquire_lifecycle_lock_sync(directory: Path) -> Optional[int]:
+    """Take the lifecycle lock without an executor (safe during atexit)."""
+    if not _HAVE_FCNTL:
+        return None
+    lock_fd = os.open(str(_lockfile_path(directory)), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
     except BaseException:
         os.close(lock_fd)
         raise
@@ -142,6 +215,28 @@ async def _port_listening(port: int) -> bool:
     return True
 
 
+def _probe_record_sync(port: int, nonce: str) -> bool:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/internal/healthz?nonce={nonce}",
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=1.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return False
+    return response.status == 200 and payload == {"ok": True}
+
+
+async def _probe_record(record: dict[str, Any]) -> bool:
+    return await asyncio.to_thread(
+        _probe_record_sync,
+        int(record["port"]),
+        str(record["nonce"]),
+    )
+
+
 def _read_record(directory: Path) -> Optional[dict[str, Any]]:
     try:
         record = json.loads(_portfile_path(directory).read_text(encoding="utf-8"))
@@ -179,7 +274,11 @@ async def _try_adopt(directory: Path) -> Optional[dict[str, Any]]:
     record = _read_record(directory)
     if record is None or not _pid_alive(int(record["pid"])):
         return None
-    if not await _port_listening(int(record["port"])):
+    if not await _probe_record(record):
+        if await _port_listening(int(record["port"])):
+            raise RuntimeError(
+                "Boardstate sidecar identity probe failed; refusing to signal or replace the live process"
+            )
         return None
     return record
 
@@ -223,7 +322,7 @@ def _node_bin() -> str:
 def _register_atexit() -> None:
     global _atexit_registered
     if not _atexit_registered:
-        atexit.register(shutdown_owned_sidecar)
+        atexit.register(_shutdown_all_owned_sidecars)
         _atexit_registered = True
 
 
@@ -245,7 +344,7 @@ def _get_runtime_loop() -> asyncio.AbstractEventLoop:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             _runtime_loop = loop
-            ready.set()
+            loop.call_soon(ready.set)
             loop.run_forever()
 
         threading.Thread(
@@ -270,6 +369,7 @@ async def _spawn_sidecar(
     spawned_by: SpawnedBy,
     extra_env: Optional[dict[str, str]] = None,
 ) -> tuple[int, str]:
+    state = _state_for(directory)
     nonce = secrets.token_urlsafe(32)
     generated_operator_secret = secrets.token_urlsafe(32)
     env = os.environ.copy()
@@ -277,6 +377,7 @@ async def _spawn_sidecar(
     env["BOARDSTATE_STATE_DIR"] = str(directory)
     env["BOARDSTATE_SIDECAR_NONCE"] = nonce
     env["BOARDSTATE_OPERATOR_SECRET"] = generated_operator_secret
+    env["BOARDSTATE_SPAWNED_BY"] = spawned_by
     env["PORT"] = "0"
 
     proc = await asyncio.create_subprocess_exec(
@@ -292,7 +393,7 @@ async def _spawn_sidecar(
         proc.terminate()
         raise
 
-    _state.update(
+    state.update(
         {
             "proc": proc,
             "port": port,
@@ -316,7 +417,7 @@ async def _spawn_sidecar(
             "adopters": [],
         },
     )
-    _state["drain_tasks"] = [
+    state["drain_tasks"] = [
         asyncio.create_task(_drain(proc.stdout, "out")),
         asyncio.create_task(_drain(proc.stderr, "err")),
     ]
@@ -331,8 +432,9 @@ async def _spawn_sidecar(
 
 
 async def _terminate_record(directory: Path, record: dict[str, Any]) -> None:
+    state = _state_for(directory)
     pid = int(record["pid"])
-    proc = _state.get("proc")
+    proc = state.get("proc")
     if proc is not None and proc.pid == pid:
         proc.terminate()
         try:
@@ -341,7 +443,7 @@ async def _terminate_record(directory: Path, record: dict[str, Any]) -> None:
             raise RuntimeError(
                 "agent-owned Boardstate sidecar did not stop after SIGTERM"
             ) from exc
-        await asyncio.gather(*_state.get("drain_tasks", []), return_exceptions=True)
+        await asyncio.gather(*state.get("drain_tasks", []), return_exceptions=True)
     else:
         try:
             os.kill(pid, signal.SIGTERM)
@@ -358,6 +460,7 @@ async def _terminate_record(directory: Path, record: dict[str, Any]) -> None:
 
 
 def _remember_adoption(directory: Path, record: dict[str, Any], caller: SpawnedBy) -> None:
+    state = _state_for(directory)
     if caller == "agent" and record.get("spawned_by") == "agent":
         adopters = [
             int(pid)
@@ -367,7 +470,7 @@ def _remember_adoption(directory: Path, record: dict[str, Any], caller: SpawnedB
         adopters.append(os.getpid())
         record["adopters"] = adopters
         _write_record(directory, record)
-    _state.update(
+    state.update(
         {
             "proc": None,
             "port": int(record["port"]),
@@ -390,13 +493,14 @@ async def _ensure_sidecar_impl(
     if caller not in {"dashboard", "agent"}:
         raise ValueError("caller must be 'dashboard' or 'agent'")
 
-    async with _sidecar_lock:
-        directory = state_dir()
-        current_port = _state.get("port")
-        current_dir = _state.get("state_dir")
+    directory = state_dir()
+    state = _state_for(directory)
+    async with _sidecar_lock_for(directory):
+        current_port = state.get("port")
+        current_dir = state.get("state_dir")
         if current_port and current_dir == directory and await _port_listening(int(current_port)):
-            if not (caller == "dashboard" and _state.get("spawned_by") == "agent"):
-                return int(current_port), str(_state["nonce"])
+            if not (caller == "dashboard" and state.get("spawned_by") == "agent"):
+                return int(current_port), str(state["nonce"])
 
         if not _SIDECAR_JS.exists():
             raise RuntimeError(
@@ -407,10 +511,21 @@ async def _ensure_sidecar_impl(
         lock_fd = await _acquire_lifecycle_lock(directory)
         try:
             record = await _try_adopt(directory)
-            if record and caller == "dashboard" and record.get("spawned_by") == "agent":
+            owner_pid = record.get("owner_pid") if record else None
+            owner_is_dead = bool(
+                record
+                and (
+                    not isinstance(owner_pid, int)
+                    or (owner_pid != os.getpid() and not _pid_alive(owner_pid))
+                )
+            )
+            if record and (
+                owner_is_dead
+                or (caller == "dashboard" and record.get("spawned_by") == "agent")
+            ):
                 await _terminate_record(directory, record)
                 record = None
-                _state.update(
+                state.update(
                     {
                         "proc": None,
                         "port": None,
@@ -453,7 +568,7 @@ def _post_json_sync(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=_NATIVE_HTTP_TIMEOUT_SECONDS) as response:
             raw = response.read()
     except urllib.error.HTTPError as exc:
         raw = exc.read()
@@ -470,7 +585,11 @@ async def _invoke_tool_impl(name: str, args: dict[str, Any]) -> Any:
         port,
         nonce,
         "/tools/invoke",
-        {"name": name, "args": args},
+        {
+            "name": name,
+            "args": args,
+            "timeoutMs": _NATIVE_CONFIRM_TIMEOUT_MS,
+        },
     )
     if "result" in payload:
         return payload["result"]
@@ -481,17 +600,26 @@ async def invoke_tool(name: str, args: dict[str, Any]) -> Any:
     return await _on_runtime_loop(_invoke_tool_impl(name, args))
 
 
-async def _shutdown_owned_sidecar_impl() -> None:
-    """Release this process and reap an agent spawn only when no live adopter remains."""
-    directory = _state.get("state_dir")
-    nonce = _state.get("nonce")
+def _wait_pid_exit_sync(pid: int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while _pid_alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return not _pid_alive(pid)
+
+
+def _shutdown_owned_sidecar_sync(directory: Optional[Path] = None) -> None:
+    """Release this process without asyncio or executors, including during atexit."""
+    selected = directory or state_dir()
+    state = _state_for(selected)
+    directory = state.get("state_dir")
+    nonce = state.get("nonce")
     if not isinstance(directory, Path) or not nonce:
         return
 
     # Shutdown must participate in the same transaction as adoption/spawn.  In
     # particular, an adopter cannot publish itself after we decide to reap, and a
     # starter cannot observe the record while we rewrite it for surviving adopters.
-    lock_fd = await _acquire_lifecycle_lock(directory)
+    lock_fd = _acquire_lifecycle_lock_sync(directory)
     try:
         record = _read_record(directory)
         if record is None or record.get("nonce") != nonce:
@@ -506,7 +634,7 @@ async def _shutdown_owned_sidecar_impl() -> None:
         ]
         record["adopters"] = adopters
 
-        should_terminate = bool(_state.get("owned"))
+        should_terminate = bool(state.get("owned"))
         if spawned_by == "agent":
             owner_alive_elsewhere = (
                 isinstance(owner_pid, int)
@@ -514,38 +642,37 @@ async def _shutdown_owned_sidecar_impl() -> None:
                 and _pid_alive(owner_pid)
             )
             should_terminate = not owner_alive_elsewhere and not adopters
-        elif not _state.get("owned"):
+        elif not state.get("owned"):
             should_terminate = False
 
         if should_terminate:
             pid = int(record["pid"])
-            proc = _state.get("proc")
-            if proc is not None and proc.pid == pid:
-                proc.terminate()
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            stopped = _wait_pid_exit_sync(pid, 2.0)
+            if not stopped:
                 try:
-                    await asyncio.wait_for(proc.wait(), timeout=2.0)
-                except asyncio.TimeoutError:
-                    pass
-                await asyncio.gather(
-                    *_state.get("drain_tasks", []), return_exceptions=True
-                )
-            else:
-                try:
-                    os.kill(pid, signal.SIGTERM)
+                    os.kill(pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-                deadline = time.monotonic() + 2.0
-                while _pid_alive(pid) and time.monotonic() < deadline:
-                    await asyncio.sleep(0.02)
-            current = _read_record(directory)
-            if current and current.get("nonce") == nonce:
-                _portfile_path(directory).unlink(missing_ok=True)
+                stopped = _wait_pid_exit_sync(pid, 2.0)
+            if stopped:
+                current = _read_record(directory)
+                if current and current.get("nonce") == nonce:
+                    _portfile_path(directory).unlink(missing_ok=True)
+            else:
+                log.warning(
+                    "boardstate: sidecar %d survived shutdown; preserving its record",
+                    pid,
+                )
         elif spawned_by == "agent":
             _write_record(directory, record)
     finally:
         _release_lifecycle_lock(lock_fd)
 
-    _state.update(
+    state.update(
         {
             "proc": None,
             "port": None,
@@ -559,12 +686,23 @@ async def _shutdown_owned_sidecar_impl() -> None:
     )
 
 
+def _shutdown_all_owned_sidecars() -> None:
+    for state in list(_states.values()):
+        directory = state.get("state_dir")
+        if not isinstance(directory, Path):
+            continue
+        try:
+            _shutdown_owned_sidecar_sync(directory)
+        except Exception as exc:  # pragma: no cover - exit best effort per profile
+            log.warning(
+                "boardstate: sidecar shutdown did not complete for %s (%s)",
+                directory,
+                type(exc).__name__,
+            )
+
+
 def shutdown_owned_sidecar() -> None:
-    loop = _runtime_loop
-    if loop is None or not loop.is_running():
-        return
-    future = asyncio.run_coroutine_threadsafe(_shutdown_owned_sidecar_impl(), loop)
     try:
-        future.result(timeout=5.0)
+        _shutdown_owned_sidecar_sync()
     except Exception as exc:  # pragma: no cover - exit/unload best effort
         log.warning("boardstate: sidecar shutdown did not complete (%s)", type(exc).__name__)

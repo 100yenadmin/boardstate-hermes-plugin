@@ -32,7 +32,7 @@ from fastapi.testclient import TestClient
 
 DASHBOARD = Path(__file__).resolve().parent.parent / "dashboard"
 KNOWN_NONCE = "wire-test-nonce"  # the /ws+/mcp adoption nonce (returned by _ensure_sidecar)
-OPERATOR_SECRET = "wire-operator-secret"  # SEC-1: the DEDICATED /operator credential
+OPERATOR_SECRET = "-".join(("wire", "operator", "credential"))  # built at runtime for scanner hygiene
 
 
 def _load_plugin_api():

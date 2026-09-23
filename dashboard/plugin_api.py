@@ -544,12 +544,6 @@ async def board_ws(ws: WebSocket) -> None:
         return
 
     await ws.accept()
-    # ctx.socket is receive-only and has no open callback.  This harmless event
-    # lets the SDK-only Desktop adapter distinguish a live socket from the
-    # documented OAuth-remote no-op and show an honest degraded state there.
-    await ws.send_text(
-        json.dumps({"event": "boardstate.desktop.connected", "payload": {"ok": True}})
-    )
 
     try:
         port, nonce = await _ensure_sidecar()
@@ -561,6 +555,17 @@ async def board_ws(ws: WebSocket) -> None:
     uri = f"ws://127.0.0.1:{port}/ws?nonce={nonce}"
     try:
         async with websockets.connect(uri, max_size=2 ** 20) as upstream:
+            # ctx.socket is receive-only and has no open callback. Ack only
+            # after the upstream connection exists, so Desktop never turns a
+            # failed reconnect into a false "live" state.
+            await ws.send_text(
+                json.dumps(
+                    {
+                        "event": "boardstate.desktop.connected",
+                        "payload": {"ok": True},
+                    }
+                )
+            )
             await _bridge(ws, upstream)
     except WebSocketDisconnect:
         return

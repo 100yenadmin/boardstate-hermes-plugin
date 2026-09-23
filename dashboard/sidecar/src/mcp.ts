@@ -71,7 +71,10 @@ type ExtraTool = {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  execute: (args: Record<string, unknown>) => Promise<unknown>;
+  execute: (
+    args: Record<string, unknown>,
+    invocation?: { mutationTimeoutMs?: number },
+  ) => Promise<unknown>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,7 +87,12 @@ export type McpEndpoint = {
   /** Static public schemas consumed by MCP and the native Python wrapper. */
   listTools: () => Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
   /** Invoke the same implementation used by MCP, without speaking MCP. */
-  invokeTool: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+  invokeTool: (
+    name: string,
+    args: Record<string, unknown>,
+    invocation?: { mutationTimeoutMs?: number },
+  ) => Promise<unknown>;
+  readonly hasConnectors: boolean;
   /** Secret-redacted error text for the internal loopback endpoint. */
   safeError: (error: unknown) => string;
   close: () => Promise<void>;
@@ -174,7 +182,7 @@ export async function createMcpEndpoint(
         },
         {
           ...CONNECTOR_TOOL_DEFINITIONS[1],
-          execute: async (args) => {
+          execute: async (args, invocation) => {
             if (!connectors) throw new Error("no connectors configured");
             const invoked = (await host.request(
               "dashboard.action.invoke",
@@ -184,7 +192,9 @@ export async function createMcpEndpoint(
             if (invoked && invoked.pending === true && typeof invoked.id === "string") {
               try {
                 return frameExternal(
-                  await connectors.confirmAndExecute(invoked.id, { timeoutMs: mutationTimeoutMs }),
+                  await connectors.confirmAndExecute(invoked.id, {
+                    timeoutMs: invocation?.mutationTimeoutMs ?? mutationTimeoutMs,
+                  }),
                 );
               } catch (error) {
                 // The wait for the operator's confirm timed out — the action itself is STILL
@@ -229,6 +239,7 @@ export async function createMcpEndpoint(
   const invokeTool = async (
     publicName: string,
     args: Record<string, unknown>,
+    invocation?: { mutationTimeoutMs?: number },
   ): Promise<unknown> => {
     if (publicName === "boardstate_tool_search" && !toolSearch) {
       throw new Error("no connectors configured");
@@ -239,7 +250,7 @@ export async function createMcpEndpoint(
       return details;
     }
     const gated = gatedByName.get(publicName);
-    if (gated) return gated.execute(args);
+    if (gated) return gated.execute(args, invocation);
     throw new Error(`unknown tool: ${publicName}`);
   };
 
@@ -301,6 +312,7 @@ export async function createMcpEndpoint(
   }
 
   return {
+    hasConnectors: Boolean(connectors),
     listTools,
     invokeTool,
     safeError,

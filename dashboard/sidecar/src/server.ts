@@ -237,6 +237,7 @@ const mcpEndpoint = await createMcpEndpoint(host, store, {
 });
 const internalEndpoint = createInternalEndpoint(host, mcpEndpoint, {
   nonce: sidecarNonceForMcp,
+  spawnedBy: process.env.BOARDSTATE_SPAWNED_BY === "agent" ? "agent" : "dashboard",
 });
 
 // The operator DECISION seam: a DEDICATED-secret-gated in-process HTTP endpoint the parent

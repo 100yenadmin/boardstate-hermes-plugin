@@ -177,7 +177,10 @@ function BoardPage({
     let transport: SdkTransport | undefined;
     let view: ViewElement | undefined;
     let obs: MutationObserver | undefined;
+    let errorSticky = false;
     const updateStatus = (next: DesktopStatus, message = "") => {
+      if (next === "error") errorSticky = true;
+      if (next === "live" && errorSticky) return;
       if (!disposed) {
         setStatus(next);
         setDetail(message);
