@@ -20,10 +20,13 @@ import boardstate_sidecar as runtime
 
 SPAWNED: list[asyncio.subprocess.Process] = []
 _ORIGINAL_EXEC = asyncio.create_subprocess_exec
+IGNORE_TERMINATE = False  # when set, the spawned child behaves as if it ignored the graceful stop
 
 
 async def _spawn_spy(*args, **kwargs):
     proc = await _ORIGINAL_EXEC(*args, **kwargs)
+    if IGNORE_TERMINATE:
+        proc.terminate = lambda: None  # the graceful stop reaches a child that does not exit
     SPAWNED.append(proc)
     return proc
 
@@ -39,7 +42,7 @@ def _assert_cleaned(directory: Path, proc: asyncio.subprocess.Process, label: st
     print(f"ok   {label}: child {proc.pid} terminated and awaited, state cleared, error re-raised")
 
 
-async def _record_write_fails(directory: Path) -> None:
+async def _record_write_fails(directory: Path, label: str = "record write failure") -> None:
     original_write = runtime._write_record
 
     def failing_write(_directory: Path, _record: dict) -> None:
@@ -56,7 +59,22 @@ async def _record_write_fails(directory: Path) -> None:
     finally:
         runtime._write_record = original_write
     assert len(SPAWNED) == 1, SPAWNED
-    _assert_cleaned(directory, SPAWNED[0], "record write failure")
+    _assert_cleaned(directory, SPAWNED[0], label)
+
+
+async def _record_write_fails_child_ignores_terminate(directory: Path) -> None:
+    """The graceful stop times out because the child ignores it: the kill fallback must
+    still reap the child before the error is re-raised, so the next spawn can never
+    overlap a child that is still exiting."""
+    global IGNORE_TERMINATE
+    original_wait = runtime._ATEXIT_DRAIN_WAIT_SECONDS
+    runtime._ATEXIT_DRAIN_WAIT_SECONDS = 0.5  # the module reads it at call time
+    IGNORE_TERMINATE = True
+    try:
+        await _record_write_fails(directory, "record write failure, child ignores terminate")
+    finally:
+        IGNORE_TERMINATE = False
+        runtime._ATEXIT_DRAIN_WAIT_SECONDS = original_wait
 
 
 async def _cancelled(directory: Path) -> None:
@@ -88,7 +106,7 @@ async def _cancelled(directory: Path) -> None:
 async def _run() -> None:
     asyncio.create_subprocess_exec = _spawn_spy  # the module under test resolves it at call time
     try:
-        for case in (_record_write_fails, _cancelled):
+        for case in (_record_write_fails, _record_write_fails_child_ignores_terminate, _cancelled):
             SPAWNED.clear()
             with tempfile.TemporaryDirectory(prefix="boardstate-spawn-cleanup-") as tmp:
                 directory = Path(tmp)

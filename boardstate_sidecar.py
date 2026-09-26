@@ -581,6 +581,11 @@ async def _spawn_sidecar(
         except Exception:
             with contextlib.suppress(ProcessLookupError):
                 proc.kill()
+            # A killed child still has to be reaped before the state is cleared, so the
+            # next spawn never overlaps one that is still exiting (bounded: a reaper that
+            # never reports must not hang the caller either).
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(proc.wait(), timeout=_ATEXIT_DRAIN_WAIT_SECONDS)
         finally:
             state.update(_new_state(directory))
         raise
