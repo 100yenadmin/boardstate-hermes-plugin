@@ -103,6 +103,9 @@ function buildFakeMcpServer(state = {}) {
       case "add":
         return textResult({ sum: Number(args.a) + Number(args.b) });
       case "write_note":
+        if (Number(state.writeDelayMs) > 0) {
+          await new Promise((resolve) => setTimeout(resolve, Number(state.writeDelayMs)));
+        }
         return textResult({ ok: true, saved: args.text });
       case "boom":
         return textResult({ error: "boom: this tool always fails" }, true);

@@ -30841,7 +30841,7 @@ var CONNECTOR_TOOL_DEFINITIONS = [
   },
   {
     name: "boardstate_connector_invoke",
-    description: "Invoke an operator-APPROVED external connector tool. A readOnly tool runs directly; a mutating tool PARKS as a pending action and BLOCKS until the operator confirms (up to a bounded timeout, after which it returns as still-parked). The connector's live manifest is re-checked (anti-rug-pull) on every call.",
+    description: "Invoke an operator-APPROVED external connector tool. A readOnly tool runs directly; a mutating tool PARKS as a pending action and BLOCKS until the operator confirms (up to a bounded timeout, after which it returns as still-parked). A confirm that lands after that timeout can still run the action, so before retrying a parked call check the pending actions (dashboard.action.list, shown on the board's approvals card). The connector's live manifest is re-checked (anti-rug-pull) on every call.",
     inputSchema: CONNECTOR_TOOL_SCHEMA
   }
 ];
@@ -30917,7 +30917,7 @@ async function createMcpEndpoint(host2, store2, options = {}) {
                 parked: true,
                 id: invoked.id,
                 ...typeof invoked.expiresAt === "string" ? { expiresAt: invoked.expiresAt } : {},
-                note: "Action is awaiting operator confirmation; it remains pending. Ask the operator to confirm."
+                note: "Action is awaiting operator confirmation; it remains pending. Ask the operator to confirm. A confirm can still run it after this reply, so check dashboard.action.list before retrying."
               };
             }
             throw error2;
@@ -31296,20 +31296,12 @@ var invocationSettled = () => {
   activeInvocations -= 1;
   if (shutdownRequested && activeInvocations === 0) exitAfterCleanup();
 };
+var DRAINED_PATHS = /* @__PURE__ */ new Set(["/tools/invoke", "/mcp", "/operator", "/rpc"]);
 var httpServer = createServer((req, res) => {
   const pathname = (req.url ?? "/").split("?")[0];
-  if (pathname === "/tools/invoke") {
-    activeInvocations += 1;
-    let settled = false;
-    const settleOnce = () => {
-      if (settled) return;
-      settled = true;
-      invocationSettled();
-    };
-    res.once("finish", settleOnce);
-    res.once("close", settleOnce);
-  }
-  void operatorEndpoint.handle(req, res, pathname).then((handledOperator) => {
+  const drained = req.method === "POST" && DRAINED_PATHS.has(pathname);
+  if (drained) activeInvocations += 1;
+  const handling = operatorEndpoint.handle(req, res, pathname).then((handledOperator) => {
     if (handledOperator) {
       return void 0;
     }
@@ -31344,6 +31336,7 @@ var httpServer = createServer((req, res) => {
       res.end();
     }
   });
+  if (drained) void handling.finally(invocationSettled);
 });
 var sidecarNonce = process.env.BOARDSTATE_SIDECAR_NONCE;
 attachWsTransport(httpServer, host, {
@@ -31403,12 +31396,14 @@ var pidAlive = (pid) => {
   return true;
 };
 var recordHolders = () => {
-  let record2;
+  let parsed;
   try {
-    record2 = JSON.parse(readFileSync(recordPath, "utf8"));
+    parsed = JSON.parse(readFileSync(recordPath, "utf8"));
   } catch {
     return null;
   }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  const record2 = parsed;
   if (record2.nonce === sidecarNonce) {
     const adopters = Array.isArray(record2.adopters) ? record2.adopters : [];
     return [record2.owner_pid, ...adopters].filter((pid) => Number.isInteger(pid));

@@ -48,10 +48,10 @@ jobs:
       - name: Invoke timeout (an unconfirmed mutation settles as parked, never hangs — CORRECT-1)
         run: node test/invoke-timeout.mjs
 
-      - name: Sidecar replacement drains accepted native invocations
+      - name: Sidecar replacement drains accepted invocations, MCP calls, RPCs and operator confirms
         run: node test/sidecar-drain.mjs
 
-      - name: Aborted native invocation releases shutdown cleanup
+      - name: Aborted native invocation holds shutdown until it settles, then cleans up
         run: node test/sidecar-abort-shutdown.mjs
 
       - name: Agent-scoped grants (MCP agent context threaded through the gate — CORRECT-2)
@@ -190,6 +190,9 @@ jobs:
       - name: A stale port record behind a reused pid is dropped, never signalled
         run: python test/sidecar_stale_record.py
 
+      - name: A cancelled or failed spawn terminates its child and clears state
+        run: python test/sidecar_spawn_cleanup.py
+
   windows-lifecycle:
     runs-on: windows-latest
     steps:
@@ -270,6 +273,7 @@ jobs:
           python test/node_resolution.py
           python test/sidecar_owner_watchdog.py
           python test/sidecar_stale_record.py
+          python test/sidecar_spawn_cleanup.py
 
       - name: Install into an isolated Hermes home
         run: |

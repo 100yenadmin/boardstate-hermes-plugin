@@ -189,6 +189,18 @@ def main() -> int:
         finally:
             _cleanup(sidecar_pid, holder)
 
+    # A record that parses but is not an object (literal `null`) is as inconclusive as a
+    # missing one; reading its fields must not crash the sidecar inside the watchdog timer.
+    with tempfile.TemporaryDirectory(prefix="boardstate-watchdog-nullrecord-") as tmp:
+        holder, sidecar_pid = _start_holder(tmp, "agent")
+        try:
+            (Path(tmp) / ".boardstate-sidecar.json").write_text("null", encoding="utf-8")
+            time.sleep(SURVIVE_SECONDS)
+            assert _alive(sidecar_pid), "watchdog crashed the sidecar on a `null` record"
+            print("ok   a `null` record skips the watchdog tick instead of crashing the sidecar")
+        finally:
+            _cleanup(sidecar_pid, holder)
+
     _replace_self_stopping_sidecar()
 
     print("owner watchdog: all checks passed")

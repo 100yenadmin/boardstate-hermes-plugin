@@ -9,7 +9,7 @@
 //
 // Run after `npm run build`:  node test/invoke-timeout.mjs
 
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -64,6 +64,18 @@ try {
   }).then((res) => res.json());
   check("native invoke honors its sub-Python timeout", Date.now() - nativeStart < 2000);
   check("native timed invoke returns the parked contract", native.result?.parked === true);
+  // A confirm after the timeout can still run the action (#20): the agent is told to look
+  // before retrying, both in the parked reply and in the tool's own description.
+  check(
+    "the parked reply says to check dashboard.action.list before retrying",
+    String(native.result?.note).includes("dashboard.action.list"),
+  );
+  const invokeSchema = JSON.parse(readFileSync(new URL("../dashboard/tools.schema.json", import.meta.url), "utf8"))
+    .find((tool) => tool.name === "boardstate_connector_invoke");
+  check(
+    "the invoke tool description says to check dashboard.action.list before retrying",
+    /dashboard\.action\.list[^.]*approvals card/.test(invokeSchema?.description ?? ""),
+  );
 
   // Invoke the mutation and NEVER confirm — race the call against a generous hang-detector.
   const start = Date.now();
