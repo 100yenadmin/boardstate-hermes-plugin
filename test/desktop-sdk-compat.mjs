@@ -11,7 +11,7 @@
 // It also loads the vendored element bundle (dashboard/vendor/boardstate-browser.js, the same
 // @boardstate/lit code the Desktop bundle inlines) and checks two widget renderers: a connected
 // notes widget shows its agent-written `props.text` when no state is persisted, and markdown
-// renders headings and GFM task items.
+// renders headings (including ATX closing sequences) and GFM task items.
 //
 // Run after `npm run build`:  node test/desktop-sdk-compat.mjs
 
@@ -363,6 +363,9 @@ check(
   "markdown \"- [x] b\" renders a checked task glyph",
   /<li class="dashboard-markdown__task-item"><span class="dashboard-markdown__task"[^>]*aria-label="checked"[^>]*>☑<\/span> b<\/li>/.test(md),
 );
+
+const atx = lit.toSanitizedMarkdownHtml("## Roadmap ##");
+check(`markdown ATX closing sequence is stripped (got ${atx})`, /<h2>Roadmap<\/h2>/.test(atx));
 
 console.log(`\ndesktop-sdk-compat: ${n} checks`);
 if (failures.length) {

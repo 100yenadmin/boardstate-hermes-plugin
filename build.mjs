@@ -42,6 +42,19 @@ try {
 mkdirSync(path.join(dashboardDir, "dist"), { recursive: true });
 mkdirSync(path.join(dashboardDir, "vendor"), { recursive: true });
 
+// 0) Vendor the prebuilt element bundle + stylesheet (served as static assets) FIRST:
+// the Desktop bundle (1b) inlines vendor/boardstate.css, so copying it afterwards made the
+// first build after an @boardstate/lit bump embed the previous stylesheet (#20).
+for (const [src, dest] of [
+  [litBrowser, path.join(dashboardDir, "vendor/boardstate-browser.js")],
+  [litCss, path.join(dashboardDir, "vendor/boardstate.css")],
+]) {
+  if (!existsSync(src)) {
+    throw new Error(`Vendored asset missing: ${src}`);
+  }
+  cpSync(src, dest);
+}
+
 // 1) Browser tab bundle — IIFE, host React (never bundled), createWsTransport inlined.
 await esbuild.build({
   entryPoints: [path.join(dashboardDir, "src/index.tsx")],
@@ -158,16 +171,5 @@ await esbuild.build({
   logLevel: "info",
   plugins: [ajvDataIdPlugin],
 });
-
-// 3) Vendor the prebuilt element bundle + stylesheet (served as static assets).
-for (const [src, dest] of [
-  [litBrowser, path.join(dashboardDir, "vendor/boardstate-browser.js")],
-  [litCss, path.join(dashboardDir, "vendor/boardstate.css")],
-]) {
-  if (!existsSync(src)) {
-    throw new Error(`Vendored asset missing: ${src}`);
-  }
-  cpSync(src, dest);
-}
 
 console.log("boardstate-hermes-plugin: build complete (@boardstate/* from npm)");
