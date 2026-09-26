@@ -46,6 +46,12 @@ try {
   const noCred = await post(port, "");
   check("a missing credential is refused (401)", noCred === 401);
 
+  // Constant-time compare (#20): an equal-length wrong secret and a longer one are refused too.
+  const sameLength = await post(port, `${OPERATOR_SECRET.slice(0, -1)}${OPERATOR_SECRET.endsWith("x") ? "y" : "x"}`);
+  check("an equal-length wrong secret is refused (401)", sameLength === 401);
+  const longer = await post(port, `${OPERATOR_SECRET}x`);
+  check("the secret plus a suffix is refused (401)", longer === 401);
+
   // The dedicated operator secret PASSES the gate (400 = gate passed, host rejects the bogus
   // connector — a 401 would mean the gate rejected the credential).
   const secretAccepted = await post(port, OPERATOR_SECRET);

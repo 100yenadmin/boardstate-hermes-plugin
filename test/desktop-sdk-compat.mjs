@@ -11,7 +11,7 @@
 // It also loads the vendored element bundle (dashboard/vendor/boardstate-browser.js, the same
 // @boardstate/lit code the Desktop bundle inlines) and checks two widget renderers: a connected
 // notes widget shows its agent-written `props.text` when no state is persisted, and markdown
-// renders headings and GFM task items.
+// renders headings (including ATX closing sequences) and GFM task items.
 //
 // Run after `npm run build`:  node test/desktop-sdk-compat.mjs
 
@@ -309,6 +309,25 @@ for (const [label, shape] of [
   b.page.unmount();
   b.unload();
 
+  // An error (here: the first workspace read fails) recovers on the next successful
+  // connect without a remount, and the degraded timer does not overwrite the error first.
+  const failing = makeContext(shape);
+  const okRest = failing.ctx.rest;
+  failing.ctx.rest = async (path, opts) => {
+    if (path === "/rpc") throw new Error("sidecar starting");
+    return okRest(path, opts);
+  };
+  plugin.register(failing.ctx);
+  const errored = mount(failing.contributions.find((c) => c.id === "board-route").render());
+  await flush();
+  check(`${label}: a failed first read shows the error`, errored.text().includes("Board unavailable: sidecar starting"));
+  fireTimers();
+  check(`${label}: the ack timer does not hide the error`, errored.text().includes("Board unavailable"));
+  failing.sockets.find((s) => s.path === "/ws")?.onMessage(ACK);
+  check(`${label}: the next successful connect recovers without a remount`, errored.text().includes("Board connected"));
+  errored.unmount();
+  failing.unload();
+
   // Page unmount cancels the timer.
   const c = await bootBoard(shape);
   c.page.unmount();
@@ -363,6 +382,9 @@ check(
   "markdown \"- [x] b\" renders a checked task glyph",
   /<li class="dashboard-markdown__task-item"><span class="dashboard-markdown__task"[^>]*aria-label="checked"[^>]*>☑<\/span> b<\/li>/.test(md),
 );
+
+const atx = lit.toSanitizedMarkdownHtml("## Roadmap ##");
+check(`markdown ATX closing sequence is stripped (got ${atx})`, /<h2>Roadmap<\/h2>/.test(atx));
 
 console.log(`\ndesktop-sdk-compat: ${n} checks`);
 if (failures.length) {

@@ -40,6 +40,7 @@ import { createMcpEndpoint } from "./mcp.js";
 import { createOperatorEndpoint } from "./operator.js";
 import { officeCliBootHint } from "./presets.js";
 import { buildRedactor } from "./redact.js";
+import { secretsEqual } from "./secret-compare.js";
 
 const ignoreBrokenPipe = (error: NodeJS.ErrnoException): void => {
   if (error.code !== "EPIPE") {
@@ -278,20 +279,17 @@ const invocationSettled = (): void => {
   if (shutdownRequested && activeInvocations === 0) exitAfterCleanup();
 };
 
+// Accepted POSTs that can run a tool, a connector call or an operator decision. Each one
+// holds shutdown until its handler settles, not until its response closes: a client that
+// disconnects does not stop the work it started (#20). A GET /mcp is a long-lived event
+// stream, not work, so it is not counted. The 30 s fail-safe stays the bound.
+const DRAINED_PATHS = new Set(["/tools/invoke", "/mcp", "/operator", "/rpc"]);
+
 const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
   const pathname = (req.url ?? "/").split("?")[0];
-  if (pathname === "/tools/invoke") {
-    activeInvocations += 1;
-    let settled = false;
-    const settleOnce = (): void => {
-      if (settled) return;
-      settled = true;
-      invocationSettled();
-    };
-    res.once("finish", settleOnce);
-    res.once("close", settleOnce);
-  }
-  void operatorEndpoint
+  const drained = req.method === "POST" && DRAINED_PATHS.has(pathname);
+  if (drained) activeInvocations += 1;
+  const handling = operatorEndpoint
     .handle(req, res, pathname)
     .then((handledOperator) => {
       if (handledOperator) {
@@ -329,6 +327,7 @@ const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
         res.end();
       }
     });
+  if (drained) void handling.finally(invocationSettled);
 });
 
 // The networked control-plane seam. Auth is primarily the parent's job (the Hermes WS
@@ -346,7 +345,7 @@ attachWsTransport(httpServer, host, {
     }
     try {
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
-      return url.searchParams.get("nonce") === sidecarNonce;
+      return secretsEqual(url.searchParams.get("nonce"), sidecarNonce);
     } catch {
       return false;
     }
@@ -412,12 +411,15 @@ const pidAlive = (pid: number): boolean => {
   return true;
 };
 const recordHolders = (): number[] | null => {
-  let record: { nonce?: unknown; owner_pid?: unknown; adopters?: unknown };
+  let parsed: unknown;
   try {
-    record = JSON.parse(readFileSync(recordPath as string, "utf8"));
+    parsed = JSON.parse(readFileSync(recordPath as string, "utf8"));
   } catch {
     return null; // missing, unreadable, or a transient read error: decide on a later tick
   }
+  // Not a record object (e.g. literal `null`): as inconclusive as an unreadable file.
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  const record = parsed as { nonce?: unknown; owner_pid?: unknown; adopters?: unknown };
   if (record.nonce === sidecarNonce) {
     const adopters = Array.isArray(record.adopters) ? record.adopters : [];
     return [record.owner_pid, ...adopters].filter((pid): pid is number => Number.isInteger(pid));

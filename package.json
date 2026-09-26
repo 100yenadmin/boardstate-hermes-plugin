@@ -1,6 +1,6 @@
 {
   "name": "boardstate-hermes-plugin",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "private": true,
   "description": "Drop-in Hermes dashboard tab that renders a live Boardstate board.",
   "license": "MIT",
@@ -12,7 +12,7 @@
   "devDependencies": {
     "@boardstate/broker": "^0.3.4",
     "@boardstate/core": "^1.8.0",
-    "@boardstate/lit": "^0.9.1",
+    "@boardstate/lit": "0.9.2",
     "@boardstate/schema": "^1.8.0",
     "@boardstate/server": "^1.8.0",
     "@modelcontextprotocol/sdk": "^1.29.0",

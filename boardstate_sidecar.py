@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import contextlib
 import errno
 import json
 import logging
@@ -546,34 +547,48 @@ async def _spawn_sidecar(
         os.close(log_fd)
     try:
         port = await _read_port(proc)
-    except Exception:
-        proc.terminate()
+        state.update(
+            {
+                "proc": proc,
+                "port": port,
+                "nonce": nonce,
+                "operator_secret": generated_operator_secret
+                if spawned_by == "dashboard"
+                else None,
+                "owned": True,
+                "spawned_by": spawned_by,
+                "state_dir": directory,
+            }
+        )
+        _write_record(
+            directory,
+            {
+                "port": port,
+                "nonce": nonce,
+                "pid": proc.pid,
+                "spawned_by": spawned_by,
+                "owner_pid": os.getpid(),
+                "adopters": [],
+            },
+        )
+    except BaseException:
+        # Cancelled or failed before the record and exit hook exist: a child left running
+        # here is an untracked second writer, so stop it, wait for it, and forget it.
+        try:
+            with contextlib.suppress(ProcessLookupError):
+                proc.terminate()
+            await asyncio.wait_for(proc.wait(), timeout=_ATEXIT_DRAIN_WAIT_SECONDS)
+        except Exception:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            # A killed child still has to be reaped before the state is cleared, so the
+            # next spawn never overlaps one that is still exiting (bounded: a reaper that
+            # never reports must not hang the caller either).
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(proc.wait(), timeout=_ATEXIT_DRAIN_WAIT_SECONDS)
+        finally:
+            state.update(_new_state(directory))
         raise
-
-    state.update(
-        {
-            "proc": proc,
-            "port": port,
-            "nonce": nonce,
-            "operator_secret": generated_operator_secret
-            if spawned_by == "dashboard"
-            else None,
-            "owned": True,
-            "spawned_by": spawned_by,
-            "state_dir": directory,
-        }
-    )
-    _write_record(
-        directory,
-        {
-            "port": port,
-            "nonce": nonce,
-            "pid": proc.pid,
-            "spawned_by": spawned_by,
-            "owner_pid": os.getpid(),
-            "adopters": [],
-        },
-    )
     state["drain_tasks"] = [asyncio.create_task(_drain(proc.stdout, "out"))]
     _register_atexit()
     log.info(

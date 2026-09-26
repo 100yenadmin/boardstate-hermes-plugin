@@ -4782,6 +4782,8 @@ const en = {
 	"dashboard.widget.approval.unavailable": "This widget is unavailable.",
 	"dashboard.widget.stat.empty": "—",
 	"dashboard.widget.markdownEmpty": "Nothing to show yet.",
+	"dashboard.widget.markdown.taskChecked": "checked",
+	"dashboard.widget.markdown.taskUnchecked": "unchecked",
 	"dashboard.widget.table.empty": "No rows to show.",
 	"dashboard.widget.table.more": "+{count} more",
 	"dashboard.widget.sessions.empty": "No sessions yet.",
@@ -5582,6 +5584,10 @@ function sparkTrend(values) {
 	const last = values[values.length - 1];
 	return last > first ? "up" : last < first ? "down" : "flat";
 }
+function sparkLabelPlacement(model) {
+	const y = yScale(model.values[model.values.length - 1] ?? 0, model.min, model.max);
+	return y < VIEW_H / 3 ? "top" : y > VIEW_H * 2 / 3 ? "bottom" : "middle";
+}
 function drawLine(model) {
 	return w`<polyline
     class="dashboard-chart__line"
@@ -5725,7 +5731,7 @@ function renderChart(widget, value) {
                 >${formatValue(model.min)}</span
               >` : A}
       ${sparkValue ? b`<span
-              class="dashboard-chart__spark-value dashboard-chart__spark-value--${sparkTrend(model.values)}"
+              class="dashboard-chart__spark-value dashboard-chart__spark-value--${sparkTrend(model.values)} dashboard-chart__spark-value--${sparkLabelPlacement(model)}"
               >${formatValue(model.values[model.values.length - 1] ?? 0)}</span
             >` : A}
     </div>
@@ -5779,6 +5785,22 @@ function renderInline(escaped) {
 }
 /** An ATX heading line (CommonMark: the heading ends at the newline). */
 const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*))?$/;
+/**
+* Strip an optional ATX closing sequence: a space-preceded `#` run followed only by
+* spaces (CommonMark). A linear scan on purpose: the equivalent regex
+* `/(?:^|[ \t]+)#+[ \t]*$/` backtracks quadratically on a long run of spaces.
+*/
+function stripHeadingClose(text) {
+	const isSpace = (ch) => ch === " " || ch === "	";
+	let end = text.length;
+	while (end > 0 && isSpace(text[end - 1])) end -= 1;
+	const hashEnd = end;
+	while (end > 0 && text[end - 1] === "#") end -= 1;
+	if (end === hashEnd) return text;
+	if (end > 0 && !isSpace(text[end - 1])) return text;
+	while (end > 0 && isSpace(text[end - 1])) end -= 1;
+	return text.slice(0, end);
+}
 /** Render one non-list block (blockquote / paragraph). */
 function renderBlock(block) {
 	const lines = block.split("\n");
@@ -5790,7 +5812,7 @@ function renderListItem(item) {
 	const task = /^\[([ xX])\]\s+(.*)$/.exec(item);
 	if (!task) return `<li>${renderInline(escapeHtml(item))}</li>`;
 	const checked = task[1] !== " ";
-	return `<li class="dashboard-markdown__task-item">${`<span class="dashboard-markdown__task" role="img" aria-label="${checked ? "checked" : "unchecked"}">${checked ? "☑" : "☐"}</span>`} ${renderInline(escapeHtml(task[2]))}</li>`;
+	return `<li class="dashboard-markdown__task-item">${`<span class="dashboard-markdown__task" role="img" aria-label="${escapeHtml(t(checked ? "dashboard.widget.markdown.taskChecked" : "dashboard.widget.markdown.taskUnchecked"))}">${checked ? "☑" : "☐"}</span>`} ${renderInline(escapeHtml(task[2]))}</li>`;
 }
 /** Render a bullet (`-`/`*`) or ordered (`1.`) list block. */
 function renderList(block, ordered) {
@@ -5848,7 +5870,8 @@ function toSanitizedMarkdownHtml(source) {
 		if (heading) {
 			flushParagraph();
 			const level = heading[1].length;
-			html.push(`<h${level}>${renderInline(escapeHtml(heading[2] ?? ""))}</h${level}>`);
+			const text = stripHeadingClose(heading[2] ?? "");
+			html.push(`<h${level}>${renderInline(escapeHtml(text))}</h${level}>`);
 			continue;
 		}
 		let kind = isUnorderedList(line) ? "ul" : isOrderedList(line) ? "ol" : "p";

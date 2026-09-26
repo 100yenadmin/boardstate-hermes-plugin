@@ -73,7 +73,12 @@ def main() -> int:
     check("shared runtime reaps only under its ownership/adopter rule", "should_terminate" in runtime_src)
     check("runtime loop signals ready from inside the running loop", "loop.call_soon(ready.set)" in runtime_src)
     internal_src = (DASHBOARD / "sidecar" / "src" / "internal.ts").read_text()
-    check("internal nonce comparisons use timingSafeEqual", "timingSafeEqual" in internal_src)
+    compare_path = DASHBOARD / "sidecar" / "src" / "secret-compare.ts"
+    compare_src = compare_path.read_text() if compare_path.exists() else ""
+    check("shared secret compare uses timingSafeEqual", "timingSafeEqual" in compare_src)
+    for name in ("internal.ts", "operator.ts", "mcp.ts", "server.ts"):
+        gate_src = (DASHBOARD / "sidecar" / "src" / name).read_text()
+        check(f"{name} nonce/secret checks use the constant-time compare", "secretsEqual(url.searchParams" in gate_src)
     check("sidecar identity probe is nonce authenticated", '"/internal/healthz"' in internal_src)
 
     # Per-spawn nonce is wired: generated, passed via env, and appended to the upstream URL.

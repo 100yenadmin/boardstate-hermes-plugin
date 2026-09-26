@@ -12,9 +12,11 @@ jobs:
   build-and-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 26
 
@@ -48,11 +50,14 @@ jobs:
       - name: Invoke timeout (an unconfirmed mutation settles as parked, never hangs — CORRECT-1)
         run: node test/invoke-timeout.mjs
 
-      - name: Sidecar replacement drains accepted native invocations
+      - name: Sidecar replacement drains accepted invocations, MCP calls, RPCs and operator confirms
         run: node test/sidecar-drain.mjs
 
-      - name: Aborted native invocation releases shutdown cleanup
+      - name: Aborted native invocation holds shutdown until it settles, then cleans up
         run: node test/sidecar-abort-shutdown.mjs
+
+      - name: Agent-owned sidecar runs readOnly connector invokes; mutations keep the 409
+        run: node test/agent-connector-invoke.mjs
 
       - name: Agent-scoped grants (MCP agent context threaded through the gate — CORRECT-2)
         run: node test/scoped-grant.mjs
@@ -104,9 +109,11 @@ jobs:
     # README promises Node >= 20: run the committed sidecar bundle on the minimum runtime.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
 
@@ -123,13 +130,16 @@ jobs:
           node test/invoke-timeout.mjs
           node test/operational-e2e.mjs
           node test/secret-redaction.mjs
+          node test/agent-connector-invoke.mjs
 
   python:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 
@@ -190,12 +200,17 @@ jobs:
       - name: A stale port record behind a reused pid is dropped, never signalled
         run: python test/sidecar_stale_record.py
 
+      - name: A cancelled or failed spawn terminates its child and clears state
+        run: python test/sidecar_spawn_cleanup.py
+
   windows-lifecycle:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 
@@ -217,13 +232,15 @@ jobs:
     env:
       HERMES_HOME: /tmp/boardstate-hermes
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 26
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 
@@ -270,6 +287,7 @@ jobs:
           python test/node_resolution.py
           python test/sidecar_owner_watchdog.py
           python test/sidecar_stale_record.py
+          python test/sidecar_spawn_cleanup.py
 
       - name: Install into an isolated Hermes home
         run: |

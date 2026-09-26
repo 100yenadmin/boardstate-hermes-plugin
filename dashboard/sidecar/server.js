@@ -28764,8 +28764,16 @@ function registerUnavailableHermesDataRpc(host2) {
   return methods;
 }
 
-// dashboard/sidecar/src/internal.ts
+// dashboard/sidecar/src/secret-compare.ts
 import { timingSafeEqual } from "node:crypto";
+function secretsEqual(actual, expected) {
+  if (typeof actual !== "string") return false;
+  const actualBytes = Buffer.from(actual);
+  const expectedBytes = Buffer.from(expected);
+  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
+}
+
+// dashboard/sidecar/src/internal.ts
 var MAX_BODY_BYTES = 1024 * 1024;
 var OPERATOR_METHODS = new Set(OPERATOR_ONLY_METHODS);
 async function readJson(req) {
@@ -28799,12 +28807,6 @@ function send(res, status, body) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(body));
-}
-function secretsEqual(actual, expected) {
-  if (actual === null) return false;
-  const actualBytes = Buffer.from(actual);
-  const expectedBytes = Buffer.from(expected);
-  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 function createInternalEndpoint(host2, tools, options) {
   const nonce = options.nonce;
@@ -28859,17 +28861,23 @@ function createInternalEndpoint(host2, tools, options) {
           const name = payload.name;
           const args = payload.args;
           if (typeof name !== "string") throw new Error("tool name is required");
+          const toolArgs = typeof args === "object" && args !== null && !Array.isArray(args) ? args : {};
           if (name === "boardstate_connector_invoke" && options.spawnedBy === "agent" && tools.hasConnectors) {
-            send(res, 409, {
-              error: "This connector action needs the dashboard to confirm. Open the Board tab, then retry."
-            });
+            try {
+              send(res, 200, { result: await tools.invokeTool(name, toolArgs, { readOnlyOnly: true }) });
+            } catch (error2) {
+              if (error2?.code !== "not_readonly") throw error2;
+              send(res, 409, {
+                error: "This connector action needs the dashboard to confirm. Open the Board tab, then retry."
+              });
+            }
             return true;
           }
           const requestedTimeout = payload.timeoutMs;
           const mutationTimeoutMs2 = typeof requestedTimeout === "number" && Number.isFinite(requestedTimeout) && requestedTimeout > 0 ? requestedTimeout : void 0;
           const result2 = await tools.invokeTool(
             name,
-            typeof args === "object" && args !== null && !Array.isArray(args) ? args : {},
+            toolArgs,
             mutationTimeoutMs2 === void 0 ? void 0 : { mutationTimeoutMs: mutationTimeoutMs2 }
           );
           send(res, 200, { result: result2 });
@@ -30841,7 +30849,7 @@ var CONNECTOR_TOOL_DEFINITIONS = [
   },
   {
     name: "boardstate_connector_invoke",
-    description: "Invoke an operator-APPROVED external connector tool. A readOnly tool runs directly; a mutating tool PARKS as a pending action and BLOCKS until the operator confirms (up to a bounded timeout, after which it returns as still-parked). The connector's live manifest is re-checked (anti-rug-pull) on every call.",
+    description: "Invoke an operator-APPROVED external connector tool. A readOnly tool runs directly; a mutating tool PARKS as a pending action and BLOCKS until the operator confirms (up to a bounded timeout, after which it returns as still-parked). A confirm that lands after that timeout can still run the action, so never retry a parked call on your own: a retry can run the mutation twice; ask the operator for the outcome. The connector's live manifest is re-checked (anti-rug-pull) on every call.",
     inputSchema: CONNECTOR_TOOL_SCHEMA
   }
 ];
@@ -30899,6 +30907,11 @@ async function createMcpEndpoint(host2, store2, options = {}) {
       ...CONNECTOR_TOOL_DEFINITIONS[1],
       execute: async (args, invocation) => {
         if (!connectors2) throw new Error("no connectors configured");
+        if (invocation?.readOnlyOnly) {
+          return frameExternal(
+            await host2.request("dashboard.connector.read", connectorArgs(args), requestCtx)
+          );
+        }
         const invoked = await host2.request(
           "dashboard.action.invoke",
           connectorArgs(args),
@@ -30917,7 +30930,7 @@ async function createMcpEndpoint(host2, store2, options = {}) {
                 parked: true,
                 id: invoked.id,
                 ...typeof invoked.expiresAt === "string" ? { expiresAt: invoked.expiresAt } : {},
-                note: "Action is awaiting operator confirmation; it remains pending. Ask the operator to confirm."
+                note: "Action is awaiting operator confirmation; it remains pending. Ask the operator to confirm. A confirm can still run it after this reply, so do NOT retry it: a retry can run the mutation twice. If you need the outcome, ask the operator."
               };
             }
             throw error2;
@@ -31010,7 +31023,7 @@ async function createMcpEndpoint(host2, store2, options = {}) {
       }
       if (nonce) {
         const url2 = new URL(req.url ?? "/", "http://127.0.0.1");
-        if (url2.searchParams.get("nonce") !== nonce) {
+        if (!secretsEqual(url2.searchParams.get("nonce"), nonce)) {
           res.statusCode = 401;
           res.end("unauthorized");
           return true;
@@ -31083,7 +31096,7 @@ function createOperatorEndpoint(host2, options = {}) {
         return true;
       }
       const url2 = new URL(req.url ?? "/", "http://127.0.0.1");
-      if (url2.searchParams.get("nonce") !== secret) {
+      if (!secretsEqual(url2.searchParams.get("nonce"), secret)) {
         send2(res, 401, { error: "unauthorized" });
         return true;
       }
@@ -31296,20 +31309,12 @@ var invocationSettled = () => {
   activeInvocations -= 1;
   if (shutdownRequested && activeInvocations === 0) exitAfterCleanup();
 };
+var DRAINED_PATHS = /* @__PURE__ */ new Set(["/tools/invoke", "/mcp", "/operator", "/rpc"]);
 var httpServer = createServer((req, res) => {
   const pathname = (req.url ?? "/").split("?")[0];
-  if (pathname === "/tools/invoke") {
-    activeInvocations += 1;
-    let settled = false;
-    const settleOnce = () => {
-      if (settled) return;
-      settled = true;
-      invocationSettled();
-    };
-    res.once("finish", settleOnce);
-    res.once("close", settleOnce);
-  }
-  void operatorEndpoint.handle(req, res, pathname).then((handledOperator) => {
+  const drained = req.method === "POST" && DRAINED_PATHS.has(pathname);
+  if (drained) activeInvocations += 1;
+  const handling = operatorEndpoint.handle(req, res, pathname).then((handledOperator) => {
     if (handledOperator) {
       return void 0;
     }
@@ -31344,6 +31349,7 @@ var httpServer = createServer((req, res) => {
       res.end();
     }
   });
+  if (drained) void handling.finally(invocationSettled);
 });
 var sidecarNonce = process.env.BOARDSTATE_SIDECAR_NONCE;
 attachWsTransport(httpServer, host, {
@@ -31354,7 +31360,7 @@ attachWsTransport(httpServer, host, {
     }
     try {
       const url2 = new URL(req.url ?? "/", "http://127.0.0.1");
-      return url2.searchParams.get("nonce") === sidecarNonce;
+      return secretsEqual(url2.searchParams.get("nonce"), sidecarNonce);
     } catch {
       return false;
     }
@@ -31403,12 +31409,14 @@ var pidAlive = (pid) => {
   return true;
 };
 var recordHolders = () => {
-  let record2;
+  let parsed;
   try {
-    record2 = JSON.parse(readFileSync(recordPath, "utf8"));
+    parsed = JSON.parse(readFileSync(recordPath, "utf8"));
   } catch {
     return null;
   }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  const record2 = parsed;
   if (record2.nonce === sidecarNonce) {
     const adopters = Array.isArray(record2.adopters) ? record2.adopters : [];
     return [record2.owner_pid, ...adopters].filter((pid) => Number.isInteger(pid));

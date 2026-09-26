@@ -1,9 +1,9 @@
 /** Non-MCP loopback endpoints used by the unified plugin's two adapters. */
 
-import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { OPERATOR_ONLY_METHODS, type InProcessHost } from "@boardstate/server/node";
 import type { McpEndpoint } from "./mcp.js";
+import { secretsEqual } from "./secret-compare.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const OPERATOR_METHODS = new Set(OPERATOR_ONLY_METHODS);
@@ -40,16 +40,6 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(body));
-}
-
-function secretsEqual(actual: string | null, expected: string): boolean {
-  if (actual === null) return false;
-  const actualBytes = Buffer.from(actual);
-  const expectedBytes = Buffer.from(expected);
-  return (
-    actualBytes.length === expectedBytes.length &&
-    timingSafeEqual(actualBytes, expectedBytes)
-  );
 }
 
 export function createInternalEndpoint(
@@ -120,14 +110,26 @@ export function createInternalEndpoint(
           const name = payload.name;
           const args = payload.args;
           if (typeof name !== "string") throw new Error("tool name is required");
+          const toolArgs =
+            typeof args === "object" && args !== null && !Array.isArray(args)
+              ? (args as Record<string, unknown>)
+              : {};
           if (
             name === "boardstate_connector_invoke" &&
             options.spawnedBy === "agent" &&
             tools.hasConnectors
           ) {
-            send(res, 409, {
-              error: "This connector action needs the dashboard to confirm. Open the Board tab, then retry.",
-            });
+            // An agent-owned sidecar has no operator plane, so nothing can confirm a mutation.
+            // Run the call only if the upstream gate classifies the tool readOnly; a mutation
+            // keeps the 409, and any other gate refusal (unknown, ungranted) is a 400 below.
+            try {
+              send(res, 200, { result: await tools.invokeTool(name, toolArgs, { readOnlyOnly: true }) });
+            } catch (error) {
+              if ((error as { code?: unknown } | null)?.code !== "not_readonly") throw error;
+              send(res, 409, {
+                error: "This connector action needs the dashboard to confirm. Open the Board tab, then retry.",
+              });
+            }
             return true;
           }
           const requestedTimeout = payload.timeoutMs;
@@ -139,9 +141,7 @@ export function createInternalEndpoint(
               : undefined;
           const result = await tools.invokeTool(
             name,
-            typeof args === "object" && args !== null && !Array.isArray(args)
-              ? (args as Record<string, unknown>)
-              : {},
+            toolArgs,
             mutationTimeoutMs === undefined ? undefined : { mutationTimeoutMs },
           );
           send(res, 200, { result });
