@@ -1,9 +1,9 @@
 /** Non-MCP loopback endpoints used by the unified plugin's two adapters. */
 
-import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { OPERATOR_ONLY_METHODS, type InProcessHost } from "@boardstate/server/node";
 import type { McpEndpoint } from "./mcp.js";
+import { secretsEqual } from "./secret-compare.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const OPERATOR_METHODS = new Set(OPERATOR_ONLY_METHODS);
@@ -40,16 +40,6 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(body));
-}
-
-function secretsEqual(actual: string | null, expected: string): boolean {
-  if (actual === null) return false;
-  const actualBytes = Buffer.from(actual);
-  const expectedBytes = Buffer.from(expected);
-  return (
-    actualBytes.length === expectedBytes.length &&
-    timingSafeEqual(actualBytes, expectedBytes)
-  );
 }
 
 export function createInternalEndpoint(

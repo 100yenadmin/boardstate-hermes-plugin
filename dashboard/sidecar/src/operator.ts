@@ -21,6 +21,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { OPERATOR_ONLY_METHODS, type InProcessHost } from "@boardstate/server/node";
+import { secretsEqual } from "./secret-compare.js";
 
 /** The EXACT operator verb set — the same list the WS transport blocks + the MCP endpoint
  *  excludes. Reused (not re-listed) so the three surfaces can never drift apart. */
@@ -90,7 +91,7 @@ export function createOperatorEndpoint(
         return true;
       }
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
-      if (url.searchParams.get("nonce") !== secret) {
+      if (!secretsEqual(url.searchParams.get("nonce"), secret)) {
         send(res, 401, { error: "unauthorized" });
         return true;
       }

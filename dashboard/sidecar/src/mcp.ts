@@ -43,6 +43,7 @@ import {
   toPublicToolName,
   toPublicToolText,
 } from "./tool-contract.mjs";
+import { secretsEqual } from "./secret-compare.js";
 
 // The single agent identity this MCP session acts as. Threaded into both the base dashboard
 // tools' `context` and the gated connector RPCs' request context, so agent-scoped grants
@@ -325,7 +326,7 @@ export async function createMcpEndpoint(
       }
       if (nonce) {
         const url = new URL(req.url ?? "/", "http://127.0.0.1");
-        if (url.searchParams.get("nonce") !== nonce) {
+        if (!secretsEqual(url.searchParams.get("nonce"), nonce)) {
           res.statusCode = 401;
           res.end("unauthorized");
           return true;

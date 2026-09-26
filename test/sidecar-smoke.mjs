@@ -99,6 +99,8 @@ const check = (name, cond) => {
   const s = await spawnSidecar({ BOARDSTATE_SIDECAR_NONCE: nonce });
   check("nonce gate rejects missing nonce", (await probe(`ws://127.0.0.1:${s.port}/ws`)) === "rejected");
   check("nonce gate rejects wrong nonce", (await probe(`ws://127.0.0.1:${s.port}/ws?nonce=wrong`)) === "rejected");
+  const sameLength = `${nonce.slice(0, -1)}${nonce.endsWith("x") ? "y" : "x"}`;
+  check("nonce gate rejects an equal-length wrong nonce", (await probe(`ws://127.0.0.1:${s.port}/ws?nonce=${sameLength}`)) === "rejected");
   check("nonce gate accepts correct nonce", (await probe(`ws://127.0.0.1:${s.port}/ws?nonce=${nonce}`)) === "ok");
   s.proc.kill("SIGTERM");
 }

@@ -28764,8 +28764,16 @@ function registerUnavailableHermesDataRpc(host2) {
   return methods;
 }
 
-// dashboard/sidecar/src/internal.ts
+// dashboard/sidecar/src/secret-compare.ts
 import { timingSafeEqual } from "node:crypto";
+function secretsEqual(actual, expected) {
+  if (typeof actual !== "string") return false;
+  const actualBytes = Buffer.from(actual);
+  const expectedBytes = Buffer.from(expected);
+  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
+}
+
+// dashboard/sidecar/src/internal.ts
 var MAX_BODY_BYTES = 1024 * 1024;
 var OPERATOR_METHODS = new Set(OPERATOR_ONLY_METHODS);
 async function readJson(req) {
@@ -28799,12 +28807,6 @@ function send(res, status, body) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(body));
-}
-function secretsEqual(actual, expected) {
-  if (actual === null) return false;
-  const actualBytes = Buffer.from(actual);
-  const expectedBytes = Buffer.from(expected);
-  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 function createInternalEndpoint(host2, tools, options) {
   const nonce = options.nonce;
@@ -31010,7 +31012,7 @@ async function createMcpEndpoint(host2, store2, options = {}) {
       }
       if (nonce) {
         const url2 = new URL(req.url ?? "/", "http://127.0.0.1");
-        if (url2.searchParams.get("nonce") !== nonce) {
+        if (!secretsEqual(url2.searchParams.get("nonce"), nonce)) {
           res.statusCode = 401;
           res.end("unauthorized");
           return true;
@@ -31083,7 +31085,7 @@ function createOperatorEndpoint(host2, options = {}) {
         return true;
       }
       const url2 = new URL(req.url ?? "/", "http://127.0.0.1");
-      if (url2.searchParams.get("nonce") !== secret) {
+      if (!secretsEqual(url2.searchParams.get("nonce"), secret)) {
         send2(res, 401, { error: "unauthorized" });
         return true;
       }
@@ -31347,7 +31349,7 @@ attachWsTransport(httpServer, host, {
     }
     try {
       const url2 = new URL(req.url ?? "/", "http://127.0.0.1");
-      return url2.searchParams.get("nonce") === sidecarNonce;
+      return secretsEqual(url2.searchParams.get("nonce"), sidecarNonce);
     } catch {
       return false;
     }

@@ -40,6 +40,7 @@ import { createMcpEndpoint } from "./mcp.js";
 import { createOperatorEndpoint } from "./operator.js";
 import { officeCliBootHint } from "./presets.js";
 import { buildRedactor } from "./redact.js";
+import { secretsEqual } from "./secret-compare.js";
 
 const ignoreBrokenPipe = (error: NodeJS.ErrnoException): void => {
   if (error.code !== "EPIPE") {
@@ -344,7 +345,7 @@ attachWsTransport(httpServer, host, {
     }
     try {
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
-      return url.searchParams.get("nonce") === sidecarNonce;
+      return secretsEqual(url.searchParams.get("nonce"), sidecarNonce);
     } catch {
       return false;
     }
