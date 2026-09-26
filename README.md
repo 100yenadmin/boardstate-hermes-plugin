@@ -124,8 +124,8 @@ Boardstate makes no third-party network request by default.
   the only runtime paths that can reach outside Hermes.
 - Connector reads require an approved grant. Connector mutations park for an operator
   decision. A changed connector manifest re-pends its grant. A mutation whose wait times out
-  is reported as parked, but a later confirm can still run it, so the agent is told to check
-  the pending actions (`dashboard.action.list`) before retrying.
+  is reported as parked, but a later confirm can still run it, so the agent is told not to
+  retry it on its own (a retry can run the mutation twice) and to ask the operator for the outcome.
 - Operator approve/confirm/deny verbs use a separate in-memory secret that is never written
   to the port record. In gated multi-user mode, `boardstate.operators.json` is also required.
 - Sidecar traffic never goes through an `HTTP(S)_PROXY` from the environment.

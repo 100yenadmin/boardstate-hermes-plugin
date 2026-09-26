@@ -22,7 +22,8 @@ Item numbers refer to the #20 triage digest.
   never parked or run, and an unknown or ungranted tool is refused (item 10).
 - A mutating connector call that times out is reported as parked, but a confirm that lands
   later can still run it. The parked reply and the tool description now tell the agent to
-  check the pending actions (`dashboard.action.list`) before retrying (item 9).
+  not retry the call on its own (a retry can run the mutation twice) and to ask the operator
+  for the outcome (item 9).
 
 ### Fixed
 

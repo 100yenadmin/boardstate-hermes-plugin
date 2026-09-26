@@ -218,7 +218,8 @@ export async function createMcpEndpoint(
                     ...(typeof invoked.expiresAt === "string" ? { expiresAt: invoked.expiresAt } : {}),
                     note:
                       "Action is awaiting operator confirmation; it remains pending. Ask the operator to confirm. " +
-                      "A confirm can still run it after this reply, so check dashboard.action.list before retrying.",
+                      "A confirm can still run it after this reply, so do NOT retry it: a retry can run the mutation twice. " +
+                      "If you need the outcome, ask the operator.",
                   };
                 }
                 throw error;

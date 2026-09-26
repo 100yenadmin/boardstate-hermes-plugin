@@ -64,17 +64,18 @@ try {
   }).then((res) => res.json());
   check("native invoke honors its sub-Python timeout", Date.now() - nativeStart < 2000);
   check("native timed invoke returns the parked contract", native.result?.parked === true);
-  // A confirm after the timeout can still run the action (#20): the agent is told to look
-  // before retrying, both in the parked reply and in the tool's own description.
+  // A confirm after the timeout can still run the action (#20): the agent is told NOT to
+  // retry on its own (the pending list cannot prove an action did not run), both in the
+  // parked reply and in the tool's own description.
   check(
-    "the parked reply says to check dashboard.action.list before retrying",
-    String(native.result?.note).includes("dashboard.action.list"),
+    "the parked reply says not to retry the parked call",
+    /do NOT retry it/.test(String(native.result?.note)) && !/dashboard\.action\.list/.test(String(native.result?.note)),
   );
   const invokeSchema = JSON.parse(readFileSync(new URL("../dashboard/tools.schema.json", import.meta.url), "utf8"))
     .find((tool) => tool.name === "boardstate_connector_invoke");
   check(
-    "the invoke tool description says to check dashboard.action.list before retrying",
-    /dashboard\.action\.list[^.]*approvals card/.test(invokeSchema?.description ?? ""),
+    "the invoke tool description says never to retry a parked call",
+    /never retry a parked call[^.]*run the mutation twice/.test(invokeSchema?.description ?? ""),
   );
 
   // Invoke the mutation and NEVER confirm — race the call against a generous hang-detector.

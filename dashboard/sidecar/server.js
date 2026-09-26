@@ -30849,7 +30849,7 @@ var CONNECTOR_TOOL_DEFINITIONS = [
   },
   {
     name: "boardstate_connector_invoke",
-    description: "Invoke an operator-APPROVED external connector tool. A readOnly tool runs directly; a mutating tool PARKS as a pending action and BLOCKS until the operator confirms (up to a bounded timeout, after which it returns as still-parked). A confirm that lands after that timeout can still run the action, so before retrying a parked call check the pending actions (dashboard.action.list, shown on the board's approvals card). The connector's live manifest is re-checked (anti-rug-pull) on every call.",
+    description: "Invoke an operator-APPROVED external connector tool. A readOnly tool runs directly; a mutating tool PARKS as a pending action and BLOCKS until the operator confirms (up to a bounded timeout, after which it returns as still-parked). A confirm that lands after that timeout can still run the action, so never retry a parked call on your own: a retry can run the mutation twice; ask the operator for the outcome. The connector's live manifest is re-checked (anti-rug-pull) on every call.",
     inputSchema: CONNECTOR_TOOL_SCHEMA
   }
 ];
@@ -30930,7 +30930,7 @@ async function createMcpEndpoint(host2, store2, options = {}) {
                 parked: true,
                 id: invoked.id,
                 ...typeof invoked.expiresAt === "string" ? { expiresAt: invoked.expiresAt } : {},
-                note: "Action is awaiting operator confirmation; it remains pending. Ask the operator to confirm. A confirm can still run it after this reply, so check dashboard.action.list before retrying."
+                note: "Action is awaiting operator confirmation; it remains pending. Ask the operator to confirm. A confirm can still run it after this reply, so do NOT retry it: a retry can run the mutation twice. If you need the outcome, ask the operator."
               };
             }
             throw error2;
