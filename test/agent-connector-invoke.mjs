@@ -57,8 +57,8 @@ try {
 
   const readOnly = await invoke("fake", "echo", { text: "agent-owned read" });
   check("a readOnly tool runs on an agent-owned sidecar (200)", readOnly.status === 200);
-  check("its result reaches the agent", JSON.stringify(readOnly.body.result).includes("agent-owned read"));
-  check("its result is framed UNTRUSTED", /UNTRUSTED/.test(JSON.stringify(readOnly.body.result)));
+  check("its result reaches the agent", JSON.stringify(readOnly.body.result ?? null).includes("agent-owned read"));
+  check("its result is framed UNTRUSTED", /UNTRUSTED/.test(JSON.stringify(readOnly.body.result ?? null)));
 
   const mutating = await invoke("fake", "write_note", { text: "must not run" });
   check("a mutating tool keeps the 409", mutating.status === 409);
