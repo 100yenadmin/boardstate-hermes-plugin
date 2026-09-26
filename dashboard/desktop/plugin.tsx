@@ -183,6 +183,9 @@ function BoardPage({
     let errorSticky = false;
     const updateStatus = (next: DesktopStatus, message = "") => {
       if (next === "error") errorSticky = true;
+      // A later successful connect (the socket acknowledgement) recovers the page without a
+      // remount; until then an error is not overwritten by the degraded timer.
+      if (next === "live") errorSticky = false;
       if (errorSticky && next !== "error") return;
       if (!disposed) {
         setStatus(next);
