@@ -103,6 +103,7 @@ function buildFakeMcpServer(state = {}) {
       case "add":
         return textResult({ sum: Number(args.a) + Number(args.b) });
       case "write_note":
+        state.writeCalls = (state.writeCalls ?? 0) + 1;
         if (Number(state.writeDelayMs) > 0) {
           await new Promise((resolve) => setTimeout(resolve, Number(state.writeDelayMs)));
         }

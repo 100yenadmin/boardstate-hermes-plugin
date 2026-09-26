@@ -110,14 +110,26 @@ export function createInternalEndpoint(
           const name = payload.name;
           const args = payload.args;
           if (typeof name !== "string") throw new Error("tool name is required");
+          const toolArgs =
+            typeof args === "object" && args !== null && !Array.isArray(args)
+              ? (args as Record<string, unknown>)
+              : {};
           if (
             name === "boardstate_connector_invoke" &&
             options.spawnedBy === "agent" &&
             tools.hasConnectors
           ) {
-            send(res, 409, {
-              error: "This connector action needs the dashboard to confirm. Open the Board tab, then retry.",
-            });
+            // An agent-owned sidecar has no operator plane, so nothing can confirm a mutation.
+            // Run the call only if the upstream gate classifies the tool readOnly; a mutation
+            // keeps the 409, and any other gate refusal (unknown, ungranted) is a 400 below.
+            try {
+              send(res, 200, { result: await tools.invokeTool(name, toolArgs, { readOnlyOnly: true }) });
+            } catch (error) {
+              if ((error as { code?: unknown } | null)?.code !== "not_readonly") throw error;
+              send(res, 409, {
+                error: "This connector action needs the dashboard to confirm. Open the Board tab, then retry.",
+              });
+            }
             return true;
           }
           const requestedTimeout = payload.timeoutMs;
@@ -129,9 +141,7 @@ export function createInternalEndpoint(
               : undefined;
           const result = await tools.invokeTool(
             name,
-            typeof args === "object" && args !== null && !Array.isArray(args)
-              ? (args as Record<string, unknown>)
-              : {},
+            toolArgs,
             mutationTimeoutMs === undefined ? undefined : { mutationTimeoutMs },
           );
           send(res, 200, { result });

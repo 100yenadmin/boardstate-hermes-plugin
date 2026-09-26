@@ -73,11 +73,12 @@ type ExtraTool = {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  execute: (
-    args: Record<string, unknown>,
-    invocation?: { mutationTimeoutMs?: number },
-  ) => Promise<unknown>;
+  execute: (args: Record<string, unknown>, invocation?: ToolInvocation) => Promise<unknown>;
 };
+
+/** Per-call options for {@link McpEndpoint.invokeTool}. `readOnlyOnly` runs a connector invoke
+ *  only when the upstream gate classifies the tool readOnly (see the invoke tool below). */
+export type ToolInvocation = { mutationTimeoutMs?: number; readOnlyOnly?: boolean };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -92,7 +93,7 @@ export type McpEndpoint = {
   invokeTool: (
     name: string,
     args: Record<string, unknown>,
-    invocation?: { mutationTimeoutMs?: number },
+    invocation?: ToolInvocation,
   ) => Promise<unknown>;
   readonly hasConnectors: boolean;
   /** Secret-redacted error text for the internal loopback endpoint. */
@@ -186,6 +187,14 @@ export async function createMcpEndpoint(
           ...CONNECTOR_TOOL_DEFINITIONS[1],
           execute: async (args, invocation) => {
             if (!connectors) throw new Error("no connectors configured");
+            if (invocation?.readOnlyOnly) {
+              // Reuse the upstream classification: `dashboard.connector.read` runs the same
+              // gateCall and executes only a readOnly tool; a mutation is refused with
+              // `not_readonly` (never parked) and an unknown/ungranted tool is refused too.
+              return frameExternal(
+                await host.request("dashboard.connector.read", connectorArgs(args), requestCtx),
+              );
+            }
             const invoked = (await host.request(
               "dashboard.action.invoke",
               connectorArgs(args),
@@ -243,7 +252,7 @@ export async function createMcpEndpoint(
   const invokeTool = async (
     publicName: string,
     args: Record<string, unknown>,
-    invocation?: { mutationTimeoutMs?: number },
+    invocation?: ToolInvocation,
   ): Promise<unknown> => {
     if (publicName === "boardstate_tool_search" && !toolSearch) {
       throw new Error("no connectors configured");

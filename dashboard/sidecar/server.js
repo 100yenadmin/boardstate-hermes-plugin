@@ -28861,17 +28861,23 @@ function createInternalEndpoint(host2, tools, options) {
           const name = payload.name;
           const args = payload.args;
           if (typeof name !== "string") throw new Error("tool name is required");
+          const toolArgs = typeof args === "object" && args !== null && !Array.isArray(args) ? args : {};
           if (name === "boardstate_connector_invoke" && options.spawnedBy === "agent" && tools.hasConnectors) {
-            send(res, 409, {
-              error: "This connector action needs the dashboard to confirm. Open the Board tab, then retry."
-            });
+            try {
+              send(res, 200, { result: await tools.invokeTool(name, toolArgs, { readOnlyOnly: true }) });
+            } catch (error2) {
+              if (error2?.code !== "not_readonly") throw error2;
+              send(res, 409, {
+                error: "This connector action needs the dashboard to confirm. Open the Board tab, then retry."
+              });
+            }
             return true;
           }
           const requestedTimeout = payload.timeoutMs;
           const mutationTimeoutMs2 = typeof requestedTimeout === "number" && Number.isFinite(requestedTimeout) && requestedTimeout > 0 ? requestedTimeout : void 0;
           const result2 = await tools.invokeTool(
             name,
-            typeof args === "object" && args !== null && !Array.isArray(args) ? args : {},
+            toolArgs,
             mutationTimeoutMs2 === void 0 ? void 0 : { mutationTimeoutMs: mutationTimeoutMs2 }
           );
           send(res, 200, { result: result2 });
@@ -30901,6 +30907,11 @@ async function createMcpEndpoint(host2, store2, options = {}) {
       ...CONNECTOR_TOOL_DEFINITIONS[1],
       execute: async (args, invocation) => {
         if (!connectors2) throw new Error("no connectors configured");
+        if (invocation?.readOnlyOnly) {
+          return frameExternal(
+            await host2.request("dashboard.connector.read", connectorArgs(args), requestCtx)
+          );
+        }
         const invoked = await host2.request(
           "dashboard.action.invoke",
           connectorArgs(args),
