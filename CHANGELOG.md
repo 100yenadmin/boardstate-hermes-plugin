@@ -3,6 +3,49 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.5.1
+
+v1.5.1 follow-ups from the v1.5.0 review ([#20](https://github.com/100yenadmin/boardstate-hermes-plugin/issues/20)).
+Item numbers refer to the #20 triage digest.
+
+### Changed
+
+- `@boardstate/lit` is pinned to exactly 0.9.2 (was `^0.9.1`) and the vendored element bundle,
+  stylesheet and Desktop bundle are rebuilt from it; the vendored files are byte-identical to
+  the npm 0.9.2 package. Markdown headings with an ATX closing sequence (`## Roadmap ##`) now
+  render without the trailing `#`s.
+- On an agent-owned sidecar, `boardstate_connector_invoke` runs approved readOnly connector
+  tools instead of refusing every call. The upstream gate that `dashboard.connector.read` uses
+  decides what is readOnly; a mutating tool still returns "open the Board tab" (409) and is
+  never parked or run, and an unknown or ungranted tool is refused (item 10).
+- A mutating connector call that times out is reported as parked, but a confirm that lands
+  later can still run it. The parked reply and the tool description now tell the agent to
+  check the pending actions (`dashboard.action.list`) before retrying (item 9).
+
+### Fixed
+
+- The build copies the vendored `@boardstate/lit` files before bundling the Desktop page, so
+  the first build after a lit bump no longer embeds the previous stylesheet (item 11).
+- A sidecar spawn that is cancelled, or whose port-record write fails, terminates and awaits
+  the new child, clears the cached state and re-raises, so no untracked second writer is left
+  running (item 5).
+- Sidecar shutdown waits for every accepted `/tools/invoke`, `/mcp`, `/operator` and `/rpc`
+  request until its handler settles, not only native invokes and not only until the response
+  closes, so a replacement cannot cut off a connector call or operator confirm mid-flight. The
+  30-second fail-safe still bounds it (item 6).
+- The abort-shutdown test fails if the invocation responds before the abort (item 7).
+- The owner watchdog treats a port record that is not an object (for example literal `null`)
+  as inconclusive instead of crashing the sidecar (item 8).
+- The Desktop page recovers from "Board unavailable" on the next successful connect, without a
+  remount (item 2).
+
+### Security
+
+- The `/ws`, `/mcp` and `/operator` nonce and operator-secret checks use a constant-time
+  compare (item 1).
+- CI checkouts set `persist-credentials: false` (item 3) and every CI action is pinned to a
+  full commit SHA (item 4).
+
 ## 1.5.0
 
 ### Added
