@@ -12,8 +12,10 @@ Item numbers refer to the #20 triage digest.
 
 - `@boardstate/lit` is pinned to exactly 0.9.2 (was `^0.9.1`) and the vendored element bundle,
   stylesheet and Desktop bundle are rebuilt from it; the vendored files are byte-identical to
-  the npm 0.9.2 package. Markdown headings with an ATX closing sequence (`## Roadmap ##`) now
-  render without the trailing `#`s.
+  the npm 0.9.2 package. From lit 0.9.2: markdown headings with an ATX closing sequence
+  (`## Roadmap ##`) render without the trailing `#`s, task-list glyph labels are localized,
+  the sparkline value label no longer overlaps the line or clips at the right edge, and
+  up/down sparklines draw as a line again.
 - On an agent-owned sidecar, `boardstate_connector_invoke` runs approved readOnly connector
   tools instead of refusing every call. The upstream gate that `dashboard.connector.read` uses
   decides what is readOnly; a mutating tool still returns "open the Board tab" (409) and is
