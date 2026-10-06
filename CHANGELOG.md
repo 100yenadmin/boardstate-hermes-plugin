@@ -3,6 +3,39 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.5.2
+
+Gated-mode data path: live Hermes data in OAuth-gated dashboards, and a Desktop page
+that degrades to polling instead of a dead banner.
+
+### Added
+
+- In gated/OAuth mode the dashboard REST surface only accepts cookie sessions, so a
+  sidecar spawned with the loopback `X-Hermes-Session-Token` got 401 on every data call
+  and every data-bound widget rendered an error cell. `_hermes_data_credentials` now
+  starts an in-process loopback mini endpoint server (127.0.0.1, ephemeral port, one
+  `secrets.token_urlsafe(32)` shared secret, constant-time compare, GET-only, read-only
+  paths) that resolves the data through the same handlers the dashboard itself serves.
+  No external auth surface widens; listener and secret die with the dashboard process.
+- The mini server serves exactly the read paths the sidecar's Hermes resolver GETs —
+  `/api/analytics/usage`, `/api/sessions`, `/api/status`, `/api/cron` — plus `/healthz`.
+  `/api/cron` never existed in Hermes (the sidecar always GETted it and the cron widget
+  stayed empty), so the sidecar's cron handler finally gets a bare job list.
+- `test/mini_data_endpoints.py` covers the mini server end to end: auth gate
+  (missing/wrong token 401, right token 200), response shapes the sidecar maps,
+  unknown path 404, idempotent second start, listener closed after shutdown.
+
+### Fixed
+
+- The Desktop page now degrades to polling when the socket acknowledgement times out
+  instead of showing a dead "live updates unavailable" state: `dashboard.workspace.get`
+  is polled (default 10s, `boardstatePollMs` in localStorage, backoff x2 up to 60s on
+  errors, reset on success) and a changed `workspaceVersion` dispatches the same empty
+  `boardstate.changed` event the acknowledgement uses. A late acknowledgement cancels
+  the poll and restores live mode.
+- The mini endpoint tests run their blocking urllib calls through `asyncio.to_thread`
+  so the mini server (same loop) can accept while a request is in flight.
+
 ## 1.5.1
 
 v1.5.1 follow-ups from the v1.5.0 review ([#20](https://github.com/100yenadmin/boardstate-hermes-plugin/issues/20)).

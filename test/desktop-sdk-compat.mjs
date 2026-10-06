@@ -341,6 +341,61 @@ for (const [label, shape] of [
   fireTimers();
   check(`${label}: a cancelled timer never reports degraded`, !d.page.text().includes(DEGRADED));
   d.page.unmount();
+
+  // ── Polling fallback (gated remotes: ctx.socket is a no-op) ────────────────────
+  // No acknowledgement ever arrives; the ack timer fires into degraded and arms the
+  // first poll. A changed workspaceVersion between polls dispatches the same empty
+  // boardstate.changed the socket ack uses (view refetch, no remount), and the poll
+  // keeps rescheduling with backoff on errors.
+  const poll = makeContext(shape);
+  let workspaceVersion = 7;
+  const okRest2 = poll.ctx.rest;
+  poll.ctx.rest = async (path, opts) => {
+    poll.restCalls.push({ path, body: opts?.body }); // keep the harness record complete
+    if (path === "/rpc" && opts?.body?.method === "dashboard.workspace.get") {
+      return { result: { workspaceVersion, tabs: [] } };
+    }
+    return okRest2(path, opts);
+  };
+  plugin.register(poll.ctx);
+  const pollPage = mount(poll.contributions.find((c) => c.id === "board-route").render());
+  await flush();
+  fireTimers(); // ack timer -> degraded + first poll armed (50ms)
+  fireTimers(); // first poll runs (async), records version 7, arms the 10s poll
+  await flush(); // poll promise settles, next poll scheduled
+  check(`${label}: poll fallback reports degraded (not dead)`, pollPage.text().includes(DEGRADED));
+  const pollsAfterFirst = poll.restCalls.filter(
+    (c) => c.path === "/rpc" && c.body?.method === "dashboard.workspace.get",
+  ).length;
+  check(`${label}: first poll fetched the workspace`, pollsAfterFirst >= 1);
+  // Bump the version; the NEXT scheduled poll observes it and dispatches the same
+  // empty boardstate.changed the socket ack uses (the view refetches, no remount).
+  workspaceVersion = 8;
+  fireTimers(); // next scheduled poll (10s default) observes version 8
+  await flush();
+  const pollsAfterBump = poll.restCalls.filter(
+    (c) => c.path === "/rpc" && c.body?.method === "dashboard.workspace.get",
+  ).length;
+  check(`${label}: subsequent poll ran after the version bump`, pollsAfterBump > pollsAfterFirst);
+  check(
+    `${label}: polls are bounded (no tight loop)`,
+    pollsAfterBump - pollsAfterFirst <= 3,
+  );
+  // Acknowledgement (e.g. the remote heals to a live socket) stops the poll loop.
+  poll.sockets.find((s) => s.path === "/ws")?.onMessage(ACK);
+  const pollsAtAck = poll.restCalls.filter(
+    (c) => c.path === "/rpc" && c.body?.method === "dashboard.workspace.get",
+  ).length;
+  fireTimers();
+  fireTimers();
+  await flush();
+  const pollsAfterAck = poll.restCalls.filter(
+    (c) => c.path === "/rpc" && c.body?.method === "dashboard.workspace.get",
+  ).length;
+  check(`${label}: acknowledgement stops the poll loop`, pollsAfterAck === pollsAtAck);
+  check(`${label}: acknowledgement promotes to live`, pollPage.text().includes("Board connected"));
+  pollPage.unmount();
+  poll.unload();
 }
 
 // ---- vendored @boardstate/lit renderers (notes seed, markdown) ----

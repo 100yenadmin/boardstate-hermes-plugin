@@ -79,7 +79,12 @@ type SdkTransport = Transport & {
 
 /** Adapt the receive-only Desktop SDK socket plus REST requests to Boardstate's
  * tiny Transport interface.  OAuth remotes still support REST; if ctx.socket is
- * a no-op, the acknowledgement timeout reports a clear degraded state. */
+ * a no-op, the acknowledgement timeout would report a degraded state — instead
+ * a polling fallback takes over: `dashboard.workspace.get` is fetched on an
+ * interval (default 10s, `boardstatePollMs` in localStorage, backoff ×2 up to
+ * 60s on errors, reset on success) and a changed workspaceVersion dispatches
+ * the same empty `boardstate.changed` event the socket acknowledgement uses,
+ * so the view refetches without a remount. */
 function createSdkTransport(
   rest: OperatorRest,
   socket: PluginSocket,
@@ -89,24 +94,67 @@ function createSdkTransport(
   const listeners = new Map<string, Set<(payload: unknown) => void>>();
   let closed = false;
   let acknowledged = false;
-  const cancelAckTimeout = setTimer(() => {
-    if (!closed && !acknowledged) {
-      onStatus(
-        "degraded",
-        "Board requests work, but live updates are unavailable on this connection.",
-      );
+  let pollTick: (() => void) | null = null; // cancel fn for the scheduled poll
+  const POLL_DEFAULT_MS = 10_000;
+  const POLL_MAX_MS = 60_000;
+  const readPollMs = (): number => {
+    try {
+      const raw = Number(window.localStorage.getItem("boardstatePollMs"));
+      return Number.isFinite(raw) && raw >= 2_000 && raw <= 300_000 ? raw : POLL_DEFAULT_MS;
+    } catch {
+      return POLL_DEFAULT_MS;
     }
+  };
+  let pollMs = readPollMs();
+  let pollDelayMs = pollMs; // grows on errors (backoff), resets on success
+  const dispatchChanged = (): void => {
+    for (const listener of listeners.get("boardstate.changed") ?? []) listener({});
+  };
+  const cancelAckTimeout = setTimer(() => {
+    if (closed || acknowledged) return;
+    // No socket acknowledgement: REST still works (OAuth remotes), so degrade to
+    // polling instead of showing the dead "live updates unavailable" banner.
+    onStatus(
+      "degraded",
+      "Board requests work, but live updates are unavailable on this connection — " +
+        `polling every ${Math.round(pollMs / 1000)}s instead.`,
+    );
+    pollTick = setTimer(pollOnce, 50) ?? null;
   }, 2500);
+  const pollOnce = async (): Promise<void> => {
+    if (closed || acknowledged) return;
+    try {
+      const res = await rest<{ result?: { workspaceVersion?: unknown } }>("/rpc", {
+        method: "POST",
+        body: { method: "dashboard.workspace.get", params: {} },
+      });
+      if (closed || acknowledged) return;
+      const version = res?.result?.workspaceVersion;
+      if (typeof version === "number") {
+        if (lastWorkspaceVersion !== null && version !== lastWorkspaceVersion) dispatchChanged();
+        lastWorkspaceVersion = version;
+      }
+      pollDelayMs = pollMs; // success resets backoff
+    } catch {
+      pollDelayMs = Math.min(pollDelayMs * 2, POLL_MAX_MS); // backoff on errors
+    }
+    if (!closed && !acknowledged) {
+      pollTick = setTimer(pollOnce, pollDelayMs) ?? null;
+    }
+  };
+  let lastWorkspaceVersion: number | null = null;
   const disposeSocket = socket("/ws", (message) => {
     if (typeof message !== "object" || message === null) return;
     const frame = message as { event?: unknown; payload?: unknown };
     if (frame.event === "boardstate.desktop.connected") {
       acknowledged = true;
       cancelAckTimeout();
+      pollTick?.();
+      pollTick = null;
       onStatus("live");
       // Socket events are lossy across a disconnect. An empty changed event bypasses
       // the version short-circuit and makes <boardstate-view> refetch the workspace.
-      for (const listener of listeners.get("boardstate.changed") ?? []) listener({});
+      dispatchChanged();
       return;
     }
     if (typeof frame.event !== "string") return;
@@ -140,6 +188,8 @@ function createSdkTransport(
       if (closed) return;
       closed = true;
       cancelAckTimeout();
+      pollTick?.();
+      pollTick = null;
       disposeSocket();
       listeners.clear();
     },

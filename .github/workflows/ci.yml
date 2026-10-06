@@ -203,6 +203,9 @@ jobs:
       - name: A cancelled or failed spawn terminates its child and clears state
         run: python test/sidecar_spawn_cleanup.py
 
+      - name: Gated-mode mini data endpoints (auth gate, shapes, fail-closed)
+        run: python test/mini_data_endpoints.py
+
   windows-lifecycle:
     runs-on: windows-latest
     steps:
@@ -288,6 +291,7 @@ jobs:
           python test/sidecar_owner_watchdog.py
           python test/sidecar_stale_record.py
           python test/sidecar_spawn_cleanup.py
+          python test/mini_data_endpoints.py
 
       - name: Install into an isolated Hermes home
         run: |

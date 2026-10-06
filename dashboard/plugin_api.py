@@ -92,24 +92,252 @@ _state_dir = _runtime.state_dir
 _kill_sidecar = _runtime.shutdown_owned_sidecar
 
 
-def _hermes_data_credentials() -> tuple[Optional[str], Optional[str]]:
+# ---------------------------------------------------------------------------
+# Gated-mode Hermes data path (mini endpoints).
+#
+# WHY: in gated/OAuth mode the dashboard's REST surface accepts cookie sessions
+# (plus explicitly registered bearer-token routes) — the loopback
+# ``X-Hermes-Session-Token`` header is IGNORED there, so a sidecar spawned with
+# that token got 401 on every data call and every data-bound widget rendered an
+# error cell. Instead of widening the dashboard's external auth surface, the
+# plugin resolves Hermes data IN THIS PROCESS (the same FastAPI handlers the
+# dashboard itself serves) and exposes them to the loopback-only sidecar from a
+# tiny nonce-gated HTTP listener — the same defense-in-depth pattern as the
+# sidecar's own ``/internal`` plane.
+#
+# Security shape (review focus):
+#   * bind 127.0.0.1, ephemeral port — never exposed off-host;
+#   * one shared secret (``secrets.token_urlsafe(32)``), presented as the
+#     ``X-Hermes-Session-Token`` header (the header the sidecar's Hermes
+#     resolver already sends) or as ``?token=`` for curl-style verification;
+#   * constant-time compare, 401 otherwise; GET-only, no request bodies;
+#   * only /healthz and the read paths the sidecar GETs exist
+#     (/api/analytics/usage, /api/sessions, /api/status, /api/cron) — no writes,
+#     responses beyond what the dashboard itself returns locally;
+#   * listener + secret die with the dashboard process (module state only).
+# ---------------------------------------------------------------------------
+
+_MINI_TOKEN: Optional[str] = None
+_MINI_PORT: Optional[int] = None
+_MINI_SERVER: Optional["asyncio.AbstractServer"] = None
+
+_MINI_PATHS = (
+    "/healthz",
+    "/api/analytics/usage",
+    "/api/sessions",
+    "/api/status",
+    "/api/cron",
+)
+
+
+def _mini_json_response(payload: object, status: int = 200, reason: str = "OK") -> bytes:
+    body = json.dumps(payload).encode("utf-8")
+    head = (
+        "HTTP/1.1 {status} {reason}\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Length: {length}\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    ).format(status=status, reason=reason, length=len(body))
+    return head.encode("utf-8") + body
+
+
+def _mini_authorized(header_token: Optional[str], query_token: Optional[str]) -> bool:
+    import hmac as _hmac
+
+    if not _MINI_TOKEN:
+        return False
+    presented = header_token or query_token or ""
+    return _hmac.compare_digest(presented.encode("utf-8"), _MINI_TOKEN.encode("utf-8"))
+
+
+async def _mini_handle(reader: "asyncio.StreamReader", writer: "asyncio.StreamWriter") -> None:
+    """One request per connection (Connection: close). Never raises: a malformed
+    or hostile request gets a 4xx response and the listener stays up."""
+    try:
+        request_line = await asyncio.wait_for(reader.readline(), timeout=10)
+        parts = request_line.decode("latin-1", "replace").split()
+        if len(parts) < 2:
+            writer.write(_mini_json_response({"error": "bad request"}, 400, "Bad Request"))
+            await writer.drain()
+            return
+        method, target = parts[0], parts[1]
+        headers: dict[str, str] = {}
+        while True:
+            line = await asyncio.wait_for(reader.readline(), timeout=10)
+            if line in (b"\r\n", b"\n", b""):
+                break
+            name, _, value = line.decode("latin-1", "replace").partition(":")
+            headers[name.strip().lower()] = value.strip()
+        path, _, query_string = target.partition("?")
+        from urllib.parse import parse_qsl
+
+        query = dict(parse_qsl(query_string, keep_blank_values=True))
+        if method != "GET":
+            writer.write(_mini_json_response({"error": "GET required"}, 405, "Method Not Allowed"))
+            await writer.drain()
+            return
+        if path == "/healthz":
+            writer.write(_mini_json_response({"ok": True}))
+            await writer.drain()
+            return
+        if path not in _MINI_PATHS:
+            writer.write(_mini_json_response({"error": "not found"}, 404, "Not Found"))
+            await writer.drain()
+            return
+        if not _mini_authorized(headers.get("x-hermes-session-token"), query.get("token")):
+            writer.write(_mini_json_response({"error": "unauthorized"}, 401, "Unauthorized"))
+            await writer.drain()
+            return
+        handler = _MINI_HANDLERS[path]
+        try:
+            payload = await handler(query)
+        except Exception as exc:  # noqa: BLE001 — one bad source must not kill the listener
+            log.warning("boardstate: mini endpoint %s failed: %s", path, exc)
+            writer.write(
+                _mini_json_response({"error": "data source unavailable"}, 502, "Bad Gateway")
+            )
+            await writer.drain()
+            return
+        writer.write(_mini_json_response(payload))
+        await writer.drain()
+    except (TimeoutError, asyncio.TimeoutError, ConnectionResetError, BrokenPipeError):
+        return
+    except Exception as exc:  # pragma: no cover — defensive: listener must survive
+        log.warning("boardstate: mini endpoint connection error: %s", exc)
+    finally:
+        try:
+            writer.close()
+        except Exception:
+            pass
+
+
+async def _mini_usage(query: dict[str, str]) -> object:
+    """Shape-compatible with GET /api/analytics/usage (``_get_usage_analytics``)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from hermes_cli.web_routers.analytics import _get_usage_analytics
+
+    try:
+        days = max(1, min(365, int(query.get("days", "30"))))
+    except ValueError:
+        days = 30
+    return await run_in_threadpool(_get_usage_analytics, days, None)
+
+
+async def _mini_sessions(query: dict[str, str]) -> object:
+    """Shape-compatible with GET /api/sessions (``get_sessions``)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from hermes_cli.web_routers.sessions import get_sessions
+
+    try:
+        limit = max(0, min(100, int(query.get("limit", "20"))))
+    except ValueError:
+        limit = 20
+    return await run_in_threadpool(
+        get_sessions, limit, 0, 0, "exclude", "created", None, None, None, None, False, None,
+    )
+
+
+async def _mini_status(query: dict[str, str]) -> object:
+    """Shape-compatible with GET /api/status (``get_status``)."""
+    from hermes_cli.web_routers.status import get_status
+
+    return await get_status(None)
+
+
+async def _mini_cron(query: dict[str, str]) -> object:
+    """Shape-compatible with GET /api/cron/jobs (``_list_cron_jobs_sync`` over all
+    profiles, annotated with profile + scheduler heartbeat).
+
+    The sidecar's cron handler GETs ``/api/cron`` — a path that does not exist in
+    Hermes — so the cron widget has always been empty; this endpoint serves that
+    path shape (a bare job list) so the widget finally fills.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from hermes_cli.web_routers.cron import _list_cron_jobs_sync
+
+    return await run_in_threadpool(_list_cron_jobs_sync, "all")
+
+
+_MINI_HANDLERS = {
+    "/api/analytics/usage": _mini_usage,
+    "/api/sessions": _mini_sessions,
+    "/api/status": _mini_status,
+    "/api/cron": _mini_cron,
+}
+
+
+async def _start_mini_server() -> tuple[int, str]:
+    """Idempotent start of the loopback mini listener; returns (port, token)."""
+    global _MINI_TOKEN, _MINI_PORT, _MINI_SERVER
+    if _MINI_SERVER is not None and _MINI_PORT is not None and _MINI_TOKEN:
+        return _MINI_PORT, _MINI_TOKEN
+    token = secrets.token_urlsafe(32)
+    server = await asyncio.start_server(_mini_handle, "127.0.0.1", 0)
+    sockets = getattr(server, "sockets", None) or []
+    port = int(sockets[0].getsockname()[1]) if sockets else 0
+    if port == 0:  # pragma: no cover — start_server with port 0 always allocates
+        server.close()
+        raise RuntimeError("mini endpoint listener did not allocate a port")
+    _MINI_TOKEN = token
+    _MINI_PORT = port
+    _MINI_SERVER = server
+    log.info("boardstate: gated-mode data endpoints listening on 127.0.0.1:%d", port)
+    return port, token
+
+
+async def _stop_mini_server() -> None:
+    """Close the mini listener (tests; also safe if never started). The token
+    dies with the process — no persistence, no reuse."""
+    global _MINI_TOKEN, _MINI_PORT, _MINI_SERVER
+    server = _MINI_SERVER
+    _MINI_SERVER = None
+    _MINI_PORT = None
+    _MINI_TOKEN = None
+    if server is not None:
+        server.close()
+        try:
+            await server.wait_closed()
+        except Exception:  # pragma: no cover — defensive
+            pass
+
+
+async def _hermes_data_credentials() -> tuple[Optional[str], Optional[str]]:
     """Best-effort dashboard base URL + session token for the sidecar's Hermes REST
-    data resolver. Reads the dashboard's own loopback session token + bound port from
-    ``hermes_cli.web_server``. Returns (None, None) if unavailable (older dashboard,
-    gated/OAuth mode, or import failure) — the sidecar then serves no live Hermes data.
+    data resolver.
+
+    Loopback/token mode (``auth_required`` False): the dashboard's own session
+    token + bound port — the header token is honoured there, unchanged.
+
+    Gated/OAuth mode (or indeterminate): start this module's loopback mini
+    endpoints (nonce-gated; see the block comment above) and hand the sidecar
+    their URL + shared secret instead — data resolves in-process, no external
+    auth surface widens. Returns (None, None) if neither path is available —
+    the sidecar then serves no live Hermes data.
     """
     try:
         from hermes_cli import web_server as _ws  # local import: avoid load-order coupling
 
         token = getattr(_ws, "_SESSION_TOKEN", None)
         app = getattr(_ws, "app", None)
-        port = getattr(getattr(app, "state", None), "bound_port", None)
-        # Only the loopback token path is wired here; gated/OAuth data-fetch is a
-        # follow-up (would use the process-internal credential instead).
-        if token and port:
+        state = getattr(app, "state", None)
+        port = getattr(state, "bound_port", None)
+        auth_required = bool(getattr(state, "auth_required", True))
+        if token and port and not auth_required:
             return f"http://127.0.0.1:{int(port)}", str(token)
     except Exception as exc:  # pragma: no cover - dashboard internals unavailable
         log.info("boardstate: Hermes data credentials unavailable (%s); live data off", exc)
+        return None, None
+    # Gated mode, unresolved bind, or older dashboard: in-process mini endpoints.
+    try:
+        port, token = await _start_mini_server()
+        if port and token:
+            return f"http://127.0.0.1:{port}", token
+    except Exception as exc:  # pragma: no cover - mini listener failed to start
+        log.info("boardstate: mini data endpoints unavailable (%s); gated live data off", exc)
     return None, None
 
 
@@ -153,7 +381,7 @@ def _ws_upgrade_authorized(ws: "WebSocket") -> bool:
 
 async def _ensure_sidecar() -> tuple[int, str]:
     extra_env: dict[str, str] = {}
-    hermes_url, hermes_token = _hermes_data_credentials()
+    hermes_url, hermes_token = await _hermes_data_credentials()
     if hermes_url and hermes_token:
         extra_env["HERMES_DASHBOARD_URL"] = hermes_url
         extra_env["HERMES_SESSION_TOKEN"] = hermes_token
