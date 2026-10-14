@@ -73,7 +73,7 @@ body:
     id: logs
     attributes:
       label: Relevant log lines
-      description: Short excerpts only, for example from `hermes logs -n 300 | grep -i boardstate`. Leave out tokens, keys and private message text.
+      description: Short excerpts only, from `hermes logs gui -n 300 | grep -i boardstate` (dashboard), `hermes logs desktop -n 300 | grep -i boardstate` (Desktop) or `hermes logs -n 300 | grep -i boardstate` (agent tools). Leave out tokens, keys and private message text.
       render: text
   - type: checkboxes
     id: checks
