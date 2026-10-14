@@ -11,6 +11,7 @@ from typing import Any
 
 _ROOT = Path(__file__).resolve().parent
 _RUNTIME_MODULE = "_boardstate_shared_sidecar_runtime_v150"
+REPORT_SKILL_NAME = "boardstate-report-problem"
 
 
 def _load_runtime():
@@ -81,6 +82,13 @@ def register(ctx) -> None:
             handler=_handler(name),
             is_async=True,
             description=schema["description"],
+        )
+    register_skill = getattr(ctx, "register_skill", None)
+    if callable(register_skill):
+        register_skill(
+            REPORT_SKILL_NAME,
+            _ROOT / "skills" / REPORT_SKILL_NAME / "SKILL.md",
+            description="Boardstate: report a bug or problem",
         )
     on_unload = getattr(ctx, "on_unload", None)
     if callable(on_unload):
