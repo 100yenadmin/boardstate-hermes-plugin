@@ -3,6 +3,20 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.5.2
+
+### Added
+
+- The `boardstate:boardstate-report-problem` skill. Ask the agent to "report a problem with Boardstate" and it collects
+  versions, the surface and short log excerpts, checks for an existing issue, and drafts a report in this repository's
+  bug-form headings. Nothing is filed until you approve the exact text; security problems go to a private advisory.
+  Hosts without plugin skills still load the plugin.
+
+### Changed
+
+- README: a catalog banner, and a "Troubleshooting and reporting a bug" section that names the skill.
+- Contributor docs: AGENTS.md, CONTRIBUTING.md, SECURITY.md, issue forms and a pull request template.
+
 ## 1.5.1
 
 v1.5.1 follow-ups from the v1.5.0 review ([#20](https://github.com/100yenadmin/boardstate-hermes-plugin/issues/20)).

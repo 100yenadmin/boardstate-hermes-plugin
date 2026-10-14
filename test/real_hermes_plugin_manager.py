@@ -39,6 +39,9 @@ def main() -> int:
             name for name in manager._plugin_tool_names if name.startswith("boardstate_")
         }
         assert len(boardstate_names) == 19, sorted(boardstate_names)
+        skill = manager._plugin_skills.get("boardstate:boardstate-report-problem")
+        assert skill, sorted(manager._plugin_skills)
+        assert Path(skill["path"]).is_file(), skill
 
         workspace = _dispatch(manager, "boardstate_workspace_get", {})
         assert workspace["doc"]["tabs"]
@@ -68,7 +71,7 @@ def main() -> int:
     finally:
         manager.unload()
 
-    print("real Hermes PluginManager: 19 tools and dispatch-to-disk path passed")
+    print("real Hermes PluginManager: 19 tools, the report skill and dispatch-to-disk path passed")
     return 0
 
 

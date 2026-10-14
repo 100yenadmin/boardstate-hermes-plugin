@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 class RecordingContext:
     def __init__(self) -> None:
         self.tools: dict[str, dict] = {}
+        self.skills: dict[str, dict] = {}
         self.unload = None
 
     def register_tool(self, name, toolset, schema, handler, **kwargs):
@@ -26,8 +27,21 @@ class RecordingContext:
             **kwargs,
         }
 
+    def register_skill(self, name, path, description="", frontmatter=None):
+        self.skills[name] = {"path": Path(path), "description": description}
+
     def on_unload(self, callback):
         self.unload = callback
+
+
+class OldHostContext:
+    """A Hermes host from before plugin skills: register_skill does not exist."""
+
+    def __init__(self) -> None:
+        self.tools: dict[str, dict] = {}
+
+    def register_tool(self, name, toolset, schema, handler, **kwargs):
+        self.tools[name] = schema
 
 
 def _load_plugin():
@@ -47,6 +61,14 @@ async def _run() -> None:
     ctx = RecordingContext()
     plugin.register(ctx)
     assert len(ctx.tools) == 19
+    skill = ctx.skills["boardstate-report-problem"]
+    assert skill["path"].is_file(), skill
+    frontmatter = skill["path"].read_text(encoding="utf-8").split("---", 2)[1]
+    assert f'description: "{skill["description"]}"' in frontmatter, skill
+    assert len(skill["description"]) <= 60
+    old_host = OldHostContext()
+    plugin.register(old_host)
+    assert len(old_host.tools) == 19
     assert {entry["toolset"] for entry in ctx.tools.values()} == {"boardstate"}
     assert all(entry.get("is_async") is True for entry in ctx.tools.values())
     assert all(entry["schema"]["name"] == name for name, entry in ctx.tools.items())
@@ -100,4 +122,4 @@ async def _run() -> None:
 
 if __name__ == "__main__":
     asyncio.run(_run())
-    print("native plugin: 19 tools registered and real-sidecar dispatch passed")
+    print("native plugin: 19 tools and the report skill registered; real-sidecar dispatch passed")
