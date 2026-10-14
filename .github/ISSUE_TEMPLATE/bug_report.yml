@@ -67,7 +67,7 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostics
-      description: 'No agent-callable diagnostics tool yet. Check /api/plugins/boardstate/health in the existing local dashboard and the browser console; summarize ok, sidecar_running, and bundle_present. Redact state_dir, local paths, tokens, credentials, and private data. Do not make credentialed endpoint calls.'
+      description: 'No agent-callable diagnostics tool yet. Open /api/plugins/boardstate/health in a browser tab already signed in to your local dashboard, and check the browser console; summarize ok, sidecar_running, and bundle_present. Redact state_dir, local paths, tokens, credentials, and private data. Do not copy session tokens or call the endpoint by hand with credentials.'
       render: text
   - type: textarea
     id: logs
