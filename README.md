@@ -1,5 +1,7 @@
 # Boardstate for Hermes
 
+![Boardstate: a live board your agent builds for you](docs/media/banner.png)
+
 Boardstate gives Hermes a durable board that the agent can build with native tools. Open
 the **Board** tab in `hermes dashboard` or the **Board** page in Hermes Desktop, then ask
 Hermes to create tabs, add widgets, arrange a layout, or review its design. Widgets include
