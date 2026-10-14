@@ -241,7 +241,7 @@ Boardstate has no agent-callable diagnostics tool yet. Collect recent logs with
 `hermes logs -n 300 | grep -i boardstate` (agent tools); remove tokens, credentials, private data, and local paths.
 In a browser tab where you are already signed in to your local Hermes dashboard, open `/api/plugins/boardstate/health` and check the browser console.
 The probe reports `ok`, `sidecar_running`, `sidecar_port`, `state_dir`, and `bundle_present`; leave `state_dir` out of the report. Don't copy session tokens or call the endpoint or the gateway by hand with credentials.
-Ask your Hermes agent to "report a problem with Boardstate"; review its draft before it is filed.
+On Hermes 0.21.6 or newer, ask your Hermes agent to "report a problem with Boardstate". On older versions, ask it to load the `boardstate:boardstate-report-problem` skill. Either way, review its draft before it is filed.
 Use the [bug report form](https://github.com/100yenadmin/boardstate-hermes-plugin/issues/new?template=bug_report.yml).
 Report security problems through a [private advisory](https://github.com/100yenadmin/boardstate-hermes-plugin/security/advisories/new).
 
