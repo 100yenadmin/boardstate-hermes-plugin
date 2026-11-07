@@ -21,6 +21,7 @@ const NONCE = "data-nonce";
 // --- Fake Hermes REST: representative payloads; 401 unless the session token matches. ---
 const seenAuth = [];
 let cronJobsGone = false;
+let cronJobsBroken = false;
 const fake = createServer((req, res) => {
   seenAuth.push(req.headers["x-hermes-session-token"]);
   if (req.headers["x-hermes-session-token"] !== TOKEN) {
@@ -29,6 +30,11 @@ const fake = createServer((req, res) => {
     return;
   }
   const path = (req.url ?? "/").split("?")[0];
+  if (path === "/api/cron/jobs" && cronJobsBroken) {
+    res.statusCode = 500;
+    res.end("boom");
+    return;
+  }
   const body = {
     "/api/analytics/usage": {
       totals: { total_estimated_cost: 12.5, total_input: 1000, total_output: 500 },
@@ -171,6 +177,14 @@ check(
   "cron.list falls back to /api/cron on older hosts",
   legacyCron?.jobs?.[0]?.id === "legacy" && legacyCron.jobs[0].state?.nextRunAtMs === 1_800_000_000_000,
 );
+cronJobsGone = false;
+cronJobsBroken = true;
+const brokenCron = await rpc("cron.list", {});
+check(
+  "cron.list surfaces a real /api/cron/jobs failure instead of falling back",
+  brokenCron.error && JSON.stringify(brokenCron.error).includes("/api/cron/jobs") && JSON.stringify(brokenCron.error).includes("500"),
+);
+cronJobsBroken = false;
 
 // The data.read WS RPC still resolves rpc bindings server-side (file/static path uses
 // the same resolver); kept as a regression guard on the injected resolveBinding.

@@ -108,7 +108,7 @@ const NATIVE_DESCRIPTION_NOTES = {
     " widgets, prefer boardstate_widget_add / boardstate_widget_update: each lands on the board as it is made.",
   boardstate_widget_add:
     " Live Hermes data widgets (builtin:sessions, builtin:usage, builtin:instances, builtin:cron) are bound" +
-    " to this agent's live Hermes data when you omit bindings.",
+    " to live Hermes data when you omit bindings.",
 };
 const schemaStore = new DashboardStore({ storage: new MemoryStorageAdapter() });
 const baseSchemas = createDashboardTools({

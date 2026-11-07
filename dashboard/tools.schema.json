@@ -114,7 +114,7 @@
   },
   {
     "name": "boardstate_widget_add",
-    "description": "Add a widget to a tab. Grid x+w must fit within the 12-column dashboard grid. Call boardstate_workspace_get first when you need the current document. Live Hermes data widgets (builtin:sessions, builtin:usage, builtin:instances, builtin:cron) are bound to this agent's live Hermes data when you omit bindings.",
+    "description": "Add a widget to a tab. Grid x+w must fit within the 12-column dashboard grid. Call boardstate_workspace_get first when you need the current document. Live Hermes data widgets (builtin:sessions, builtin:usage, builtin:instances, builtin:cron) are bound to live Hermes data when you omit bindings.",
     "inputSchema": {
       "type": "object",
       "required": [

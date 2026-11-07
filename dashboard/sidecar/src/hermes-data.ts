@@ -113,7 +113,10 @@ const HANDLERS: Record<string, Handler> = {
   "cron.list": async (get, params) => {
     const limit = num(params.limit) || 8;
     // Hermes 0.23 serves /api/cron/jobs; older hosts served /api/cron.
-    const raw = await get("/api/cron/jobs").catch(() => get("/api/cron"));
+    const raw = await get("/api/cron/jobs").catch((err: unknown) => {
+      if (err instanceof Error && err.message.endsWith("→ 404")) return get("/api/cron");
+      throw err;
+    });
     const list = Array.isArray(raw) ? raw : arr(obj(raw).jobs ?? obj(raw).crons);
     return {
       jobs: list.slice(0, limit).map((j) => {

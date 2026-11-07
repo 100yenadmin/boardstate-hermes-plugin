@@ -62,8 +62,9 @@ def _bind_live_data(widget: Any) -> Any:
     """
     if not isinstance(widget, dict) or "bindings" in widget:
         return widget
-    method = _DEFAULT_DATA_METHODS.get(widget.get("kind"))
-    if not isinstance(method, str):
+    kind = widget.get("kind")
+    method = _DEFAULT_DATA_METHODS.get(kind) if isinstance(kind, str) else None
+    if method is None:
         return widget
     return {**widget, "bindings": {"value": {"source": "rpc", "method": method}}}
 # The same actor pattern the Boardstate schema validates createdBy against.

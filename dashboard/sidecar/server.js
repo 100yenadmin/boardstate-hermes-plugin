@@ -28697,7 +28697,10 @@ var HANDLERS = {
   // cron widget: { jobs: [{ id, name, enabled, state: { nextRunAtMs, lastRunStatus } }] }
   "cron.list": async (get, params) => {
     const limit = num(params.limit) || 8;
-    const raw = await get("/api/cron/jobs").catch(() => get("/api/cron"));
+    const raw = await get("/api/cron/jobs").catch((err) => {
+      if (err instanceof Error && err.message.endsWith("\u2192 404")) return get("/api/cron");
+      throw err;
+    });
     const list = Array.isArray(raw) ? raw : arr(obj(raw).jobs ?? obj(raw).crons);
     return {
       jobs: list.slice(0, limit).map((j) => {
