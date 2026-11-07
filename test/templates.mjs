@@ -74,7 +74,9 @@ for (const tpl of TEMPLATES) {
   // Data-source builtins render only what their rpc binding returns: an unbound one shows
   // "No sessions yet." / $0.00 forever, so every one a template ships must be bound.
   const unbound = widgets.filter(
-    (w) => DEFAULT_DATA_METHODS[w.kind] && w.bindings?.value?.method !== DEFAULT_DATA_METHODS[w.kind],
+    (w) =>
+      DEFAULT_DATA_METHODS[w.kind] &&
+      (w.bindings?.value?.source !== "rpc" || w.bindings?.value?.method !== DEFAULT_DATA_METHODS[w.kind]),
   );
   check(`${tpl.id}: data widgets bound to live Hermes data`, unbound.length === 0);
 

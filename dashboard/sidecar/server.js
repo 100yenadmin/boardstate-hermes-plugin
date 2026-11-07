@@ -28672,6 +28672,8 @@ var HANDLERS = {
         key: str(row.id ?? row.session_id ?? row.key),
         label: str(row.title ?? row.label ?? row.name) || str(row.id ?? row.session_id),
         status: str(row.status),
+        // Hermes 0.23 has no per-session run-state field; `is_active` (open, with activity in
+        // the last 300 s) is what its own dashboard marks as active, so the live dot means that.
         hasActiveRun: Boolean(row.has_active_run ?? row.hasActiveRun ?? row.is_active ?? row.active),
         // The renderer shows a time only for a finite epoch-ms number.
         updatedAt: epochMs(row.updated_at ?? row.updatedAt ?? row.last_active ?? row.last_activity)
@@ -28711,7 +28713,8 @@ var HANDLERS = {
           name: str(row.name ?? row.id),
           enabled: Boolean(row.enabled ?? row.active),
           state: {
-            nextRunAtMs: num(state.nextRunAtMs ?? row.next_run_at_ms ?? row.next_run_ms) || (epochMs(row.next_run_at) ?? 0),
+            // null (not 0) when no next run is known, so the renderer says so instead of 1970.
+            nextRunAtMs: epochMs(state.nextRunAtMs ?? row.next_run_at_ms ?? row.next_run_ms) ?? epochMs(row.next_run_at) ?? null,
             lastRunStatus: str(state.lastRunStatus ?? row.last_run_status ?? row.last_status)
           }
         };
