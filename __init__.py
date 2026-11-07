@@ -56,6 +56,8 @@ def _fill_server_owned_fields(args: dict[str, Any]) -> dict[str, Any]:
     either value is refused for a field that is then discarded. Only those two fields
     are touched; everything else is forwarded as sent and validated by the server.
     """
+    if not isinstance(args, dict):
+        return args
     doc = args.get("doc")
     if not isinstance(doc, dict):
         return args
