@@ -3,6 +3,22 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.5.3
+
+### Fixed
+
+- `boardstate_workspace_replace` no longer refuses a document for the two fields the server overwrites anyway.
+  The server sets `workspaceVersion` (current + 1) and every tab's `createdBy` (the existing tab's owner, else the
+  calling agent), but it validated the agent's raw values first. Agents that omitted or guessed them ("agent") got
+  `workspaceVersion must be an integer…` or `tabs[n].createdBy createdBy is invalid` and retried until Hermes raised its
+  tool-loop warning. The native handler now fills those two fields before forwarding; everything else is validated
+  exactly as before, and the stored values are still the server's.
+
+### Changed
+
+- The native `boardstate_workspace_replace` description says those two fields may be omitted, and points small
+  edits at `boardstate_widget_add` / `boardstate_widget_update`, which show on the board as each one lands.
+
 ## 1.5.2
 
 ### Added
