@@ -58,7 +58,7 @@ const fake = createServer((req, res) => {
       ? undefined
       : [
           { id: "nightly", name: "Nightly", enabled: true, state: "scheduled", next_run_at: "2027-01-15T08:00:00+00:00", last_status: "ok" },
-          { id: "paused", name: "Paused", enabled: false, state: "paused", next_run_at: null, last_status: null },
+          { id: "paused", name: "Paused", enabled: false, state: "paused", next_run_at: "2027-02-01T08:00:00+00:00", last_status: "ok" },
         ],
     "/api/cron": [{ id: "legacy", name: "Legacy", enabled: true, next_run_at_ms: 1_800_000_000_000, last_run_status: "ok" }],
   }[path];
@@ -174,7 +174,7 @@ check(
     cron.jobs[0].state?.lastRunStatus === "ok" &&
     cron.jobs[0].state?.nextRunAtMs === Date.parse("2027-01-15T08:00:00+00:00"),
 );
-check("cron.list keeps a missing next run as null (not 1970)", cron?.jobs?.[1]?.id === "paused" && cron.jobs[1].state?.nextRunAtMs === null);
+check("cron.list reports no next run for a paused job (Hermes keeps next_run_at)", cron?.jobs?.[1]?.id === "paused" && cron.jobs[1].state?.nextRunAtMs === null);
 cronJobsGone = true;
 const legacyCron = (await rpc("cron.list", {})).result;
 check(

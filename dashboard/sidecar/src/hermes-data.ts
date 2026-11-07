@@ -124,14 +124,17 @@ const HANDLERS: Record<string, Handler> = {
       jobs: list.slice(0, limit).map((j) => {
         const row = obj(j);
         const state = obj(row.state);
+        const enabled = Boolean(row.enabled ?? row.active);
         return {
           id: str(row.id ?? row.name),
           name: str(row.name ?? row.id),
-          enabled: Boolean(row.enabled ?? row.active),
+          enabled,
           state: {
             // null (not 0) when no next run is known, so the renderer says so instead of 1970.
-            nextRunAtMs:
-              epochMs(state.nextRunAtMs ?? row.next_run_at_ms ?? row.next_run_ms) ?? epochMs(row.next_run_at) ?? null,
+            // A paused job keeps its old next_run_at in Hermes 0.23, but it will not run.
+            nextRunAtMs: enabled
+              ? (epochMs(state.nextRunAtMs ?? row.next_run_at_ms ?? row.next_run_ms) ?? epochMs(row.next_run_at) ?? null)
+              : null,
             lastRunStatus: str(state.lastRunStatus ?? row.last_run_status ?? row.last_status),
           },
         };

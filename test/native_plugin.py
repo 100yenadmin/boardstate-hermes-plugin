@@ -76,7 +76,10 @@ async def _run() -> None:
 
     with tempfile.TemporaryDirectory(prefix="boardstate-native-") as tmp:
         previous = os.environ.get("BOARDSTATE_HERMES_STATE_DIR")
+        previous_home = os.environ.get("HERMES_HOME")
         os.environ["BOARDSTATE_HERMES_STATE_DIR"] = tmp
+        # The sidecar inherits this environment: never hand it the developer's real Hermes home.
+        os.environ["HERMES_HOME"] = str(Path(tmp) / "hermes-home")
         try:
             workspace = json.loads(await ctx.tools["boardstate_workspace_get"]["handler"]({}))
             assert workspace["doc"]["tabs"]
@@ -200,6 +203,10 @@ async def _run() -> None:
                 os.environ.pop("BOARDSTATE_HERMES_STATE_DIR", None)
             else:
                 os.environ["BOARDSTATE_HERMES_STATE_DIR"] = previous
+            if previous_home is None:
+                os.environ.pop("HERMES_HOME", None)
+            else:
+                os.environ["HERMES_HOME"] = previous_home
 
 
 if __name__ == "__main__":
