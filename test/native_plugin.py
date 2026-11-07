@@ -104,6 +104,42 @@ async def _run() -> None:
             native = next(tab for tab in on_disk["tabs"] if tab["slug"] == "native")
             assert any(widget["id"] == "native-card" for widget in native["widgets"])
 
+            # workspace_replace: the server owns workspaceVersion and every tab's createdBy
+            # (store.mutate bumps the version; the replace sanitizer reassigns createdBy), so a
+            # doc that omits or garbles them is accepted and the stored values are the server's.
+            current = json.loads(await ctx.tools["boardstate_workspace_get"]["handler"]({}))["doc"]
+            before_version = current["workspaceVersion"]
+            board_owner = next(t for t in current["tabs"] if t["slug"] == "board")["createdBy"]
+            doc = json.loads(json.dumps(current))
+            doc.pop("workspaceVersion")
+            for tab in doc["tabs"]:
+                if tab["slug"] == "board":
+                    tab["createdBy"] = "agent"
+                else:
+                    tab.pop("createdBy", None)
+            doc["tabs"].append({"slug": "replaced", "title": "Replaced", "hidden": False, "widgets": []})
+            doc["prefs"]["tabOrder"] = [t["slug"] for t in doc["tabs"]]
+            replaced = json.loads(
+                await ctx.tools["boardstate_workspace_replace"]["handler"]({"doc": doc})
+            )
+            assert "error" not in replaced, replaced
+            on_disk = json.loads((Path(tmp) / "dashboard" / "workspace.json").read_text())
+            assert on_disk["workspaceVersion"] == before_version + 1, on_disk["workspaceVersion"]
+            tabs = {t["slug"]: t for t in on_disk["tabs"]}
+            assert tabs["board"]["createdBy"] == board_owner, tabs["board"]["createdBy"]
+            assert tabs["replaced"]["createdBy"].startswith("agent:"), tabs["replaced"]["createdBy"]
+            assert tabs["native"]["createdBy"].startswith("agent:"), tabs["native"]["createdBy"]
+
+            # Everything else is still validated: a bad slug is refused and nothing is written.
+            bad = json.loads(json.dumps(on_disk))
+            bad["tabs"][0]["slug"] = "Not A Slug"
+            refused = json.loads(
+                await ctx.tools["boardstate_workspace_replace"]["handler"]({"doc": bad})
+            )
+            assert "error" in refused, refused
+            after = json.loads((Path(tmp) / "dashboard" / "workspace.json").read_text())
+            assert after["workspaceVersion"] == on_disk["workspaceVersion"]
+
             for name in (
                 "boardstate_tool_search",
                 "boardstate_connector_read",

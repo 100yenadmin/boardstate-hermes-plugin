@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -40,10 +41,52 @@ def _tool_contracts() -> list[dict[str, Any]]:
     return payload
 
 
+REPLACE_TOOL = "boardstate_workspace_replace"
+# The same actor pattern the Boardstate schema validates createdBy against.
+_ACTOR = re.compile(r"^(user|system|agent:[A-Za-z0-9._-]{1,64})$")
+_MAX_SAFE_INTEGER = 9007199254740991
+
+
+def _fill_server_owned_fields(args: dict[str, Any]) -> dict[str, Any]:
+    """Pre-fill the two fields Boardstate overwrites on every workspace replace.
+
+    The server sets ``workspaceVersion`` to current + 1 inside its write lock and
+    reassigns every tab's ``createdBy`` (the existing tab's owner, else the calling
+    agent), but it validates the raw document first, so an agent that omits or guesses
+    either value is refused for a field that is then discarded. Only those two fields
+    are touched; everything else is forwarded as sent and validated by the server.
+    """
+    doc = args.get("doc")
+    if not isinstance(doc, dict):
+        return args
+    doc = dict(doc)
+    version = doc.get("workspaceVersion")
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or not 0 <= version <= _MAX_SAFE_INTEGER
+    ):
+        doc["workspaceVersion"] = 0
+    tabs = doc.get("tabs")
+    if isinstance(tabs, list):
+        filled = []
+        for tab in tabs:
+            if isinstance(tab, dict):
+                owner = tab.get("createdBy")
+                if not isinstance(owner, str) or not _ACTOR.fullmatch(owner):
+                    tab = {**tab, "createdBy": "agent:agent"}
+            filled.append(tab)
+        doc["tabs"] = filled
+    return {**args, "doc": doc}
+
+
 def _handler(name: str):
     async def handle(args: dict[str, Any], **_kwargs: Any) -> str:
         try:
-            result = await _runtime.invoke_tool(name, args or {})
+            args = args or {}
+            if name == REPLACE_TOOL:
+                args = _fill_server_owned_fields(args)
+            result = await _runtime.invoke_tool(name, args)
             return json.dumps(result, ensure_ascii=False)
         except _runtime.BoardstateUnavailable as exc:
             return json.dumps({"error": str(exc)}, ensure_ascii=False)

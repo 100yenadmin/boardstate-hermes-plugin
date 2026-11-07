@@ -587,7 +587,7 @@
   },
   {
     "name": "boardstate_workspace_replace",
-    "description": "Replace the full workspace document after local validation and size/schema caps. Call boardstate_workspace_get first when you need the current document.",
+    "description": "Replace the full workspace document after local validation and size/schema caps. Call boardstate_workspace_get first when you need the current document. Pass the whole document from boardstate_workspace_get with your edits. The server sets workspaceVersion and each tab's createdBy, so you may omit them. To add or change a few widgets, prefer boardstate_widget_add / boardstate_widget_update: each lands on the board as it is made.",
     "inputSchema": {
       "type": "object",
       "required": [
