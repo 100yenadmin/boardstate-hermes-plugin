@@ -42,6 +42,30 @@ def _tool_contracts() -> list[dict[str, Any]]:
 
 
 REPLACE_TOOL = "boardstate_workspace_replace"
+ADD_TOOL = "boardstate_widget_add"
+# The live Hermes data RPC each data-source builtin renders. Mirrors DEFAULT_DATA_METHODS in
+# dashboard/sidecar/src/tool-contract.mjs (test/templates.mjs checks they agree).
+_DEFAULT_DATA_METHODS = {
+    "builtin:sessions": "sessions.list",
+    "builtin:usage": "usage.status",
+    "builtin:instances": "system-presence",
+    "builtin:cron": "cron.list",
+}
+
+
+def _bind_live_data(widget: Any) -> Any:
+    """Bind a data-source builtin the agent left unbound to its live Hermes method.
+
+    The renderer shows only what a widget's binding returns and leaves binding these kinds
+    to the host, so an unbound sessions/usage/instances/cron widget shows its empty state
+    forever. An explicit ``bindings`` value (even an empty object) is kept as sent.
+    """
+    if not isinstance(widget, dict) or "bindings" in widget:
+        return widget
+    method = _DEFAULT_DATA_METHODS.get(widget.get("kind"))
+    if not isinstance(method, str):
+        return widget
+    return {**widget, "bindings": {"value": {"source": "rpc", "method": method}}}
 # The same actor pattern the Boardstate schema validates createdBy against.
 _ACTOR = re.compile(r"^(user|system|agent:[A-Za-z0-9._-]{1,64})$")
 _MAX_SAFE_INTEGER = 9007199254740991
@@ -77,6 +101,9 @@ def _fill_server_owned_fields(args: dict[str, Any]) -> dict[str, Any]:
                 owner = tab.get("createdBy")
                 if not isinstance(owner, str) or not _ACTOR.fullmatch(owner):
                     tab = {**tab, "createdBy": "agent:agent"}
+                widgets = tab.get("widgets")
+                if isinstance(widgets, list):
+                    tab = {**tab, "widgets": [_bind_live_data(w) for w in widgets]}
             filled.append(tab)
         doc["tabs"] = filled
     return {**args, "doc": doc}
@@ -88,6 +115,8 @@ def _handler(name: str):
             args = args or {}
             if name == REPLACE_TOOL:
                 args = _fill_server_owned_fields(args)
+            elif name == ADD_TOOL:
+                args = _bind_live_data(args)
             result = await _runtime.invoke_tool(name, args)
             return json.dumps(result, ensure_ascii=False)
         except _runtime.BoardstateUnavailable as exc:

@@ -20,6 +20,7 @@ const NONCE = "data-nonce";
 
 // --- Fake Hermes REST: representative payloads; 401 unless the session token matches. ---
 const seenAuth = [];
+let cronJobsGone = false;
 const fake = createServer((req, res) => {
   seenAuth.push(req.headers["x-hermes-session-token"]);
   if (req.headers["x-hermes-session-token"] !== TOKEN) {
@@ -33,14 +34,24 @@ const fake = createServer((req, res) => {
       totals: { total_estimated_cost: 12.5, total_input: 1000, total_output: 500 },
       days: 30,
     },
-    "/api/sessions": [
-      { id: "s1", title: "Session One", status: "done", has_active_run: false, updated_at: "2026-07-17T00:00:00Z" },
-      { id: "s2", title: "Session Two", status: "running", has_active_run: true, updated_at: "2026-07-17T01:00:00Z" },
-    ],
+    // Hermes 0.23 wraps the list and names the fields is_active / last_active (epoch
+    // seconds); older hosts returned a bare list with has_active_run / updated_at (ISO).
+    "/api/sessions": {
+      sessions: [
+        { id: "s1", title: "Session One", status: "done", has_active_run: false, updated_at: "2026-07-17T00:00:00Z" },
+        { id: "s2", title: "Session Two", status: "running", has_active_run: true, updated_at: "2026-07-17T01:00:00Z" },
+        { id: "s3", title: "Session Three", is_active: true, last_active: 1794088202.79 },
+      ],
+    },
     "/api/status": {
       active_agents: [{ instance_id: "gw-1", platform: "macos", version: "1.0", last_input_seconds: 8 }],
     },
-    "/api/cron": [{ id: "nightly", name: "Nightly", enabled: true, next_run_at_ms: 1_800_000_000_000, last_run_status: "ok" }],
+    // Hermes 0.23 serves jobs at /api/cron/jobs (ISO next_run_at, last_status, string state);
+    // older hosts served /api/cron. The handler tries the new path first.
+    "/api/cron/jobs": cronJobsGone
+      ? undefined
+      : [{ id: "nightly", name: "Nightly", enabled: true, state: "scheduled", next_run_at: "2027-01-15T08:00:00+00:00", last_status: "ok" }],
+    "/api/cron": [{ id: "legacy", name: "Legacy", enabled: true, next_run_at_ms: 1_800_000_000_000, last_run_status: "ok" }],
   }[path];
   if (body === undefined) {
     res.statusCode = 404;
@@ -131,6 +142,14 @@ check("usage.cost (direct) → single number", cost === 12.5);
 
 const sessions = (await rpc("sessions.list", {})).result;
 check("sessions.list (direct) → rows shape", Array.isArray(sessions) && sessions[0]?.key === "s1" && sessions[1]?.hasActiveRun === true);
+check(
+  "sessions.list maps Hermes 0.23 is_active / last_active",
+  sessions?.[2]?.key === "s3" && sessions[2].hasActiveRun === true && sessions[2].updatedAt === 1794088202790,
+);
+check(
+  "sessions.list updatedAt is epoch ms (the renderer drops non-numbers)",
+  sessions?.[0]?.updatedAt === Date.parse("2026-07-17T00:00:00Z"),
+);
 
 const presence = (await rpc("system-presence", {})).result;
 check("system-presence (direct) → presence shape", presence?.presence?.[0]?.instanceId === "gw-1");
@@ -139,7 +158,19 @@ const nodes = (await rpc("node.list", {})).result;
 check("node.list (direct) → aliases presence", nodes?.presence?.[0]?.instanceId === "gw-1");
 
 const cron = (await rpc("cron.list", {})).result;
-check("cron.list (direct) → jobs shape", cron?.jobs?.[0]?.enabled === true && cron?.jobs?.[0]?.state?.lastRunStatus === "ok");
+check(
+  "cron.list (direct) → jobs shape from /api/cron/jobs",
+  cron?.jobs?.[0]?.id === "nightly" &&
+    cron.jobs[0].enabled === true &&
+    cron.jobs[0].state?.lastRunStatus === "ok" &&
+    cron.jobs[0].state?.nextRunAtMs === Date.parse("2027-01-15T08:00:00+00:00"),
+);
+cronJobsGone = true;
+const legacyCron = (await rpc("cron.list", {})).result;
+check(
+  "cron.list falls back to /api/cron on older hosts",
+  legacyCron?.jobs?.[0]?.id === "legacy" && legacyCron.jobs[0].state?.nextRunAtMs === 1_800_000_000_000,
+);
 
 // The data.read WS RPC still resolves rpc bindings server-side (file/static path uses
 // the same resolver); kept as a regression guard on the injected resolveBinding.

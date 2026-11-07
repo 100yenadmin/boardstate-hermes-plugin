@@ -28638,6 +28638,14 @@ var num = (v) => typeof v === "number" && Number.isFinite(v) ? v : 0;
 var str = (v) => typeof v === "string" ? v : "";
 var arr = (v) => Array.isArray(v) ? v : [];
 var obj = (v) => typeof v === "object" && v !== null ? v : {};
+var epochMs = (v) => {
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) return v < 1e11 ? Math.round(v * 1e3) : v;
+  if (typeof v === "string" && v) {
+    const parsed = Date.parse(v);
+    return Number.isFinite(parsed) ? parsed : void 0;
+  }
+  return void 0;
+};
 var HANDLERS = {
   // usage widget: { totals: { totalCost, totalTokens }, days? }
   "usage.status": async (get) => {
@@ -28664,8 +28672,9 @@ var HANDLERS = {
         key: str(row.id ?? row.session_id ?? row.key),
         label: str(row.title ?? row.label ?? row.name) || str(row.id ?? row.session_id),
         status: str(row.status),
-        hasActiveRun: Boolean(row.has_active_run ?? row.hasActiveRun ?? row.active),
-        updatedAt: str(row.updated_at ?? row.updatedAt ?? row.last_activity)
+        hasActiveRun: Boolean(row.has_active_run ?? row.hasActiveRun ?? row.is_active ?? row.active),
+        // The renderer shows a time only for a finite epoch-ms number.
+        updatedAt: epochMs(row.updated_at ?? row.updatedAt ?? row.last_active ?? row.last_activity)
       };
     });
   },
@@ -28688,7 +28697,7 @@ var HANDLERS = {
   // cron widget: { jobs: [{ id, name, enabled, state: { nextRunAtMs, lastRunStatus } }] }
   "cron.list": async (get, params) => {
     const limit = num(params.limit) || 8;
-    const raw = await get("/api/cron");
+    const raw = await get("/api/cron/jobs").catch(() => get("/api/cron"));
     const list = Array.isArray(raw) ? raw : arr(obj(raw).jobs ?? obj(raw).crons);
     return {
       jobs: list.slice(0, limit).map((j) => {
@@ -28699,7 +28708,7 @@ var HANDLERS = {
           name: str(row.name ?? row.id),
           enabled: Boolean(row.enabled ?? row.active),
           state: {
-            nextRunAtMs: num(state.nextRunAtMs ?? row.next_run_at_ms ?? row.next_run_ms),
+            nextRunAtMs: num(state.nextRunAtMs ?? row.next_run_at_ms ?? row.next_run_ms) || (epochMs(row.next_run_at) ?? 0),
             lastRunStatus: str(state.lastRunStatus ?? row.last_run_status ?? row.last_status)
           }
         };
@@ -30828,6 +30837,12 @@ var AGENT_TOOL_PREFIX = "dashboard_";
 var PUBLIC_TOOL_PREFIX = "boardstate_";
 var toPublicToolName = (agentName) => agentName.startsWith(AGENT_TOOL_PREFIX) ? `${PUBLIC_TOOL_PREFIX}${agentName.slice(AGENT_TOOL_PREFIX.length)}` : agentName;
 var toPublicToolText = (text) => typeof text === "string" ? text.replace(/\bdashboard_(?=[a-z*])/g, PUBLIC_TOOL_PREFIX) : text;
+var DEFAULT_DATA_METHODS = Object.freeze({
+  "builtin:sessions": "sessions.list",
+  "builtin:usage": "usage.status",
+  "builtin:instances": "system-presence",
+  "builtin:cron": "cron.list"
+});
 var CONNECTOR_TOOL_SCHEMA = {
   type: "object",
   additionalProperties: false,

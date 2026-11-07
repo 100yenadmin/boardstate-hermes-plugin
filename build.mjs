@@ -99,13 +99,16 @@ await esbuild.build({
 // @boardstate/server factory the sidecar invokes; the two connector definitions
 // are shared with that runtime.  Commit the result so register() never imports npm
 // packages and Hermes can capability-probe the plugin in isolation.
-// Native-only notes. The plugin's native handler (__init__.py) fills the two fields the
-// server owns on a replace, so the native description can say they may be omitted.
+// Native-only notes, true only where the native handler (__init__.py) runs: it fills the two
+// fields the server owns on a replace, and binds unbound live-data builtins on add/replace.
 const NATIVE_DESCRIPTION_NOTES = {
   boardstate_workspace_replace:
     " Pass the whole document from boardstate_workspace_get with your edits. The server sets" +
     " workspaceVersion and each tab's createdBy, so you may omit them. To add or change a few" +
     " widgets, prefer boardstate_widget_add / boardstate_widget_update: each lands on the board as it is made.",
+  boardstate_widget_add:
+    " Live Hermes data widgets (builtin:sessions, builtin:usage, builtin:instances, builtin:cron) are bound" +
+    " to this agent's live Hermes data when you omit bindings.",
 };
 const schemaStore = new DashboardStore({ storage: new MemoryStorageAdapter() });
 const baseSchemas = createDashboardTools({

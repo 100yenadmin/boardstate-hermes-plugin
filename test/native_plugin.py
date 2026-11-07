@@ -104,6 +104,41 @@ async def _run() -> None:
             native = next(tab for tab in on_disk["tabs"] if tab["slug"] == "native")
             assert any(widget["id"] == "native-card" for widget in native["widgets"])
 
+            # Live Hermes data builtins render only their rpc binding; an agent that omits it
+            # gets the widget bound to its default method, and an explicit binding is kept.
+            live = json.loads(
+                await ctx.tools["boardstate_widget_add"]["handler"](
+                    {
+                        "tab": "native",
+                        "id": "native-sessions",
+                        "kind": "builtin:sessions",
+                        "title": "Sessions",
+                        "grid": {"x": 0, "y": 3, "w": 6, "h": 4},
+                    }
+                )
+            )
+            assert "error" not in live, live
+            explicit = json.loads(
+                await ctx.tools["boardstate_widget_add"]["handler"](
+                    {
+                        "tab": "native",
+                        "id": "native-usage",
+                        "kind": "builtin:usage",
+                        "title": "Usage",
+                        "grid": {"x": 6, "y": 3, "w": 6, "h": 4},
+                        "bindings": {"value": {"source": "static", "value": {"totals": {}}}},
+                    }
+                )
+            )
+            assert "error" not in explicit, explicit
+            on_disk = json.loads((Path(tmp) / "dashboard" / "workspace.json").read_text())
+            by_id = {w["id"]: w for t in on_disk["tabs"] for w in t["widgets"]}
+            assert by_id["native-sessions"]["bindings"] == {
+                "value": {"source": "rpc", "method": "sessions.list"}
+            }, by_id["native-sessions"]
+            assert by_id["native-usage"]["bindings"]["value"]["source"] == "static", by_id["native-usage"]
+            assert "bindings" not in by_id["native-card"] or not by_id["native-card"]["bindings"]
+
             # workspace_replace: the server owns workspaceVersion and every tab's createdBy
             # (store.mutate bumps the version; the replace sanitizer reassigns createdBy), so a
             # doc that omits or garbles them is accepted and the stored values are the server's.
