@@ -48,7 +48,7 @@ const LIVE_KINDS = new Set([...DATA_KINDS, "builtin:action-button", "builtin:act
   const { readFileSync } = await import("node:fs");
   const py = readFileSync(join(here, "..", "__init__.py"), "utf8");
   const block = py.match(/_DEFAULT_DATA_METHODS = \{([^}]*)\}/);
-  const pyMap = block ? Object.fromEntries([...block[1].matchAll(/"([^"]+)":\s*"([^"]+)"/g)].map((m) => [m[1], m[2]])) : null;
+  const pyMap = block ? Object.fromEntries([...block[1].matchAll(/["']([^"']+)["']:\s*["']([^"']+)["']/g)].map((m) => [m[1], m[2]])) : null;
   check("__init__.py _DEFAULT_DATA_METHODS matches tool-contract.mjs", JSON.stringify(pyMap) === JSON.stringify({ ...DEFAULT_DATA_METHODS }));
   check("every default method is allowlisted", Object.values(DEFAULT_DATA_METHODS).every((m) => DATA_READ_RPC_ALLOWLIST.includes(m)));
 }
