@@ -3,6 +3,40 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.5.3
+
+### Fixed
+
+- `boardstate_workspace_replace` no longer refuses a document for the two fields the server overwrites anyway.
+  The server sets `workspaceVersion` (current + 1) and every tab's `createdBy` (the existing tab's owner, else the
+  calling agent), but it validated the agent's raw values first. Agents that omitted or guessed them ("agent") got
+  `workspaceVersion must be an integer…` or `tabs[n].createdBy createdBy is invalid` and retried until Hermes raised its
+  tool-loop warning. The native handler now fills those two fields before forwarding; everything else is validated
+  exactly as before, and the stored values are still the server's.
+
+- Live Hermes data widgets showed their empty state ("No sessions yet.", $0.00) because nothing bound them: the
+  renderer leaves binding the data-source builtins to the host, and neither the board templates nor agents did. The
+  Agent HQ, Usage & Cost and Sessions Monitor templates now bind `builtin:sessions`, `builtin:usage`,
+  `builtin:instances` and `builtin:cron` to their live RPC, and the native `boardstate_widget_add` /
+  `boardstate_workspace_replace` handlers bind one an agent left unbound. An explicit `bindings` value is kept.
+- Hermes 0.23 data shapes: the sessions widget reads `is_active` and `last_active` (it showed no live dot and no time),
+  and `cron.list` reads `/api/cron/jobs`, falling back to `/api/cron` on older hosts. Session and job times are sent as
+  epoch milliseconds, which is what the renderer displays.
+
+### Changed
+
+- The native `boardstate_workspace_replace` description says those two fields may be omitted, and points small
+  edits at `boardstate_widget_add` / `boardstate_widget_update`, which show on the board as each one lands. The
+  native `boardstate_widget_add` description says live Hermes data widgets bind themselves, and the native
+  `boardstate_data_read` description says live (`rpc`) bindings are resolved by the board, not by that tool (agents
+  were calling it to verify a new live panel and getting an error).
+- Screenshots of an agent-built launch board: `docs/screenshots/launch-board.png` and `docs/screenshots/launch-tasks.png`.
+
+### Known limits on Hermes 0.23
+
+- `builtin:instances` stays empty: `/api/status` now reports `active_agents` as a count. The Usage & Cost template's
+  "today" stat cards show "—": `usage.status` returns period totals, not today's. Both are tracked for a later release.
+
 ## 1.5.2
 
 ### Added

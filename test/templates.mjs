@@ -24,7 +24,7 @@ const out = await build({
 const mod = await import(
   "data:text/javascript;base64," + Buffer.from(out.outputFiles[0].text).toString("base64")
 );
-const { TEMPLATES } = mod;
+const { TEMPLATES, DEFAULT_DATA_METHODS } = mod;
 
 let n = 0;
 const failures = [];
@@ -43,6 +43,16 @@ const DATA_KINDS = new Set(["builtin:usage", "builtin:sessions", "builtin:instan
 // source, an explicit binding, or a grant-gated action widget.
 const LIVE_KINDS = new Set([...DATA_KINDS, "builtin:action-button", "builtin:action-form"]);
 
+// The native handler (__init__.py) mirrors the same map; they must agree.
+{
+  const { readFileSync } = await import("node:fs");
+  const py = readFileSync(join(here, "..", "__init__.py"), "utf8");
+  const block = py.match(/_DEFAULT_DATA_METHODS = \{([^}]*)\}/);
+  const pyMap = block ? Object.fromEntries([...block[1].matchAll(/["']([^"']+)["']:\s*["']([^"']+)["']/g)].map((m) => [m[1], m[2]])) : null;
+  check("__init__.py _DEFAULT_DATA_METHODS matches tool-contract.mjs", JSON.stringify(pyMap) === JSON.stringify({ ...DEFAULT_DATA_METHODS }));
+  check("every default method is allowlisted", Object.values(DEFAULT_DATA_METHODS).every((m) => DATA_READ_RPC_ALLOWLIST.includes(m)));
+}
+
 for (const tpl of TEMPLATES) {
   check(`${tpl.id}: has name + summary`, typeof tpl.name === "string" && typeof tpl.summary === "string" && tpl.name.length > 0);
 
@@ -60,6 +70,15 @@ for (const tpl of TEMPLATES) {
   check(`${tpl.id}: widget ids unique`, new Set(widgets.map((w) => w.id)).size === widgets.length);
   check(`${tpl.id}: grids fit 12 columns`, widgets.every((w) => w.grid.x >= 0 && w.grid.x + w.grid.w <= 12 && w.grid.w > 0 && w.grid.h > 0));
   check(`${tpl.id}: has at least one live/interactive widget`, widgets.some((w) => LIVE_KINDS.has(w.kind) || w.bindings));
+
+  // Data-source builtins render only what their rpc binding returns: an unbound one shows
+  // "No sessions yet." / $0.00 forever, so every one a template ships must be bound.
+  const unbound = widgets.filter(
+    (w) =>
+      DEFAULT_DATA_METHODS[w.kind] &&
+      (w.bindings?.value?.source !== "rpc" || w.bindings?.value?.method !== DEFAULT_DATA_METHODS[w.kind]),
+  );
+  check(`${tpl.id}: data widgets bound to live Hermes data`, unbound.length === 0);
 
   // Any explicit rpc binding must use an allowlisted method, or the client denies it.
   const boundMethods = widgets

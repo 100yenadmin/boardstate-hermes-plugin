@@ -1,12 +1,16 @@
 // Live-bound board templates for the Hermes dashboard.
 //
 // A template is just a Boardstate workspace doc. Its data widgets are the dedicated
-// data-source builtins (usage / sessions / instances / cron), which self-bind to
-// their Hermes REST method on the server (see registerHermesDataRpc) — so a template
-// shows REAL Hermes data with zero manual bindings and graceful empty states, never
-// an error cell. Applied via the non-operator `dashboard.workspace.replace` RPC.
+// data-source builtins (usage / sessions / instances / cron). The renderer leaves binding
+// them to the host, so data() binds each one to its live Hermes RPC (DEFAULT_DATA_METHODS,
+// served by registerHermesDataRpc): a template shows REAL Hermes data and graceful empty
+// states, never an error cell. Applied via the non-operator `dashboard.workspace.replace` RPC.
 //
 // Everything here is data — Hermes-native copy throughout.
+
+import { DEFAULT_DATA_METHODS } from "../sidecar/src/tool-contract.mjs";
+
+export { DEFAULT_DATA_METHODS };
 
 export type BoardTemplate = {
   id: string;
@@ -47,15 +51,20 @@ const md = (id: string, title: string, x: number, y: number, w: number, h: numbe
 });
 
 // A data-source builtin that self-binds to its Hermes method — no `bindings` needed.
-const data = (id: string, kind: string, title: string, x: number, y: number, w: number, h: number, props: Record<string, unknown> = {}): Widget => ({
-  id,
-  kind,
-  title,
-  grid: { x, y, w, h },
-  collapsed: false,
-  hidden: false,
-  props,
-});
+const data = (id: string, kind: string, title: string, x: number, y: number, w: number, h: number, props: Record<string, unknown> = {}): Widget => {
+  const method = (DEFAULT_DATA_METHODS as Record<string, string>)[kind];
+  return {
+    id,
+    kind,
+    title,
+    grid: { x, y, w, h },
+    collapsed: false,
+    hidden: false,
+    props,
+    // Data-source builtins render only what their rpc binding returns; bind the live method.
+    ...(method ? { bindings: { value: { source: "rpc", method } } } : {}),
+  };
+};
 
 // A grant-gated action button: one click INVOKES an approved external tool (a mutation only
 // PARKS — the operator confirms; a readOnly tool runs directly). `connector`/`tool` reference
@@ -105,7 +114,7 @@ export const TEMPLATES: BoardTemplate[] = [
       data("usage", "builtin:usage", "Usage detail", 6, 2, 6, 3),
       data("cron", "builtin:cron", "Scheduled jobs", 0, 5, 12, 3),
     ].map((w) =>
-      // The two stat-cards read live usage; the dedicated builtins self-bind.
+      // The two stat-cards read live usage; data() binds the dedicated builtins.
       w.id === "cost" || w.id === "tokens"
         ? { ...w, bindings: { value: { source: "rpc", method: "usage.status" } } }
         : w,

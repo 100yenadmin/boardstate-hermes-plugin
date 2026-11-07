@@ -114,7 +114,7 @@
   },
   {
     "name": "boardstate_widget_add",
-    "description": "Add a widget to a tab. Grid x+w must fit within the 12-column dashboard grid. Call boardstate_workspace_get first when you need the current document.",
+    "description": "Add a widget to a tab. Grid x+w must fit within the 12-column dashboard grid. Call boardstate_workspace_get first when you need the current document. Live Hermes data widgets (builtin:sessions, builtin:usage, builtin:instances, builtin:cron) are bound to live Hermes data when you omit bindings.",
     "inputSchema": {
       "type": "object",
       "required": [
@@ -587,7 +587,7 @@
   },
   {
     "name": "boardstate_workspace_replace",
-    "description": "Replace the full workspace document after local validation and size/schema caps. Call boardstate_workspace_get first when you need the current document.",
+    "description": "Replace the full workspace document after local validation and size/schema caps. Call boardstate_workspace_get first when you need the current document. Pass the whole document from boardstate_workspace_get with your edits. The server sets workspaceVersion and each tab's createdBy, so you may omit them. To add or change a few widgets, prefer boardstate_widget_add / boardstate_widget_update: each lands on the board as it is made.",
     "inputSchema": {
       "type": "object",
       "required": [
@@ -702,7 +702,7 @@
   },
   {
     "name": "boardstate_data_read",
-    "description": "Resolve a dashboard binding exactly as a widget sees it. RPC bindings return binding_client_resolved.",
+    "description": "Resolve a dashboard binding exactly as a widget sees it. RPC bindings return binding_client_resolved. Live Hermes data bindings (source \"rpc\") are resolved by the board when it renders, not by this tool; to confirm one, read the widget's binding with boardstate_workspace_get.",
     "inputSchema": {
       "type": "object",
       "required": [

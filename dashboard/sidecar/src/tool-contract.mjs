@@ -13,6 +13,19 @@ export const toPublicToolText = (text) =>
     ? text.replace(/\bdashboard_(?=[a-z*])/g, PUBLIC_TOOL_PREFIX)
     : text;
 
+/**
+ * The live Hermes data RPC each data-source builtin renders. The renderer leaves binding these
+ * to the host, and an unbound one shows its empty state forever ("No sessions yet.", $0.00),
+ * so templates ship them bound and the native tools bind them when an agent omits `bindings`.
+ * Mirrored in __init__.py (_DEFAULT_DATA_METHODS); test/templates.mjs checks the two agree.
+ */
+export const DEFAULT_DATA_METHODS = Object.freeze({
+  "builtin:sessions": "sessions.list",
+  "builtin:usage": "usage.status",
+  "builtin:instances": "system-presence",
+  "builtin:cron": "cron.list",
+});
+
 export const CONNECTOR_TOOL_SCHEMA = {
   type: "object",
   additionalProperties: false,

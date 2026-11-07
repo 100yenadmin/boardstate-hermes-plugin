@@ -40,6 +40,15 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const obj = (v: unknown): Record<string, unknown> =>
   typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
+/** Epoch ms from epoch ms, epoch seconds (Hermes 0.23 `last_active`) or an ISO string; else undefined. */
+const epochMs = (v: unknown): number | undefined => {
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) return v < 1e11 ? Math.round(v * 1000) : v;
+  if (typeof v === "string" && v) {
+    const parsed = Date.parse(v);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+};
 
 /**
  * Each handler maps a Boardstate data-read method to a Hermes REST call + shapes the
@@ -78,8 +87,11 @@ const HANDLERS: Record<string, Handler> = {
         key: str(row.id ?? row.session_id ?? row.key),
         label: str(row.title ?? row.label ?? row.name) || str(row.id ?? row.session_id),
         status: str(row.status),
-        hasActiveRun: Boolean(row.has_active_run ?? row.hasActiveRun ?? row.active),
-        updatedAt: str(row.updated_at ?? row.updatedAt ?? row.last_activity),
+        // Hermes 0.23 has no per-session run-state field; `is_active` (open, with activity in
+        // the last 300 s) is what its own dashboard marks as active, so the live dot means that.
+        hasActiveRun: Boolean(row.has_active_run ?? row.hasActiveRun ?? row.is_active ?? row.active),
+        // The renderer shows a time only for a finite epoch-ms number.
+        updatedAt: epochMs(row.updated_at ?? row.updatedAt ?? row.last_active ?? row.last_activity),
       };
     });
   },
@@ -102,18 +114,27 @@ const HANDLERS: Record<string, Handler> = {
   // cron widget: { jobs: [{ id, name, enabled, state: { nextRunAtMs, lastRunStatus } }] }
   "cron.list": async (get, params) => {
     const limit = num(params.limit) || 8;
-    const raw = await get("/api/cron");
+    // Hermes 0.23 serves /api/cron/jobs; older hosts served /api/cron.
+    const raw = await get("/api/cron/jobs").catch((err: unknown) => {
+      if (err instanceof Error && err.message.endsWith("→ 404")) return get("/api/cron");
+      throw err;
+    });
     const list = Array.isArray(raw) ? raw : arr(obj(raw).jobs ?? obj(raw).crons);
     return {
       jobs: list.slice(0, limit).map((j) => {
         const row = obj(j);
         const state = obj(row.state);
+        const enabled = Boolean(row.enabled ?? row.active);
         return {
           id: str(row.id ?? row.name),
           name: str(row.name ?? row.id),
-          enabled: Boolean(row.enabled ?? row.active),
+          enabled,
           state: {
-            nextRunAtMs: num(state.nextRunAtMs ?? row.next_run_at_ms ?? row.next_run_ms),
+            // null (not 0) when no next run is known, so the renderer says so instead of 1970.
+            // A paused job keeps its old next_run_at in Hermes 0.23, but it will not run.
+            nextRunAtMs: enabled
+              ? (epochMs(state.nextRunAtMs ?? row.next_run_at_ms ?? row.next_run_ms) ?? epochMs(row.next_run_at) ?? null)
+              : null,
             lastRunStatus: str(state.lastRunStatus ?? row.last_run_status ?? row.last_status),
           },
         };
