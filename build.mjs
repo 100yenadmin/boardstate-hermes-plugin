@@ -109,6 +109,9 @@ const NATIVE_DESCRIPTION_NOTES = {
   boardstate_widget_add:
     " Live Hermes data widgets (builtin:sessions, builtin:usage, builtin:instances, builtin:cron) are bound" +
     " to live Hermes data when you omit bindings.",
+  boardstate_data_read:
+    " Live Hermes data bindings (source \"rpc\") are resolved by the board when it renders, not by this tool;" +
+    " to confirm one, read the widget's binding with boardstate_workspace_get.",
 };
 const schemaStore = new DashboardStore({ storage: new MemoryStorageAdapter() });
 const baseSchemas = createDashboardTools({

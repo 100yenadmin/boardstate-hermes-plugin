@@ -27,7 +27,10 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 - The native `boardstate_workspace_replace` description says those two fields may be omitted, and points small
   edits at `boardstate_widget_add` / `boardstate_widget_update`, which show on the board as each one lands. The
-  native `boardstate_widget_add` description says live Hermes data widgets bind themselves.
+  native `boardstate_widget_add` description says live Hermes data widgets bind themselves, and the native
+  `boardstate_data_read` description says live (`rpc`) bindings are resolved by the board, not by that tool (agents
+  were calling it to verify a new live panel and getting an error).
+- Screenshots of an agent-built launch board: `docs/screenshots/launch-board.png` and `docs/screenshots/launch-tasks.png`.
 
 ### Known limits on Hermes 0.23
 

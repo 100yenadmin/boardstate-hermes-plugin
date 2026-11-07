@@ -702,7 +702,7 @@
   },
   {
     "name": "boardstate_data_read",
-    "description": "Resolve a dashboard binding exactly as a widget sees it. RPC bindings return binding_client_resolved.",
+    "description": "Resolve a dashboard binding exactly as a widget sees it. RPC bindings return binding_client_resolved. Live Hermes data bindings (source \"rpc\") are resolved by the board when it renders, not by this tool; to confirm one, read the widget's binding with boardstate_workspace_get.",
     "inputSchema": {
       "type": "object",
       "required": [
