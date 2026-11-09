@@ -218,9 +218,9 @@ statusMode = "v023";
 const presence023 = (await rpc("system-presence", {})).result?.presence ?? [];
 check(
   "system-presence (0.23 counts) → gateway row with state, agent count and version, no idle time",
-  presence023[0]?.instanceId === "Hermes gateway" &&
+  presence023[0]?.instanceId === "Hermes gateway (2 active agents)" &&
     presence023[0]?.mode === "running" &&
-    presence023[0]?.platform === "2 active agents" &&
+    !("platform" in presence023[0]) &&
     presence023[0]?.version === "0.23.0" &&
     !("lastInputSeconds" in presence023[0]),
 );

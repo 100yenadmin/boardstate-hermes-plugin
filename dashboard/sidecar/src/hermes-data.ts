@@ -118,10 +118,11 @@ const HANDLERS: Record<string, Handler> = {
     if (typeof s.active_agents === "number") {
       if (s.gateway_running !== true) return { presence: [] };
       const n = num(s.active_agents);
+      // The renderer's meta text never shrinks and the name truncates, so the count rides in the name
+      // and the meta stays short ("running · 0.23.0"): a narrow widget still shows "Hermes gateway…".
       const gateway: Record<string, unknown> = {
-        instanceId: "Hermes gateway",
+        instanceId: `Hermes gateway (${n} active agent${n === 1 ? "" : "s"})`,
         mode: str(s.gateway_state) || "running",
-        platform: `${n} active agent${n === 1 ? "" : "s"}`,
         version: str(s.version),
       };
       // Only a stale heartbeat has an idle time; the renderer shows "idle 0s" for a 0. Hermes sets the

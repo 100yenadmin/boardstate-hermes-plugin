@@ -28641,9 +28641,8 @@ var HANDLERS = {
       if (s.gateway_running !== true) return { presence: [] };
       const n = num(s.active_agents);
       const gateway = {
-        instanceId: "Hermes gateway",
+        instanceId: `Hermes gateway (${n} active agent${n === 1 ? "" : "s"})`,
         mode: str(s.gateway_state) || "running",
-        platform: `${n} active agent${n === 1 ? "" : "s"}`,
         version: str(s.version)
       };
       if (typeof s.gateway_heartbeat_stale_s === "number") gateway.lastInputSeconds = Math.max(s.gateway_heartbeat_stale_s, 121);
