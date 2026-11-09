@@ -3,6 +3,22 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.5.9
+
+### Changed
+
+- The README starts with what Boardstate does, a board the agent built, and how to get to a first board.
+  - It opens with the one-line outcome, badges, a launch-board screenshot, and a three-step "Try it": open
+    the board, ask for one, and watch it build and update in place.
+  - The first install line is now `hermes plugins install 100yenadmin/boardstate-hermes-plugin --enable`.
+    The catalog name comes second, with a note that it can give an older release on Hermes 0.23.0.
+  - New sections: "What you get", a short comparison with the stock dashboard and two other board-style
+    plugins (sourced from the Hermes v0.23.0 code and their catalog entries), a settings table, and links to
+    releases, the CHANGELOG, CONTRIBUTING and the security policy.
+  - The security scanner notes moved, unchanged, to `docs/security-scanner.md`; the README keeps a summary.
+  - The network and security disclosure is unchanged.
+- No code changes. Still the same 19 native tools.
+
 ## 1.5.8
 
 ### Fixed
