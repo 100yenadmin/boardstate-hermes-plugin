@@ -3,6 +3,23 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.5.8
+
+### Fixed
+
+- `boardstate_workspace_replace` no longer refuses a custom widget's registry entry for fields the server replaces
+  anyway ([#28](https://github.com/100yenadmin/boardstate-hermes-plugin/issues/28)).
+  - The problem: the server checks every `widgetsRegistry` entry's `status` and `createdBy` before it rebuilds the
+    registry from the entry names alone (the stored entry, else `pending` and the calling agent). An agent that left
+    out or guessed either field had its whole replace refused over a value that would have been thrown away.
+  - Now the native tool fills a missing or invalid `status` with `pending` and a missing or invalid `createdBy` with
+    a placeholder before sending, as 1.5.3 did for each tab's `createdBy`. Valid values are sent as they are.
+  - Approvals work as before. A stored entry keeps its approval state, a new one lands `pending` under the calling
+    agent, and marking an entry `approved` never approves it. The fill never writes `approved`.
+  - Other registry mistakes, such as an unknown key, a bad name, an entry that is not an object, or an invalid
+    `approvedBy`, are still refused with nothing written.
+  - The `boardstate_workspace_replace` description now says the server sets these fields. Still 19 native tools.
+
 ## 1.5.7
 
 ### Fixed

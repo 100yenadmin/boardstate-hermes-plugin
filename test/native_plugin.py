@@ -176,8 +176,66 @@ async def _run() -> None:
             assert tabs["claimed"]["createdBy"] == native_owner, tabs["claimed"]["createdBy"]
             assert tabs["replaced"]["createdBy"] == native_owner, tabs["replaced"]["createdBy"]
 
-            # Everything else is still validated: a bad slug is refused and nothing is written.
+            # widgetsRegistry (#28): the replace sanitizer keeps only the entry names and rebuilds
+            # each entry from the stored one, else pending + the calling agent. So an entry whose
+            # status or createdBy is missing or invalid is accepted, and the stored approval state
+            # is what lands. Seed an operator-approved entry the way the operator plane stores it
+            # (an agent-owned sidecar has no operator plane).
             state = Path(tmp) / "dashboard"
+            approved_entry = {
+                "status": "approved",
+                "createdBy": "user",
+                "approvedBy": "user",
+                "approvedAt": "2026-11-01T00:00:00.000Z",
+            }
+            seeded = json.loads((state / "workspace.json").read_text())
+            seeded["widgetsRegistry"]["approved-w"] = approved_entry
+            (state / "workspace.json").write_text(json.dumps(seeded, indent=2))
+            current = json.loads(await ctx.tools["boardstate_workspace_get"]["handler"]({}))["doc"]
+            assert current["widgetsRegistry"]["approved-w"] == approved_entry, current["widgetsRegistry"]
+            doc = json.loads(json.dumps(current))
+            doc["widgetsRegistry"] = {
+                "approved-w": {"status": "bogus"},  # stored approval must survive garbage
+                "fresh-w": {},  # a new name with neither field
+                "claimed-w": {"status": "approved", "createdBy": "agent"},  # self-approval attempt
+                "valid-w": {"status": "pending", "createdBy": "user"},  # valid, still rebuilt
+            }
+            replaced = json.loads(
+                await ctx.tools["boardstate_workspace_replace"]["handler"]({"doc": doc})
+            )
+            assert "error" not in replaced, replaced
+            registry = json.loads((state / "workspace.json").read_text())["widgetsRegistry"]
+            assert registry["approved-w"] == approved_entry, registry["approved-w"]
+            for name in ("fresh-w", "claimed-w", "valid-w"):
+                assert registry[name] == {"status": "pending", "createdBy": native_owner}, (name, registry[name])
+            assert sorted(registry) == ["approved-w", "claimed-w", "fresh-w", "valid-w"], sorted(registry)
+            # The handler fills only invalid status/createdBy, never with "approved", and
+            # forwards valid entries as sent.
+            fill = plugin._fill_server_owned_fields
+            valid = {"a": dict(approved_entry), "b": {"status": "rejected", "createdBy": "agent:x"}}
+            assert fill({"doc": {"widgetsRegistry": valid}})["doc"]["widgetsRegistry"] == valid
+            assert fill({"doc": {"widgetsRegistry": {"c": {"status": "APPROVED", "approvedBy": "user"}}}})[
+                "doc"
+            ]["widgetsRegistry"] == {"c": {"status": "pending", "approvedBy": "user", "createdBy": "agent:agent"}}
+            assert "widgetsRegistry" not in fill({"doc": {}})["doc"]  # a missing registry is not invented
+            # Other registry errors are still refused, and nothing is written.
+            for bad_registry in (
+                {"x-w": {"status": "pending", "createdBy": "user", "extra": 1}},  # unknown key
+                {"x-w": "approved"},  # not an object
+                {"bad name!": {"status": "pending", "createdBy": "user"}},  # invalid name
+                {"x-w": {"status": "pending", "createdBy": "user", "approvedBy": "nobody"}},  # bad approver
+            ):
+                disk_before = (state / "workspace.json").read_bytes()
+                bad = json.loads(json.dumps(doc))
+                bad["widgetsRegistry"] = bad_registry
+                refused = json.loads(
+                    await ctx.tools["boardstate_workspace_replace"]["handler"]({"doc": bad})
+                )
+                assert "error" in refused, (bad_registry, refused)
+                assert (state / "workspace.json").read_bytes() == disk_before, bad_registry
+            on_disk = json.loads((state / "workspace.json").read_text())
+
+            # Everything else is still validated: a bad slug is refused and nothing is written.
             undo_before = sorted(p.name for p in (state / "undo").iterdir())
             disk_before = (state / "workspace.json").read_bytes()
             bad = json.loads(json.dumps(on_disk))

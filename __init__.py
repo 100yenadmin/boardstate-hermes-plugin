@@ -70,16 +70,21 @@ def _bind_live_data(widget: Any) -> Any:
 # The same actor pattern the Boardstate schema validates createdBy against.
 _ACTOR = re.compile(r"^(user|system|agent:[A-Za-z0-9._-]{1,64})$")
 _MAX_SAFE_INTEGER = 9007199254740991
+_REGISTRY_STATUSES = ("pending", "approved", "rejected")
 
 
 def _fill_server_owned_fields(args: dict[str, Any]) -> dict[str, Any]:
-    """Pre-fill the two fields Boardstate overwrites on every workspace replace.
+    """Pre-fill the fields Boardstate overwrites on every workspace replace.
 
-    The server sets ``workspaceVersion`` to current + 1 inside its write lock and
+    The server sets ``workspaceVersion`` to current + 1 inside its write lock,
     reassigns every tab's ``createdBy`` (the existing tab's owner, else the calling
-    agent), but it validates the raw document first, so an agent that omits or guesses
-    either value is refused for a field that is then discarded. Only those two fields
-    are touched; everything else is forwarded as sent and validated by the server.
+    agent), and rebuilds every ``widgetsRegistry`` entry from its name alone (the stored
+    entry, else ``pending`` + the calling agent; approval reconciliation runs after). It
+    validates the raw document first, though, so an agent that omits or guesses one of
+    those values is refused for a field that is then discarded. Only invalid values of
+    those fields are filled, and a registry status is only ever filled with ``pending``.
+    Unbound live-data widgets also get their default binding (``_bind_live_data``);
+    everything else is forwarded as sent and validated by the server.
     """
     if not isinstance(args, dict):
         return args
@@ -107,6 +112,18 @@ def _fill_server_owned_fields(args: dict[str, Any]) -> dict[str, Any]:
                     tab = {**tab, "widgets": [_bind_live_data(w) for w in widgets]}
             filled.append(tab)
         doc["tabs"] = filled
+    registry = doc.get("widgetsRegistry")
+    if isinstance(registry, dict):
+        entries = {}
+        for name, entry in registry.items():
+            if isinstance(entry, dict):
+                if entry.get("status") not in _REGISTRY_STATUSES:
+                    entry = {**entry, "status": "pending"}
+                owner = entry.get("createdBy")
+                if not isinstance(owner, str) or not _ACTOR.fullmatch(owner):
+                    entry = {**entry, "createdBy": "agent:agent"}
+            entries[name] = entry
+        doc["widgetsRegistry"] = entries
     return {**args, "doc": doc}
 
 
