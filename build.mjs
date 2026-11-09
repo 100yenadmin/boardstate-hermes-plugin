@@ -101,6 +101,11 @@ await esbuild.build({
 // packages and Hermes can capability-probe the plugin in isolation.
 // Native-only notes, true only where the native handler (__init__.py) runs: it fills the two
 // fields the server owns on a replace, and binds unbound live-data builtins on add/replace.
+// How two widget values render, which agents got wrong on launch boards: a percent stat card showed
+// "3,900%" for 39.0, and a markdown pipe table showed as raw pipes (#32).
+const WIDGET_VALUE_NOTES =
+  " A builtin:stat-card with format \"percent\" multiplies by 100: pass 0.39 to show 39%." +
+  " Put tabular data in builtin:table; builtin:markdown does not render pipe tables.";
 const NATIVE_DESCRIPTION_NOTES = {
   boardstate_workspace_replace:
     " Pass the whole document from boardstate_workspace_get with your edits. The server sets" +
@@ -108,7 +113,8 @@ const NATIVE_DESCRIPTION_NOTES = {
     " widgets, prefer boardstate_widget_add / boardstate_widget_update: each lands on the board as it is made.",
   boardstate_widget_add:
     " Live Hermes data widgets (builtin:sessions, builtin:usage, builtin:instances, builtin:cron) are bound" +
-    " to live Hermes data when you omit bindings.",
+    " to live Hermes data when you omit bindings." + WIDGET_VALUE_NOTES,
+  boardstate_widget_update: WIDGET_VALUE_NOTES,
   boardstate_data_read:
     " Live Hermes data bindings (source \"rpc\") are resolved by the board when it renders, not by this tool;" +
     " to confirm one, read the widget's binding with boardstate_workspace_get.",
