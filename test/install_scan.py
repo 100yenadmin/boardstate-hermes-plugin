@@ -46,7 +46,7 @@ def main() -> int:
     for f in blocking:
         print(f"  {f.severity.upper()} {f.pattern_id} {f.file}:{f.line} {f.match[:100]}")
     if result.verdict != "safe" or blocking:
-        print("FAIL: the pinned owner/repo install would prompt on a terminal and be refused without one.", file=sys.stderr)
+        print("FAIL: not safe. Hermes prompts on a terminal and refuses without one on caution, and refuses on dangerous.", file=sys.stderr)
         return 1
     print("ok: a pinned owner/repo install passes the scan without --force")
     return 0

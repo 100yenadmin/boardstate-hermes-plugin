@@ -196,7 +196,7 @@ The MEDIUM and LOW findings are informational. They fall into these groups:
   `server.js`, `dashboard/dist/index.js`, `dashboard/vendor/boardstate-browser.js` and
   `desktop/plugin.js`.
 - Oversized-file warnings for `server.js` and `docs/media/banner.png`.
-- Mentions in the docs and CI: `sudo` (this section, CHANGELOG.md and a CI comment), agent-config
+- Mentions in the docs and CI: `sudo` (this section, CHANGELOG.md and a CI step name), agent-config
   file names (AGENTS.md, CLAUDE.md, CONTRIBUTING.md, CHANGELOG.md, README.md and the pull request
   template), and `pip install` / `git clone` steps (AGENTS.md and `.github/workflows/ci.yml`).
 - `subprocess` use and path fixtures in `test/`.
