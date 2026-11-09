@@ -21,13 +21,32 @@ in `HERMES_NODE_BIN`, then in Hermes' own Node lookup, then on `PATH`.
 hermes plugins install boardstate --enable
 ```
 
-This installs the catalog entry at its reviewed pin, and Hermes accepts the scanner's `caution`
-verdict for that pin without a prompt. The bare name resolves only after the Hermes plugin catalog
-lists Boardstate; until then, use the `owner/repo` form below.
+This installs the catalog entry at its reviewed pin.
 
-The `owner/repo` form (`hermes plugins install 100yenadmin/boardstate-hermes-plugin`) is not
-reviewed or pinned. It prints the scanner findings and asks for confirmation; pass `--force`
-to accept them non-interactively, and `--ref <40-character sha>` to pin a commit.
+To install a specific release straight from this repository, pin its commit:
+
+```bash
+hermes plugins install 100yenadmin/boardstate-hermes-plugin --ref <40-character commit sha> --enable
+```
+
+Each [release](https://github.com/100yenadmin/boardstate-hermes-plugin/releases) names its commit
+sha. `--ref` takes a full sha, not a tag. Hermes scans this install as a community source. On
+Hermes 0.23.0, 1.5.4 scans `safe`, so it installs with no prompt and no `--force`, including from
+Hermes Desktop and scripts. CI runs that scanner on every later commit and fails on anything that
+would not scan `safe` (see "Security scanner notes" below). 1.5.3 and earlier scan `caution`.
+
+If Boardstate is already installed, for example at an older catalog pin, remove it first. The board
+stays in `boardstate-state` (see "Uninstall" below). Then run the line above:
+
+```bash
+hermes plugins remove boardstate
+```
+
+`hermes plugins update boardstate` follows the catalog pin, so it does not move a catalog install to
+a newer release. Use this form when `hermes plugins install boardstate` gives an older version than the
+latest release. Hermes 0.23.0 falls back to the catalog copy it shipped with when it cannot use the
+published catalog
+([NousResearch/hermes-agent#151856](https://github.com/NousResearch/hermes-agent/issues/151856)).
 
 To enable an installed copy later:
 
@@ -167,35 +186,31 @@ intentionally share native-tool grants.
 
 ## Security scanner notes
 
-`hermes plugins validate` reports `caution`. All five HIGH findings are in the committed
-`dashboard/sidecar/server.js` bundle, which is generated from the pinned packages in
-`package-lock.json`. Line numbers are for the 1.5.0 build; reviewers should still inspect
-every warning:
+On Hermes 0.23.0, `hermes plugins validate` and the install-time scan report `safe`: no HIGH or
+CRITICAL finding, so a pinned `owner/repo` install needs no `--force`. CI runs the v0.23.0 scanner on
+every commit (`test/install_scan.py`). Reviewers should still read every finding.
 
-- `dump_all_env` at `server.js:3082`: ajv's compiler (`ajv/dist/compile`) names a schema
-  environment variable `env` (`env = env || new SchemaEnv(...)`). It does not touch
-  `process.env`.
-- `dump_all_env` at `server.js:7124`: `path-key` reads the name of the `PATH` key from
-  `process.env`.
-- `dump_all_env` at `server.js:7144`: `cross-spawn` resolves a connector command against
-  `process.env` (`PATH`).
-- `path-key` and `cross-spawn` are transitive dependencies of the MCP SDK's stdio client.
-  None of these returns the environment to an agent.
-- `exfil_service` at `server.js:28509`: the optional Pipedream preset URL string in the
-  bundled `@boardstate/broker` package. It is inert until an operator authors and approves
-  that connector.
-- `sudo_usage` at `server.js:25999`: a comment in the MCP SDK's stdio client
-  ("inspired by the default env inheritance of sudo"), not a command Boardstate executes.
+Before 1.5.4 the scan reported `caution` for two HIGH findings, both dependency text in the committed
+`dashboard/sidecar/server.js` bundle that never runs. `build.mjs` now leaves both out of the bundle,
+and `test/scan-hygiene.mjs` checks the result:
 
-The MEDIUM and LOW findings are:
+- `exfil_service`: the default Pipedream remote-MCP URL in `@boardstate/broker`'s Pipedream preset.
+  Boardstate imports only the broker's OfficeCLI preset. The build lets esbuild tree-shake the
+  broker's unused preset table, which takes the Pipedream and Composio presets with it. Operators
+  still author connectors, any remote MCP URL included, in `boardstate.connectors.json`.
+- `sudo_usage`: a comment in the MCP SDK's stdio client about the environment variables a child
+  process inherits. The build drops the comment; the code is unchanged.
 
-- Character-code, base64, Unicode-escape and relative-path matches in the minified bundles:
+The MEDIUM and LOW findings are informational. They fall into these groups:
+
+- Character-code, base64, Unicode-escape, backtick and relative-path matches in the generated bundles:
   `server.js`, `dashboard/dist/index.js`, `dashboard/vendor/boardstate-browser.js` and
   `desktop/plugin.js`.
-- One oversized-file warning, for `server.js` only.
-- The repository's own CI install steps (`pip install`, `git clone` in
-  `.github/workflows/ci.yml`).
-- `subprocess` use in `test/`.
+- Oversized-file warnings for `server.js` and `docs/media/banner.png`.
+- Mentions in the docs and CI: `sudo` (this section, CHANGELOG.md and a CI step name), agent-config
+  file names (AGENTS.md, CLAUDE.md, CONTRIBUTING.md, CHANGELOG.md, README.md and the pull request
+  template), and `pip install` / `git clone` steps (AGENTS.md and `.github/workflows/ci.yml`).
+- `subprocess` use and path fixtures in `test/`.
 - An example loopback dashboard address in a comment in `dashboard/sidecar/src/hermes-data.ts`.
 
 Catalog self-updater check: the catalog CI flags a bundled JS file that contains both a

@@ -86,6 +86,9 @@ jobs:
       - name: Desktop plugin bundle (loader-safe imports + contract + inlined boardstate)
         run: node test/desktop-plugin.mjs
 
+      - name: Sidecar bundle scan hygiene (no unused broker presets, no sudo comment)
+        run: node test/scan-hygiene.mjs
+
       - name: Desktop page boots on older and current Desktop SDKs (with and without scoped timers)
         run: node test/desktop-sdk-compat.mjs
 
@@ -225,6 +228,30 @@ jobs:
 
       - name: Replacement never terminates an unverifiable live pid
         run: python test/sidecar_graceful_replace.py --case unverified
+
+  hermes-install-scan:
+    # A pinned `hermes plugins install <owner/repo> --ref <sha>` is scanned as a community install. On a `caution`
+    # verdict Hermes 0.23 asks [y/N] on a terminal and refuses without one, unless the user passes --force.
+    # Run that scanner, from the v0.23.0 tag, on this commit.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+
+      - name: Fetch Hermes v0.23.0 scanner
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/NousResearch/hermes-agent.git "${RUNNER_TEMP}/hermes-agent"
+          git -C "${RUNNER_TEMP}/hermes-agent" checkout 2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19
+          test "$(git -C "${RUNNER_TEMP}/hermes-agent" rev-parse HEAD)" = 2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19
+
+      - name: Install scan verdict is safe (no --force needed)
+        run: HERMES_SRC="${RUNNER_TEMP}/hermes-agent" python test/install_scan.py
 
   hermes-catalog-acceptance:
     runs-on: ubuntu-latest

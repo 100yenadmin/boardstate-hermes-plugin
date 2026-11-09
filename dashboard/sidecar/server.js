@@ -25995,10 +25995,7 @@ var DEFAULT_INHERITED_ENV_VARS = process3.platform === "win32" ? [
   "USERNAME",
   "USERPROFILE",
   "PROGRAMFILES"
-] : (
-  /* list inspired by the default env inheritance of sudo */
-  ["HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER"]
-);
+] : ["HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER"];
 function getDefaultEnvironment() {
   const env = {};
   for (const key of DEFAULT_INHERITED_ENV_VARS) {
@@ -28506,56 +28503,6 @@ var officeCliPreset = {
     });
   }
 };
-var PIPEDREAM_DEFAULT_URL = "https://remote.mcp.pipedream.net/v3/mcp";
-var pipedreamPreset = {
-  id: "pipedream",
-  title: "Pipedream MCP",
-  transport: "http",
-  summary: "Thousands of app tools via Pipedream's remote MCP (Streamable HTTP).",
-  docs: "docs/connectors/pipedream.md",
-  envRefs: [
-    "PIPEDREAM_ACCESS_TOKEN",
-    "PIPEDREAM_PROJECT_ID",
-    "PIPEDREAM_ENVIRONMENT",
-    "PIPEDREAM_EXTERNAL_USER_ID"
-  ],
-  build(options = {}) {
-    return validated({
-      name: options.name ?? this.id,
-      transport: "http",
-      url: options.url ?? PIPEDREAM_DEFAULT_URL,
-      headers: {
-        Authorization: "Bearer ${PIPEDREAM_ACCESS_TOKEN}",
-        "x-pd-project-id": "${PIPEDREAM_PROJECT_ID}",
-        "x-pd-environment": "${PIPEDREAM_ENVIRONMENT}",
-        "x-pd-external-user-id": "${PIPEDREAM_EXTERNAL_USER_ID}"
-      }
-    });
-  }
-};
-var composioPreset = {
-  id: "composio",
-  title: "Composio Tool Router",
-  transport: "http",
-  summary: "Per-user Composio Tool Router session (remote MCP) behind an env-ref API key.",
-  docs: "docs/connectors/composio.md",
-  envRefs: ["COMPOSIO_API_KEY"],
-  build(options = {}) {
-    const url2 = options.url;
-    if (typeof url2 !== "string" || url2.length === 0) throw new Error("composioPreset requires a per-user session `url` (mint it via Composio's API) \u2014 see docs/connectors/composio.md");
-    return validated({
-      name: options.name ?? this.id,
-      transport: "http",
-      url: url2,
-      headers: { "x-api-key": "${COMPOSIO_API_KEY}" }
-    });
-  }
-};
-var CONNECTOR_PRESETS = Object.freeze({
-  [officeCliPreset.id]: officeCliPreset,
-  [pipedreamPreset.id]: pipedreamPreset,
-  [composioPreset.id]: composioPreset
-});
 function detectBinary(command, env = process.env) {
   if (command.includes("/") || command.includes("\\")) return existsSync(command);
   const dirs = (env.PATH ?? "").split(delimiter).filter((dir) => dir.length > 0);
