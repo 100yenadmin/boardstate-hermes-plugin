@@ -71,7 +71,7 @@ try {
   const note = read.notes?.[0];
   check("workspace_get returns the user's notes text", read.notes?.length === 1 && note?.text === "Call the venue on Friday.\nBudget cap $4,800.");
   check("each note names its card and tab", note?.widgetId === "plan-notes" && note?.tab === tab && note?.title === "Plan notes" && typeof note?.updatedAt === "string");
-  check("only builtin:notes cards are read", !JSON.stringify(read.notes).includes("not a note"));
+  check("only builtin:notes cards are read", !JSON.stringify(read.notes ?? []).includes("not a note"));
   const card = read.doc.tabs.flatMap((t) => t.widgets).find((w) => w.id === "plan-notes");
   check("the document itself is unchanged (props keep the starting text)", card?.props?.text === "Starter text from the agent" && !JSON.stringify(read.doc).includes("Call the venue"));
   check("workspaceVersion is still returned", typeof read.workspaceVersion === "number");
