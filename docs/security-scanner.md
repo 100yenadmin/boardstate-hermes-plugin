@@ -33,8 +33,10 @@ ajv's `$data` meta-schema **identifier** (its `$id` and the one `$ref` to it), w
 fetched. `build.mjs` rewrites that identifier consistently to `https://ajv.js.org/refs/data.json#`,
 so the check stays meaningful for this bundle: a later `releases/latest` or
 `raw.githubusercontent.com` URL next to a file write would still trip it. This repository's CI
-replays the check, with upstream's exact file enumeration, on every build. Boardstate has no updater;
-updates arrive only through a new catalog pin plus `hermes plugins update boardstate`.
+replays the check, with upstream's exact file enumeration, on every build. Boardstate has no updater
+of its own. Updates arrive only through Hermes: `hermes plugins update boardstate` (to the catalog pin for a
+catalog install, or to the latest `main` commit for an unpinned repository install), or a reinstall with a
+new `--ref`.
 
 `dangerous` scanner results are not accepted. Reproduce the reviewed artifacts with:
 

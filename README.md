@@ -31,7 +31,7 @@ hermes plugins install boardstate --enable
 
 On Hermes 0.23.0 that line installs 1.5.2, because 0.23.0 falls back to the catalog copy it shipped with
 ([NousResearch/hermes-agent#151856](https://github.com/NousResearch/hermes-agent/issues/151856)). Use the
-first line for the latest release.
+first line for the current version.
 
 ## Try it
 
@@ -58,7 +58,8 @@ first line for the latest release.
   remote over OAuth has no live socket, so the page says **live updates unavailable**; reload it to see
   changes.
 - **Reaching outside Hermes is opt-in:** connectors to local tools or remote MCP servers run only when an
-  operator configures them. Their reads need an approved grant, and their actions wait for an operator decision.
+  operator configures them. Their reads need an approved grant, and their actions wait for an operator decision unless the operator
+  has set that tool to **Auto-run**.
 
 ## How it compares
 
@@ -66,7 +67,7 @@ first line for the latest release.
 | --- | --- | --- | --- | --- |
 | What it is | Fixed pages: sessions, analytics, cron, logs, config and more | A home page of draggable, resizable widgets | A Miro-like diagram board: nodes, edges, notes and groups | A board of KPI cards, tables, charts, notes, live Hermes data and approvals |
 | Who builds it | Hermes ships it | You arrange it (no agent tools) | The agent, with 7 `board_*` tools; you edit it in a Desktop pane | The agent, with 19 `boardstate_*` tools; you apply templates, type notes and approve actions |
-| Where | Web dashboard | Web dashboard | Desktop pane, plus PNG export | Web dashboard tab and Desktop page |
+| Where | Web dashboard | Web dashboard and Desktop | Desktop pane, plus PNG export | Web dashboard tab and Desktop page |
 
 Sources: the [Hermes v0.23.0 dashboard pages](https://github.com/NousResearch/hermes-agent/tree/v0.23.0/web/src/pages)
 and each plugin's Hermes catalog entry, as of 2026-11-10.
@@ -103,8 +104,9 @@ in `boardstate-state` (see [Uninstall](#uninstall)). Then run an install line ag
 hermes plugins remove boardstate
 ```
 
-`hermes plugins update boardstate` follows the catalog pin, so it does not move a catalog install to a newer
-release.
+`hermes plugins update boardstate` moves a catalog install only as far as the catalog pin, which on Hermes
+0.23.0 can be the older copy Hermes shipped with. It moves an unpinned repository install to the latest
+commit on `main`, and leaves a `--ref` install where it is.
 
 To enable an installed copy later:
 
