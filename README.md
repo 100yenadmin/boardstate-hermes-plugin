@@ -30,9 +30,10 @@ hermes plugins install 100yenadmin/boardstate-hermes-plugin --ref <40-character 
 ```
 
 Each [release](https://github.com/100yenadmin/boardstate-hermes-plugin/releases) names its commit
-sha. `--ref` takes a full sha, not a tag. Hermes scans this install as a community source. From
-1.5.4 on, the verdict is `safe`, so it installs with no prompt and no `--force`, including from
-Hermes Desktop and scripts (see "Security scanner notes" below). 1.5.3 and earlier scan `caution`.
+sha. `--ref` takes a full sha, not a tag. Hermes scans this install as a community source. On
+Hermes 0.23.0, 1.5.4 scans `safe`, so it installs with no prompt and no `--force`, including from
+Hermes Desktop and scripts. CI runs that scanner on every later commit and fails on anything that
+would not scan `safe` (see "Security scanner notes" below). 1.5.3 and earlier scan `caution`.
 
 If Boardstate is already installed, for example at an older catalog pin, remove it first. The board
 stays in `boardstate-state` (see "Uninstall" below). Then run the line above:
