@@ -66,7 +66,7 @@ type Handler = (
 ) => Promise<unknown>;
 
 const HANDLERS: Record<string, Handler> = {
-  // usage widget: { totals: { totalCost, totalTokens }, days?, todayCost?, todayTokens? }
+  // usage widget: { totals: { totalCost, totalTokens }, days?, costToday?, tokensToday? }
   "usage.status": async (get) => {
     const u = obj(await get("/api/analytics/usage"));
     const totals = obj(u.totals ?? u);
@@ -74,12 +74,14 @@ const HANDLERS: Record<string, Handler> = {
     const totalTokens =
       num(totals.total_input ?? totals.input_tokens) + num(totals.total_output ?? totals.output_tokens);
     const result: Record<string, unknown> = { totals: { totalCost, totalTokens }, days: num(u.days ?? u.period_days) || undefined };
-    // Hermes 0.23 has a per-day series. Today's row feeds the "today" stat cards (props.metric); with a
-    // series but no row for today, today is a real 0. Without a series, leave the fields out.
+    // Hermes 0.23 has a per-day series. Today's row feeds the Usage & Cost "today" stat cards, which
+    // select `costToday` / `tokensToday` through props.metric. Not `todayCost` / `todayTokens`: the
+    // renderer maps those two names to `totals`, the whole period. With a series but no row for today,
+    // today is a real 0. Without a series, leave the fields out so the cards show "—".
     if (Array.isArray(u.daily)) {
       const today = obj(u.daily.find((d) => str(obj(d).day) === localDay()));
-      result.todayCost = num(today.estimated_cost);
-      result.todayTokens = num(today.input_tokens) + num(today.output_tokens);
+      result.costToday = num(today.estimated_cost);
+      result.tokensToday = num(today.input_tokens) + num(today.output_tokens);
     }
     return result;
   },
@@ -122,8 +124,10 @@ const HANDLERS: Record<string, Handler> = {
         platform: `${n} active agent${n === 1 ? "" : "s"}`,
         version: str(s.version),
       };
-      // Only a stale heartbeat has an idle time; the renderer shows "idle 0s" for a 0.
-      if (typeof s.gateway_heartbeat_stale_s === "number") gateway.lastInputSeconds = s.gateway_heartbeat_stale_s;
+      // Only a stale heartbeat has an idle time; the renderer shows "idle 0s" for a 0. Hermes sets the
+      // field only once the heartbeat is over 120 s old but truncates it to whole seconds, and the
+      // renderer marks 120 or less healthy, so floor it at 121 to keep the dot red.
+      if (typeof s.gateway_heartbeat_stale_s === "number") gateway.lastInputSeconds = Math.max(s.gateway_heartbeat_stale_s, 121);
       const platforms = Object.entries(obj(s.gateway_platforms))
         .filter(([, entry]) => str(obj(entry).state) === "connected")
         .map(([name]) => ({ instanceId: name, mode: "connected" }));

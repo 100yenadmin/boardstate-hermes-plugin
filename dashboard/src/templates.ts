@@ -109,8 +109,8 @@ export const TEMPLATES: BoardTemplate[] = [
     summary: "Spend and token usage at a glance, with the underlying breakdown.",
     doc: doc("board", "Usage & Cost", [
       md("header", "Overview", 0, 0, 12, 2, "# Usage & Cost\nToday's spend and token consumption."),
-      data("cost", "builtin:stat-card", "Cost", 0, 2, 3, 2, { metric: "todayCost", format: "usd", label: "Cost (today)" }),
-      data("tokens", "builtin:stat-card", "Tokens", 3, 2, 3, 2, { metric: "todayTokens", format: "int", label: "Tokens (today)" }),
+      data("cost", "builtin:stat-card", "Cost", 0, 2, 3, 2, { metric: "costToday", format: "usd", label: "Cost (today)" }),
+      data("tokens", "builtin:stat-card", "Tokens", 3, 2, 3, 2, { metric: "tokensToday", format: "int", label: "Tokens (today)" }),
       data("usage", "builtin:usage", "Usage detail", 6, 2, 6, 3),
       data("cron", "builtin:cron", "Scheduled jobs", 0, 5, 12, 3),
     ].map((w) =>
