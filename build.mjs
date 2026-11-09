@@ -166,6 +166,63 @@ const ajvDataIdPlugin = {
   },
 };
 
+// Two dependency texts in the sidecar bundle made Hermes' install-time plugin scanner return
+// `caution`, which blocks a pinned `owner/repo` install unless the user passes --force:
+//   - @boardstate/broker builds a `CONNECTOR_PRESETS` table holding its Pipedream and Composio
+//     presets, including Pipedream's default remote-MCP URL. Boardstate imports only the
+//     OfficeCLI preset and never reads the table, but esbuild cannot drop the unused
+//     `Object.freeze({[preset.id]: preset, ...})` by itself (it treats the computed-key reads
+//     as possible side effects). Wrapping that one statement in an arrow called once and marked
+//     pure lets tree-shaking remove the table and the two presets it alone references. The
+//     arrow builds the same frozen object, and if Boardstate ever imports the table, esbuild
+//     keeps it, so this changes no behaviour.
+//   - The MCP SDK stdio client carries a comment naming `sudo` ("list inspired by the default
+//     env inheritance of sudo"). It is a comment, so dropping it changes no code.
+// Each rewrite must match exactly once. If a dependency bump moves the text, the build fails
+// here instead of silently shipping the old scan verdict. test/scan-hygiene.mjs checks the
+// output.
+const SCAN_HYGIENE_REWRITES = [
+  {
+    filter: /[\\/]node_modules[\\/]@boardstate[\\/]broker[\\/]dist[\\/]index\.js$/,
+    from: [
+      "const CONNECTOR_PRESETS = Object.freeze({",
+      "\t[officeCliPreset.id]: officeCliPreset,",
+      "\t[pipedreamPreset.id]: pipedreamPreset,",
+      "\t[composioPreset.id]: composioPreset",
+      "});",
+    ].join("\n"),
+    to: [
+      "const CONNECTOR_PRESETS = /* @__PURE__ */ (() => Object.freeze({",
+      "\t[officeCliPreset.id]: officeCliPreset,",
+      "\t[pipedreamPreset.id]: pipedreamPreset,",
+      "\t[composioPreset.id]: composioPreset",
+      "}))();",
+    ].join("\n"),
+  },
+  {
+    filter: /[\\/]node_modules[\\/]@modelcontextprotocol[\\/]sdk[\\/]dist[\\/]esm[\\/]client[\\/]stdio\.js$/,
+    from: "/* list inspired by the default env inheritance of sudo */",
+    to: "",
+  },
+];
+const scanHygienePlugin = {
+  name: "scan-hygiene",
+  setup(build) {
+    for (const rewrite of SCAN_HYGIENE_REWRITES) {
+      build.onLoad({ filter: rewrite.filter }, (args) => {
+        const text = readFileSync(args.path, "utf8");
+        const count = text.split(rewrite.from).length - 1;
+        if (count !== 1) {
+          throw new Error(
+            `scan-hygiene: expected exactly one ${JSON.stringify(rewrite.from)} in ${args.path}, found ${count}; revisit build.mjs note`,
+          );
+        }
+        return { contents: text.replace(rewrite.from, rewrite.to), loader: "js" };
+      });
+    }
+  },
+};
+
 // 2) Node sidecar bundle — single self-contained ESM file; node builtins stay external.
 // The M5 broker's stdio connector transport (via @modelcontextprotocol/sdk → cross-spawn)
 // does a dynamic `require("child_process")`. In an ESM bundle esbuild replaces an
@@ -184,7 +241,7 @@ await esbuild.build({
   },
   sourcemap: true,
   logLevel: "info",
-  plugins: [ajvDataIdPlugin],
+  plugins: [ajvDataIdPlugin, scanHygienePlugin],
 });
 
 console.log("boardstate-hermes-plugin: build complete (@boardstate/* from npm)");
