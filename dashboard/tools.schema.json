@@ -1,7 +1,7 @@
 [
   {
     "name": "boardstate_workspace_get",
-    "description": "Read the full dashboard workspace document so an agent can diff before mutating it.",
+    "description": "Read the full dashboard workspace document so an agent can diff before mutating it. It also returns what the user typed into each builtin:notes card, read-only, as notes: [{ widgetId, tab, title, text, updatedAt }]. A card's props hold only its starting text, so read notes for what the user wrote.",
     "inputSchema": {
       "type": "object",
       "properties": {},

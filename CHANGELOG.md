@@ -3,6 +3,20 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.5.7
+
+### Fixed
+
+- The agent can read what you type into a Notes card
+  ([#30](https://github.com/100yenadmin/boardstate-hermes-plugin/issues/30)).
+  - The problem: a `builtin:notes` card saves your typing as its own widget state, outside the board document, and no
+    `boardstate_*` tool read widget state. An agent asked about your notes saw only the starting text it had written.
+  - Now `boardstate_workspace_get` also returns the text of each Notes card someone has typed in, read-only, as
+    `notes: [{ widgetId, tab, title, text, updatedAt }]` beside the document.
+  - The document itself is unchanged, so an agent can still pass it straight back to `boardstate_workspace_replace`.
+  - There is still no new tool: Boardstate registers the same 19 native tools.
+  - Text typed into a Notes card is now visible to the agent, like the rest of the board. The README says so.
+
 ## 1.5.6
 
 ### Fixed

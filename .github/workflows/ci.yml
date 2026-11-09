@@ -92,6 +92,9 @@ jobs:
       - name: Markdown widgets render GFM tables, escaped (web + desktop bundles)
         run: node test/markdown-tables.mjs
 
+      - name: The agent reads Notes text through workspace_get (real sidecar, MCP + WS)
+        run: node test/notes-readback.mjs
+
       - name: Desktop page boots on older and current Desktop SDKs (with and without scoped timers)
         run: node test/desktop-sdk-compat.mjs
 

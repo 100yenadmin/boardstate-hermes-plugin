@@ -30866,7 +30866,33 @@ async function createMcpEndpoint(host2, store2, options = {}) {
     context: { agentId },
     broadcast: host2.broadcast,
     ...toolSearch ? { toolSearch } : {}
-  });
+  }).map((tool) => tool.name === "dashboard_workspace_get" ? withNotesText(tool) : tool);
+  const notesText = async (doc) => {
+    const notes = [];
+    const tabs = isRecord3(doc) && Array.isArray(doc.tabs) ? doc.tabs : [];
+    for (const tab of tabs) {
+      if (!isRecord3(tab) || !Array.isArray(tab.widgets)) continue;
+      for (const widget of tab.widgets) {
+        if (!isRecord3(widget) || widget.kind !== "builtin:notes" || typeof widget.id !== "string") continue;
+        const record2 = await store2.readWidgetState(widget.id).catch(() => null);
+        if (record2 && typeof record2.blob === "string") {
+          notes.push({ widgetId: widget.id, tab: tab.slug, title: widget.title, text: record2.blob, updatedAt: record2.updatedAt });
+        }
+      }
+    }
+    return notes;
+  };
+  function withNotesText(tool) {
+    return {
+      ...tool,
+      execute: async (toolCallId, params) => {
+        const result = await tool.execute(toolCallId, params);
+        if (!isRecord3(result.details)) return result;
+        const notes = await notesText(result.details.doc);
+        return notes.length > 0 ? { ...result, details: { ...result.details, notes } } : result;
+      }
+    };
+  }
   const toolsByMcpName = (agentId) => {
     const map = /* @__PURE__ */ new Map();
     for (const tool of buildTools(agentId)) {
