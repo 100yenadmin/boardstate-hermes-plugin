@@ -229,6 +229,11 @@ if (!desktopLitPatched) {
 const WIDGET_VALUE_NOTES =
   " A builtin:stat-card with format \"percent\" multiplies by 100: pass 0.39 to show 39%.";
 const NATIVE_DESCRIPTION_NOTES = {
+  // Notes text is widget state, outside the document; the sidecar adds it read-only (#30).
+  boardstate_workspace_get:
+    " It also returns what the user typed into each builtin:notes card, read-only, as notes:" +
+    " [{ widgetId, tab, title, text, updatedAt }]. A card's props hold only its starting text, so" +
+    " read notes for what the user wrote.",
   boardstate_workspace_replace:
     " Pass the whole document from boardstate_workspace_get with your edits. The server sets" +
     " workspaceVersion and each tab's createdBy, so you may omit them. To add or change a few" +

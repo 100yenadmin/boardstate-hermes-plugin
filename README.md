@@ -96,6 +96,10 @@ No hand-written `mcp_servers` entry is needed. The package registers these 19 to
 - `boardstate_tool_search`, `boardstate_connector_read`,
   `boardstate_connector_invoke`
 
+`boardstate_workspace_get` also returns what the user typed into each Notes card, read-only,
+as `notes` beside the document, so the agent can read and act on it. A Notes card that nobody
+has typed in has no entry.
+
 The two connector invocation tools and `boardstate_tool_search` are always discoverable.
 Without an operator-authored connector configuration they return a clear
 `no connectors configured` error.
@@ -161,6 +165,8 @@ Boardstate makes no third-party network request by default.
   including the dashboard-owned sidecar's operator secret. If approvals must hold against the
   agent itself, run the agent's terminal in an isolated backend (for example Docker, SSH or
   Modal) or as a different OS user from the dashboard.
+- Text typed into a Notes card is visible to the agent: `boardstate_workspace_get` returns it
+  read-only, like the rest of the board. Keep secrets out of Notes cards.
 - Approved custom widgets run in an opaque-origin iframe with a no-network Content Security
   Policy. Pending, rejected, and unknown widget assets all return 404.
 
