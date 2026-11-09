@@ -5836,6 +5836,53 @@ function renderFence(lines) {
 * inject with `unsafeHTML`: every code path escapes text before wrapping it in one
 * of the permitted tags.
 */
+/** Split one GFM table row into trimmed cells; \| is a literal pipe. Linear scan. */
+function splitTableRow(line) {
+	let row = line.trim();
+	if (row.startsWith("|")) row = row.slice(1);
+	if (row.endsWith("|") && !row.endsWith("\\|")) row = row.slice(0, -1);
+	const cells = [];
+	let cell = "";
+	for (let i = 0; i < row.length; i += 1) {
+		if (row[i] === "\\" && row[i + 1] === "|") {
+			cell += "|";
+			i += 1;
+		} else if (row[i] === "|") {
+			cells.push(cell.trim());
+			cell = "";
+		} else cell += row[i];
+	}
+	cells.push(cell.trim());
+	return cells;
+}
+/** Index of a GFM table's delimiter row (its header is the line before), or -1. */
+function tableDelimiterIndex(lines) {
+	for (let j = 1; j < lines.length; j += 1) {
+		if (!lines[j].includes("-") || !lines[j - 1].includes("|")) continue;
+		const delimiter = splitTableRow(lines[j]);
+		if (!delimiter.every((cell) => /^:?-+:?$/.test(cell))) continue;
+		if (splitTableRow(lines[j - 1]).length === delimiter.length) return j;
+	}
+	return -1;
+}
+/** Render a GFM table: header, then body rows padded or cut to the header's width. */
+function renderTableBlock(lines) {
+	const head = splitTableRow(lines[0]);
+	const cell = (tag, text) => "<" + tag + ">" + renderInline(escapeHtml(text)) + "</" + tag + ">";
+	const body = lines.slice(2).map((line) => {
+		const cells = splitTableRow(line);
+		return "<tr>" + head.map((_, i) => cell("td", cells[i] ?? "")).join("") + "</tr>";
+	});
+	return '<div class="dashboard-table dashboard-markdown__table"><table class="dashboard-table__grid"><thead><tr>' + head.map((text) => cell("th", text)).join("") + "</tr></thead><tbody>" + body.join("") + "</tbody></table></div>";
+}
+/** A paragraph block, or the lines before a GFM table plus the table. */
+function renderBlockOrTable(block) {
+	const lines = block.split("\n");
+	const j = tableDelimiterIndex(lines);
+	if (j < 0) return renderBlock(block);
+	const before = lines.slice(0, j - 1);
+	return (before.length ? renderBlock(before.join("\n")) : "") + renderTableBlock(lines.slice(j - 1));
+}
 function toSanitizedMarkdownHtml(source) {
 	const rawLines = source.replace(/\r\n?/g, "\n").split("\n");
 	const html = [];
@@ -5846,7 +5893,7 @@ function toSanitizedMarkdownHtml(source) {
 		const block = paragraph.join("\n");
 		if (isUnorderedList(block)) html.push(renderList(block, false));
 		else if (isOrderedList(block)) html.push(renderList(block, true));
-		else html.push(renderBlock(block));
+		else html.push(renderBlockOrTable(block));
 		paragraph = [];
 	};
 	for (let i = 0; i < rawLines.length; i += 1) {
