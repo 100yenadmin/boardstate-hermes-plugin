@@ -11,15 +11,17 @@ adheres to [Semantic Versioning](https://semver.org/).
   ([#32](https://github.com/100yenadmin/boardstate-hermes-plugin/issues/32)). A table an agent wrote into a
   `builtin:markdown` card showed as raw pipes (`| Category | Planned |`, `|---|---|`). It now renders as a table
   styled like `builtin:table`, on the Web tab and in Hermes Desktop.
-  - Supported: a header row, a delimiter row, and body rows. Inline code, bold, italics and http(s) links work inside
-    cells, and `\|` is a literal pipe.
-  - A line of text right above the table stays a paragraph. Short rows are padded and long rows are cut to the
-    header's width.
+  - Supported: a header row, a delimiter row (`---`, `:--`, `--:`, or the short `- | -`), and body rows. Both the
+    header and the delimiter row need at least one pipe, and their cell counts must match. Inline code, bold, italics
+    and http(s) links work inside cells, and `\|` is a literal pipe.
+  - A line of text right above the table stays a paragraph. A quote line ends the table, as in GFM. Short rows are
+    padded and long rows are cut to the header's width.
   - Every cell goes through the renderer's own HTML escaping, the same as a paragraph line.
-  - Markdown without a table renders exactly as before.
+  - Markdown with no such table renders exactly as before.
   - Chat messages, which use the same renderer, get tables too.
   - The upstream renderer (`@boardstate/lit` 0.9.2) has no table support yet, so the build patches it into the
-    vendored copy. If a later version moves the code, the build fails instead of shipping without tables.
+    vendored copy, both the one the Web tab loads and the one built into the Desktop bundle. If a later version moves
+    the code, or the Desktop build stops picking up the patch, the build fails instead of shipping without tables.
 
 ### Changed
 
