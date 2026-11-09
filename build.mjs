@@ -74,9 +74,9 @@ function isTableDelimiterFor(header, line) {
 	const delimiter = splitTableRow(line);
 	return delimiter.every((cell) => /^:?-+:?$/.test(cell)) && splitTableRow(header).length === delimiter.length;
 }
-/** Index of a GFM table's delimiter row (its header is the line before), or -1. */
-function tableDelimiterIndex(lines) {
-	for (let j = 1; j < lines.length; j += 1) if (isTableDelimiterFor(lines[j - 1], lines[j])) return j;
+/** Index of the first GFM delimiter row after lines[from] (its header is the line before), or -1. */
+function tableDelimiterIndex(lines, from) {
+	for (let j = from + 1; j < lines.length; j += 1) if (isTableDelimiterFor(lines[j - 1], lines[j])) return j;
 	return -1;
 }
 /** Render a GFM table: header, then body rows padded or cut to the header's width. */
@@ -92,16 +92,21 @@ function renderTableBlock(lines) {
 /** A paragraph block, or its tables with the text around them. A table runs until a quote line
  *  (GFM ends a table at another block); the block is otherwise rendered exactly as before. */
 function renderBlockOrTable(block) {
-	let lines = block.split("\n");
+	const lines = block.split("\n");
 	let html = "";
+	// A cursor, not a shrinking copy, keeps many tables in one block linear.
+	let start = 0;
 	for (;;) {
-		const j = tableDelimiterIndex(lines);
-		if (j < 0) return lines.length ? html + renderBlock(lines.join("\n")) : html;
+		const j = tableDelimiterIndex(lines, start);
+		if (j < 0) {
+			if (start === 0) return renderBlock(block);
+			return start < lines.length ? html + renderBlock(lines.slice(start).join("\n")) : html;
+		}
 		let end = j + 1;
 		while (end < lines.length && !/^ {0,3}>/.test(lines[end])) end += 1;
-		if (j > 1) html += renderBlock(lines.slice(0, j - 1).join("\n"));
+		if (j - 1 > start) html += renderBlock(lines.slice(start, j - 1).join("\n"));
 		html += renderTableBlock(lines.slice(j - 1, end));
-		lines = lines.slice(end);
+		start = end;
 	}
 }
 `;

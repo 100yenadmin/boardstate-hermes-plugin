@@ -72,6 +72,20 @@ check(
 );
 check("a lone thematic break under prose is not a table", !md("Price - 5\n---").includes("<table"));
 
+// Many tables in one block stay linear: four times the input may not take quadratic time.
+{
+  const block = (n) => "a|b\n-|-\n> q\n".repeat(n);
+  const time = (n) => {
+    const t0 = performance.now();
+    md(block(n));
+    return performance.now() - t0;
+  };
+  time(2000);
+  const small = Math.max(time(10000), 1);
+  const large = time(40000);
+  check(`many tables in one block render in linear time (10k: ${small.toFixed(0)} ms, 40k: ${large.toFixed(0)} ms)`, large / small < 9);
+}
+
 // Everything without a table renders byte for byte as the upstream renderer does.
 const corpus = [
   "# Launch\nSome **bold** and _em_ text with `code` and [a link](https://example.com).",
