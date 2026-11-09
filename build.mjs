@@ -67,14 +67,16 @@ function splitTableRow(line) {
 	cells.push(cell.trim());
 	return cells;
 }
+/** True when line is a GFM delimiter row under header: both carry a pipe, the header is not a quote,
+ *  every delimiter cell is dashes with optional colons, and the cell counts match. */
+function isTableDelimiterFor(header, line) {
+	if (!line.includes("|") || !line.includes("-") || !header.includes("|") || /^ {0,3}>/.test(header)) return false;
+	const delimiter = splitTableRow(line);
+	return delimiter.every((cell) => /^:?-+:?$/.test(cell)) && splitTableRow(header).length === delimiter.length;
+}
 /** Index of a GFM table's delimiter row (its header is the line before), or -1. */
 function tableDelimiterIndex(lines) {
-	for (let j = 1; j < lines.length; j += 1) {
-		if (!lines[j].includes("-") || !lines[j - 1].includes("|")) continue;
-		const delimiter = splitTableRow(lines[j]);
-		if (!delimiter.every((cell) => /^:?-+:?$/.test(cell))) continue;
-		if (splitTableRow(lines[j - 1]).length === delimiter.length) return j;
-	}
+	for (let j = 1; j < lines.length; j += 1) if (isTableDelimiterFor(lines[j - 1], lines[j])) return j;
 	return -1;
 }
 /** Render a GFM table: header, then body rows padded or cut to the header's width. */
@@ -87,18 +89,30 @@ function renderTableBlock(lines) {
 	});
 	return '<div class="dashboard-table dashboard-markdown__table"><table class="dashboard-table__grid"><thead><tr>' + head.map((text) => cell("th", text)).join("") + "</tr></thead><tbody>" + body.join("") + "</tbody></table></div>";
 }
-/** A paragraph block, or the lines before a GFM table plus the table. */
+/** A paragraph block, or its tables with the text around them. A table runs until a quote line
+ *  (GFM ends a table at another block); the block is otherwise rendered exactly as before. */
 function renderBlockOrTable(block) {
-	const lines = block.split("\n");
-	const j = tableDelimiterIndex(lines);
-	if (j < 0) return renderBlock(block);
-	const before = lines.slice(0, j - 1);
-	return (before.length ? renderBlock(before.join("\n")) : "") + renderTableBlock(lines.slice(j - 1));
+	let lines = block.split("\n");
+	let html = "";
+	for (;;) {
+		const j = tableDelimiterIndex(lines);
+		if (j < 0) return lines.length ? html + renderBlock(lines.join("\n")) : html;
+		let end = j + 1;
+		while (end < lines.length && !/^ {0,3}>/.test(lines[end])) end += 1;
+		if (j > 1) html += renderBlock(lines.slice(0, j - 1).join("\n"));
+		html += renderTableBlock(lines.slice(j - 1, end));
+		lines = lines.slice(end);
+	}
 }
 `;
 const LIT_MARKDOWN_TABLE_PATCHES = [
   { from: "function toSanitizedMarkdownHtml(source) {", to: MARKDOWN_TABLE_HELPERS + "function toSanitizedMarkdownHtml(source) {" },
   { from: "\t\telse html.push(renderBlock(block));", to: "\t\telse html.push(renderBlockOrTable(block));" },
+  // A short delimiter row ("- | -") would start a list and split the table off its header.
+  {
+    from: '\t\tlet kind = isUnorderedList(line) ? "ul" : isOrderedList(line) ? "ol" : "p";',
+    to: '\t\tlet kind = paragraphKind === "p" && paragraph.length > 0 && isTableDelimiterFor(paragraph[paragraph.length - 1], line) ? "p" : isUnorderedList(line) ? "ul" : isOrderedList(line) ? "ol" : "p";',
+  },
 ];
 const patchLitBrowser = (text, where) => {
   for (const patch of LIT_MARKDOWN_TABLE_PATCHES) {
@@ -133,12 +147,15 @@ for (const [src, dest, transform] of [
   }
   writeFileSync(dest, transform(readFileSync(src, "utf8")));
 }
-// The Desktop bundle imports @boardstate/lit/browser itself, so it gets the same patch.
+// The Desktop bundle imports @boardstate/lit/browser itself, so it gets the same patch. The build
+// fails if that import ever stops passing through here.
+let desktopLitPatched = false;
 const litMarkdownTablesPlugin = {
   name: "lit-markdown-tables",
   setup(build) {
     build.onLoad({ filter: /[\\/]@boardstate[\\/]lit[\\/]dist[\\/]browser\.js$/ }, (args) => {
       if (path.resolve(args.path) !== path.resolve(litBrowser)) return undefined;
+      desktopLitPatched = true;
       return { contents: patchLitBrowser(readFileSync(args.path, "utf8"), args.path), loader: "js" };
     });
   },
@@ -184,6 +201,9 @@ await esbuild.build({
   minify: true,
   logLevel: "info",
 });
+if (!desktopLitPatched) {
+  throw new Error("markdown-tables: the Desktop bundle did not load @boardstate/lit/browser through the patch; revisit build.mjs (#32)");
+}
 
 // 1c) Native agent-tool contract.  The base 17 definitions come from the same
 // @boardstate/server factory the sidecar invokes; the two connector definitions

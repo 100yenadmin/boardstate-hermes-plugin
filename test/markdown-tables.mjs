@@ -61,6 +61,15 @@ const ragged = md("| a | b | c |\n|---|---|---|\n| 1 |\n| 1 | 2 | 3 | 4 |");
 check("short rows are padded and long rows cut to the header width", ragged.includes("<tr><td>1</td><td></td><td></td></tr>") && ragged.includes("<tr><td>1</td><td>2</td><td>3</td></tr>"));
 
 check("a delimiter with a different cell count is not a table", !md("| a | b |\n|---|\n| 1 | 2 |").includes("<table"));
+
+const minimal = md("a | b\n- | -\n1 | 2");
+check("a short delimiter row is a table, not a list", minimal.includes("<thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody>") && !minimal.includes("<ul>"));
+
+const quoted = md("| a | b |\n|---|---|\n| 1 | 2 |\n> Note: preliminary | do not publish | until approved");
+check(
+  "a quote line ends the table and keeps all its text",
+  quoted.includes("<tbody><tr><td>1</td><td>2</td></tr></tbody></table></div><blockquote>Note: preliminary | do not publish | until approved</blockquote>"),
+);
 check("a lone thematic break under prose is not a table", !md("Price - 5\n---").includes("<table"));
 
 // Everything without a table renders byte for byte as the upstream renderer does.
@@ -73,6 +82,12 @@ const corpus = [
   "Plain | pipes | in prose\nwith no delimiter row",
   "Line one\nLine two - with a dash\n\n## Heading ##",
   "a\n---\nb",
+  "> a |\n---",
+  "> a | b\n|---|---|",
+  "Total |\n---",
+  "Foo|\n---",
+  "a \\| b\n---",
+  "- | -\n- item",
 ];
 check("markdown without tables renders exactly as upstream", corpus.every((doc) => md(doc) === upstream?.(doc)));
 check("upstream renders the budget table as raw pipes (the bug this fixes)", (upstream?.(budget) ?? "").includes("| Category | Planned | Actual |"));
