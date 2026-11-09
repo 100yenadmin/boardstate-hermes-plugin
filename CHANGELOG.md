@@ -14,8 +14,9 @@ adheres to [Semantic Versioning](https://semver.org/).
   - Supported: a header row, a delimiter row (`---`, `:--`, `--:`, or the short `- | -`), and body rows. Both the
     header and the delimiter row need at least one pipe, and their cell counts must match. Inline code, bold, italics
     and http(s) links work inside cells, and `\|` is a literal pipe.
-  - A line of text right above the table stays a paragraph. A quote line ends the table, as in GFM. Short rows are
-    padded and long rows are cut to the header's width.
+  - A line of text right above the table stays a paragraph. A quote line or a thematic break (`***`, `---`) ends the
+    table, as in GFM. Long rows are cut to the header's width; a short row leaves its missing cells empty, so a table
+    never renders more cells than its text holds.
   - Every cell goes through the renderer's own HTML escaping, the same as a paragraph line.
   - Markdown with no such table renders exactly as before.
   - Chat messages, which use the same renderer, get tables too.

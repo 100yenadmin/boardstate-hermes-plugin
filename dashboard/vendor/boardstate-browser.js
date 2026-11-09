@@ -5867,18 +5867,26 @@ function tableDelimiterIndex(lines, from) {
 	for (let j = from + 1; j < lines.length; j += 1) if (isTableDelimiterFor(lines[j - 1], lines[j])) return j;
 	return -1;
 }
-/** Render a GFM table: header, then body rows padded or cut to the header's width. */
+/** Render a GFM table: header, then body rows cut to the header's width. A short row is not
+ *  padded (the browser leaves its missing cells empty), so the output never outgrows the input. */
 function renderTableBlock(lines) {
 	const head = splitTableRow(lines[0]);
 	const cell = (tag, text) => "<" + tag + ">" + renderInline(escapeHtml(text)) + "</" + tag + ">";
 	const body = lines.slice(2).map((line) => {
-		const cells = splitTableRow(line);
-		return "<tr>" + head.map((_, i) => cell("td", cells[i] ?? "")).join("") + "</tr>";
+		const cells = splitTableRow(line).slice(0, head.length);
+		return "<tr>" + cells.map((text) => cell("td", text)).join("") + "</tr>";
 	});
 	return '<div class="dashboard-table dashboard-markdown__table"><table class="dashboard-table__grid"><thead><tr>' + head.map((text) => cell("th", text)).join("") + "</tr></thead><tbody>" + body.join("") + "</tbody></table></div>";
 }
-/** A paragraph block, or its tables with the text around them. A table runs until a quote line
- *  (GFM ends a table at another block); the block is otherwise rendered exactly as before. */
+/** True for a quote line or a thematic break (*** / --- / ___), which end a GFM table. Linear. */
+function endsTable(line) {
+	if (/^ {0,3}>/.test(line)) return true;
+	if (!/^ {0,3}[-*_]/.test(line)) return false;
+	const marks = line.replace(/[ \t]/g, "");
+	return marks.length >= 3 && marks.split("").every((ch) => ch === marks[0]);
+}
+/** A paragraph block, or its tables with the text around them. A table runs until a quote line or
+ *  a thematic break (GFM ends a table at another block); the block is otherwise rendered exactly as before. */
 function renderBlockOrTable(block) {
 	const lines = block.split("\n");
 	let html = "";
@@ -5891,7 +5899,7 @@ function renderBlockOrTable(block) {
 			return start < lines.length ? html + renderBlock(lines.slice(start).join("\n")) : html;
 		}
 		let end = j + 1;
-		while (end < lines.length && !/^ {0,3}>/.test(lines[end])) end += 1;
+		while (end < lines.length && !endsTable(lines[end])) end += 1;
 		if (j - 1 > start) html += renderBlock(lines.slice(start, j - 1).join("\n"));
 		html += renderTableBlock(lines.slice(j - 1, end));
 		start = end;

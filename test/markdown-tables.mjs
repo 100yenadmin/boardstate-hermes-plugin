@@ -58,7 +58,14 @@ const escapedPipe = md("| expr | note |\n|---|---|\n| a \\| b | x |");
 check("an escaped pipe stays inside its cell", escapedPipe.includes("<td>a | b</td><td>x</td>"));
 
 const ragged = md("| a | b | c |\n|---|---|---|\n| 1 |\n| 1 | 2 | 3 | 4 |");
-check("short rows are padded and long rows cut to the header width", ragged.includes("<tr><td>1</td><td></td><td></td></tr>") && ragged.includes("<tr><td>1</td><td>2</td><td>3</td></tr>"));
+check("short rows keep their own cells and long rows are cut to the header width", ragged.includes("<tr><td>1</td></tr>") && ragged.includes("<tr><td>1</td><td>2</td><td>3</td></tr>"));
+
+// Output stays proportional to input: a wide header with many one-cell rows emits one cell per row.
+const wide = md(`${"|c".repeat(2000)}|\n${"|-".repeat(2000)}|\n${"x|\n".repeat(2000)}`);
+check("a wide header does not multiply short rows into empty cells", (wide.match(/<td>/g) ?? []).length === 2000);
+
+const ruled = md("| a | b |\n|---|---|\n| 1 | 2 |\n***\nAfter the rule");
+check("a thematic break ends the table", ruled.includes("<tbody><tr><td>1</td><td>2</td></tr></tbody></table></div><p>***<br>After the rule</p>"));
 
 check("a delimiter with a different cell count is not a table", !md("| a | b |\n|---|\n| 1 | 2 |").includes("<table"));
 
