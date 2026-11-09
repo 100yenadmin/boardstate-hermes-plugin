@@ -236,7 +236,8 @@ const NATIVE_DESCRIPTION_NOTES = {
     " read notes for what the user wrote.",
   boardstate_workspace_replace:
     " Pass the whole document from boardstate_workspace_get with your edits. The server sets" +
-    " workspaceVersion and each tab's createdBy, so you may omit them. To add or change a few" +
+    " workspaceVersion, each tab's createdBy, and each widgetsRegistry entry's status and createdBy" +
+    " (a stored entry keeps its approval state; a new one is pending), so you may omit them. To add or change a few" +
     " widgets, prefer boardstate_widget_add / boardstate_widget_update: each lands on the board as it is made.",
   boardstate_widget_add:
     " Live Hermes data widgets (builtin:sessions, builtin:usage, builtin:instances, builtin:cron) are bound" +
