@@ -30,9 +30,9 @@ hermes plugins install 100yenadmin/boardstate-hermes-plugin --ref <40-character 
 ```
 
 Each [release](https://github.com/100yenadmin/boardstate-hermes-plugin/releases) names its commit
-sha. `--ref` takes a full sha, not a tag. Hermes scans this install as a community source and
-installs it without `--force` because the scan verdict is `safe` (see "Security scanner notes"
-below). Use this form when `hermes plugins install boardstate` gives an older version than the
+sha. `--ref` takes a full sha, not a tag. Hermes scans this install as a community source; the
+verdict is `safe`, so it installs with no prompt and no `--force`, including from Hermes Desktop
+and scripts (see "Security scanner notes" below). Use this form when `hermes plugins install boardstate` gives an older version than the
 latest release. Hermes 0.23.0 falls back to the catalog copy it shipped with when it cannot use the
 published catalog
 ([NousResearch/hermes-agent#151856](https://github.com/NousResearch/hermes-agent/issues/151856)).
@@ -190,17 +190,16 @@ and `test/scan-hygiene.mjs` checks the result:
 - `sudo_usage`: a comment in the MCP SDK's stdio client about the environment variables a child
   process inherits. The build drops the comment; the code is unchanged.
 
-The MEDIUM and LOW findings are:
+The MEDIUM and LOW findings are informational. They fall into these groups:
 
-- Character-code, base64, Unicode-escape and relative-path matches in the minified bundles:
+- Character-code, base64, Unicode-escape, backtick and relative-path matches in the generated bundles:
   `server.js`, `dashboard/dist/index.js`, `dashboard/vendor/boardstate-browser.js` and
   `desktop/plugin.js`.
 - Oversized-file warnings for `server.js` and `docs/media/banner.png`.
-- This section's own mention of `sudo`, and the agent-config references in AGENTS.md, CLAUDE.md,
-  CONTRIBUTING.md, CHANGELOG.md and the pull request template.
-- The repository's own CI install steps (`pip install`, `git clone` in
-  `.github/workflows/ci.yml`).
-- `subprocess` use in `test/`.
+- Mentions in the docs and CI: `sudo` (this section, CHANGELOG.md and a CI comment), agent-config
+  file names (AGENTS.md, CLAUDE.md, CONTRIBUTING.md, CHANGELOG.md, README.md and the pull request
+  template), and `pip install` / `git clone` steps (AGENTS.md and `.github/workflows/ci.yml`).
+- `subprocess` use and path fixtures in `test/`.
 - An example loopback dashboard address in a comment in `dashboard/sidecar/src/hermes-data.ts`.
 
 Catalog self-updater check: the catalog CI flags a bundled JS file that contains both a

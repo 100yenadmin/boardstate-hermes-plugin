@@ -167,7 +167,8 @@ const ajvDataIdPlugin = {
 };
 
 // Two dependency texts in the sidecar bundle made Hermes' install-time plugin scanner return
-// `caution`, which blocks a pinned `owner/repo` install unless the user passes --force:
+// `caution`, which stops a pinned `owner/repo` install unless the user passes --force: Hermes
+// asks [y/N] on a terminal and refuses with no terminal (Desktop, scripts, closed stdin).
 //   - @boardstate/broker builds a `CONNECTOR_PRESETS` table holding its Pipedream and Composio
 //     presets, including Pipedream's default remote-MCP URL. Boardstate imports only the
 //     OfficeCLI preset and never reads the table, but esbuild cannot drop the unused
@@ -178,9 +179,9 @@ const ajvDataIdPlugin = {
 //     keeps it, so this changes no behaviour.
 //   - The MCP SDK stdio client carries a comment naming `sudo` ("list inspired by the default
 //     env inheritance of sudo"). It is a comment, so dropping it changes no code.
-// Each rewrite must match exactly once. If a dependency bump moves the text, the build fails
-// here instead of silently shipping the old scan verdict. test/scan-hygiene.mjs checks the
-// output.
+// Each rewrite must match exactly once: if a dependency bump changes the text, the build fails
+// here. If a bump moves the file so a filter no longer matches, the build passes, but
+// test/scan-hygiene.mjs and test/install_scan.py fail in CI on the rebuilt bundle.
 const SCAN_HYGIENE_REWRITES = [
   {
     filter: /[\\/]node_modules[\\/]@boardstate[\\/]broker[\\/]dist[\\/]index\.js$/,

@@ -1,7 +1,8 @@
 """Hermes' install-time plugin scan returns `safe` for this commit.
 
 A pinned `hermes plugins install 100yenadmin/boardstate-hermes-plugin --ref <sha>` is a community
-install: Hermes scans the cloned tree and blocks a `caution` verdict unless the user passes --force.
+install: Hermes scans the cloned tree and, on a `caution` verdict, asks [y/N] on a terminal and refuses
+without one (Desktop, scripts, closed stdin) unless the user passes --force.
 This test runs the scanner from a Hermes checkout (HERMES_SRC) over exactly what git would clone
 (`git archive HEAD`) and fails on any high or critical finding.
 
@@ -45,7 +46,7 @@ def main() -> int:
     for f in blocking:
         print(f"  {f.severity.upper()} {f.pattern_id} {f.file}:{f.line} {f.match[:100]}")
     if result.verdict != "safe" or blocking:
-        print("FAIL: the pinned owner/repo install would need --force (or be refused).", file=sys.stderr)
+        print("FAIL: the pinned owner/repo install would prompt on a terminal and be refused without one.", file=sys.stderr)
         return 1
     print("ok: a pinned owner/repo install passes the scan without --force")
     return 0

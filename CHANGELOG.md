@@ -9,8 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 - A pinned install straight from this repository
   (`hermes plugins install 100yenadmin/boardstate-hermes-plugin --ref <sha> --enable`) works on
-  Hermes 0.23.0 without `--force`. Hermes scans such an install as a community source and blocked
-  it on a `caution` verdict. The verdict came from two pieces of dependency text in the committed
+  Hermes 0.23.0 without `--force` and without a prompt. Hermes scans such an install as a community
+  source. On a `caution` verdict it asked "Install anyway? [y/N]" on a terminal and refused with no
+  terminal (Hermes Desktop, scripts, closed stdin). The verdict came from two pieces of dependency text in the committed
   sidecar bundle, and neither ever ran: the default Pipedream URL in `@boardstate/broker`'s
   connector presets (Boardstate uses only the OfficeCLI preset) and a comment in the MCP SDK's stdio
   client that mentions `sudo`. The build now tree-shakes the broker's unused preset table and drops
@@ -22,7 +23,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 - README: the install section shows the pinned `owner/repo` form and says when to use it (Hermes
   0.23.0 can fall back to an older catalog pin). The old line said that form "asks for
-  confirmation"; on Hermes 0.23 a `caution` verdict blocked it instead. The security scanner notes
+  confirmation", which held only on a terminal. The security scanner notes
   match the current scan.
 - CI runs the Hermes v0.23.0 install scanner on every commit and fails on any HIGH or CRITICAL
   finding (`test/install_scan.py`). `test/scan-hygiene.mjs` checks that the sidecar bundle stays

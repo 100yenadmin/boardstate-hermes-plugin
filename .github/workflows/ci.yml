@@ -230,8 +230,9 @@ jobs:
         run: python test/sidecar_graceful_replace.py --case unverified
 
   hermes-install-scan:
-    # A pinned `hermes plugins install <owner/repo> --ref <sha>` is scanned as a community install, and Hermes 0.23
-    # blocks a `caution` verdict unless the user passes --force. Run that scanner, from the v0.23.0 tag, on this commit.
+    # A pinned `hermes plugins install <owner/repo> --ref <sha>` is scanned as a community install. On a `caution`
+    # verdict Hermes 0.23 asks [y/N] on a terminal and refuses without one, unless the user passes --force.
+    # Run that scanner, from the v0.23.0 tag, on this commit.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
