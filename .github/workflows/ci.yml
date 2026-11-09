@@ -89,6 +89,9 @@ jobs:
       - name: Sidecar bundle scan hygiene (no unused broker presets, no sudo comment)
         run: node test/scan-hygiene.mjs
 
+      - name: Markdown widgets render GFM tables, escaped (web + desktop bundles)
+        run: node test/markdown-tables.mjs
+
       - name: Desktop page boots on older and current Desktop SDKs (with and without scoped timers)
         run: node test/desktop-sdk-compat.mjs
 

@@ -42,18 +42,137 @@ try {
 mkdirSync(path.join(dashboardDir, "dist"), { recursive: true });
 mkdirSync(path.join(dashboardDir, "vendor"), { recursive: true });
 
+// GFM pipe tables in builtin:markdown (#32). @boardstate/lit 0.9.2's markdown renderer showed a
+// pipe table as raw pipes, and agents write them. Until the upstream renderer has tables, the build
+// adds them to the vendored element bundle (Web tab) and to the copy the Desktop bundle inlines.
+// Every cell goes through the renderer's own escapeHtml + renderInline, like a paragraph line. Each
+// anchor must match exactly once, so an @boardstate/lit bump that moves the code fails the build
+// instead of shipping unpatched.
+const MARKDOWN_TABLE_HELPERS = String.raw`/** Split one GFM table row into trimmed cells; \| is a literal pipe. Linear scan. */
+function splitTableRow(line) {
+	let row = line.trim();
+	if (row.startsWith("|")) row = row.slice(1);
+	if (row.endsWith("|") && !row.endsWith("\\|")) row = row.slice(0, -1);
+	const cells = [];
+	let cell = "";
+	for (let i = 0; i < row.length; i += 1) {
+		if (row[i] === "\\" && row[i + 1] === "|") {
+			cell += "|";
+			i += 1;
+		} else if (row[i] === "|") {
+			cells.push(cell.trim());
+			cell = "";
+		} else cell += row[i];
+	}
+	cells.push(cell.trim());
+	return cells;
+}
+/** True when line is a GFM delimiter row under header: both carry a pipe, the header is not a quote,
+ *  every delimiter cell is dashes with optional colons, and the cell counts match. */
+function isTableDelimiterFor(header, line) {
+	if (!line.includes("|") || !line.includes("-") || !header.includes("|") || /^ {0,3}>/.test(header)) return false;
+	const delimiter = splitTableRow(line);
+	return delimiter.every((cell) => /^:?-+:?$/.test(cell)) && splitTableRow(header).length === delimiter.length;
+}
+/** Index of the first GFM delimiter row after lines[from] (its header is the line before), or -1. */
+function tableDelimiterIndex(lines, from) {
+	for (let j = from + 1; j < lines.length; j += 1) if (isTableDelimiterFor(lines[j - 1], lines[j])) return j;
+	return -1;
+}
+/** Render a GFM table: header, then body rows cut to the header's width. A short row is not
+ *  padded (the browser leaves its missing cells empty), so the output never outgrows the input. */
+function renderTableBlock(lines) {
+	const head = splitTableRow(lines[0]);
+	const cell = (tag, text) => "<" + tag + ">" + renderInline(escapeHtml(text)) + "</" + tag + ">";
+	const body = lines.slice(2).map((line) => {
+		const cells = splitTableRow(line).slice(0, head.length);
+		return "<tr>" + cells.map((text) => cell("td", text)).join("") + "</tr>";
+	});
+	return '<div class="dashboard-table dashboard-markdown__table"><table class="dashboard-table__grid"><thead><tr>' + head.map((text) => cell("th", text)).join("") + "</tr></thead><tbody>" + body.join("") + "</tbody></table></div>";
+}
+/** True for a quote line or a thematic break (*** / --- / ___), which end a GFM table. Linear. */
+function endsTable(line) {
+	if (/^ {0,3}>/.test(line)) return true;
+	if (!/^ {0,3}[-*_]/.test(line)) return false;
+	const marks = line.replace(/[ \t]/g, "");
+	return marks.length >= 3 && marks.split("").every((ch) => ch === marks[0]);
+}
+/** A paragraph block, or its tables with the text around them. A table runs until a quote line or
+ *  a thematic break (GFM ends a table at another block); the block is otherwise rendered exactly as before. */
+function renderBlockOrTable(block) {
+	const lines = block.split("\n");
+	let html = "";
+	// A cursor, not a shrinking copy, keeps many tables in one block linear.
+	let start = 0;
+	for (;;) {
+		const j = tableDelimiterIndex(lines, start);
+		if (j < 0) {
+			if (start === 0) return renderBlock(block);
+			return start < lines.length ? html + renderBlock(lines.slice(start).join("\n")) : html;
+		}
+		let end = j + 1;
+		while (end < lines.length && !endsTable(lines[end])) end += 1;
+		if (j - 1 > start) html += renderBlock(lines.slice(start, j - 1).join("\n"));
+		html += renderTableBlock(lines.slice(j - 1, end));
+		start = end;
+	}
+}
+`;
+const LIT_MARKDOWN_TABLE_PATCHES = [
+  { from: "function toSanitizedMarkdownHtml(source) {", to: MARKDOWN_TABLE_HELPERS + "function toSanitizedMarkdownHtml(source) {" },
+  { from: "\t\telse html.push(renderBlock(block));", to: "\t\telse html.push(renderBlockOrTable(block));" },
+  // A short delimiter row ("- | -") would start a list and split the table off its header.
+  {
+    from: '\t\tlet kind = isUnorderedList(line) ? "ul" : isOrderedList(line) ? "ol" : "p";',
+    to: '\t\tlet kind = paragraphKind === "p" && paragraph.length > 0 && isTableDelimiterFor(paragraph[paragraph.length - 1], line) ? "p" : isUnorderedList(line) ? "ul" : isOrderedList(line) ? "ol" : "p";',
+  },
+];
+const patchLitBrowser = (text, where) => {
+  for (const patch of LIT_MARKDOWN_TABLE_PATCHES) {
+    const count = text.split(patch.from).length - 1;
+    if (count !== 1) {
+      throw new Error(
+        `markdown-tables: expected exactly one ${JSON.stringify(patch.from)} in ${where}, found ${count}; revisit build.mjs (#32)`,
+      );
+    }
+    text = text.replace(patch.from, () => patch.to);
+  }
+  return text;
+};
+// Markdown tables sit in prose, so they scroll sideways rather than widen the card.
+const MARKDOWN_TABLE_CSS = `
+/* Boardstate Hermes plugin build: GFM tables in markdown widgets (#32). */
+.dashboard-markdown__table {
+  margin: 0.4em 0 0.6em;
+  overflow-x: auto;
+}
+`;
+
 // 0) Vendor the prebuilt element bundle + stylesheet (served as static assets) FIRST:
 // the Desktop bundle (1b) inlines vendor/boardstate.css, so copying it afterwards made the
 // first build after an @boardstate/lit bump embed the previous stylesheet (#20).
-for (const [src, dest] of [
-  [litBrowser, path.join(dashboardDir, "vendor/boardstate-browser.js")],
-  [litCss, path.join(dashboardDir, "vendor/boardstate.css")],
+for (const [src, dest, transform] of [
+  [litBrowser, path.join(dashboardDir, "vendor/boardstate-browser.js"), (text) => patchLitBrowser(text, litBrowser)],
+  [litCss, path.join(dashboardDir, "vendor/boardstate.css"), (text) => text + MARKDOWN_TABLE_CSS],
 ]) {
   if (!existsSync(src)) {
     throw new Error(`Vendored asset missing: ${src}`);
   }
-  cpSync(src, dest);
+  writeFileSync(dest, transform(readFileSync(src, "utf8")));
 }
+// The Desktop bundle imports @boardstate/lit/browser itself, so it gets the same patch. The build
+// fails if that import ever stops passing through here.
+let desktopLitPatched = false;
+const litMarkdownTablesPlugin = {
+  name: "lit-markdown-tables",
+  setup(build) {
+    build.onLoad({ filter: /[\\/]@boardstate[\\/]lit[\\/]dist[\\/]browser\.js$/ }, (args) => {
+      if (path.resolve(args.path) !== path.resolve(litBrowser)) return undefined;
+      desktopLitPatched = true;
+      return { contents: patchLitBrowser(readFileSync(args.path, "utf8"), args.path), loader: "js" };
+    });
+  },
+};
 
 // 1) Browser tab bundle — IIFE, host React (never bundled), createWsTransport inlined.
 await esbuild.build({
@@ -90,10 +209,14 @@ await esbuild.build({
   jsx: "automatic",
   external: ["react", "react-dom", "react/jsx-runtime", "@hermes/plugin-sdk"],
   loader: { ".css": "text" },
+  plugins: [litMarkdownTablesPlugin],
   sourcemap: false,
   minify: true,
   logLevel: "info",
 });
+if (!desktopLitPatched) {
+  throw new Error("markdown-tables: the Desktop bundle did not load @boardstate/lit/browser through the patch; revisit build.mjs (#32)");
+}
 
 // 1c) Native agent-tool contract.  The base 17 definitions come from the same
 // @boardstate/server factory the sidecar invokes; the two connector definitions
@@ -101,11 +224,10 @@ await esbuild.build({
 // packages and Hermes can capability-probe the plugin in isolation.
 // Native-only notes, true only where the native handler (__init__.py) runs: it fills the two
 // fields the server owns on a replace, and binds unbound live-data builtins on add/replace.
-// How two widget values render, which agents got wrong on launch boards: a percent stat card showed
-// "3,900%" for 39.0, and a markdown pipe table showed as raw pipes (#32).
+// How a widget value renders, which agents got wrong on launch boards: a percent stat card showed
+// "3,900%" for 39.0. Markdown pipe tables render since 1.5.6 (#32), so that note is gone.
 const WIDGET_VALUE_NOTES =
-  " A builtin:stat-card with format \"percent\" multiplies by 100: pass 0.39 to show 39%." +
-  " Put tabular data in builtin:table; builtin:markdown does not render pipe tables.";
+  " A builtin:stat-card with format \"percent\" multiplies by 100: pass 0.39 to show 39%.";
 const NATIVE_DESCRIPTION_NOTES = {
   boardstate_workspace_replace:
     " Pass the whole document from boardstate_workspace_get with your edits. The server sets" +

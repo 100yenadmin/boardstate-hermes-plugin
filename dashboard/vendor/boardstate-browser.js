@@ -5836,6 +5836,75 @@ function renderFence(lines) {
 * inject with `unsafeHTML`: every code path escapes text before wrapping it in one
 * of the permitted tags.
 */
+/** Split one GFM table row into trimmed cells; \| is a literal pipe. Linear scan. */
+function splitTableRow(line) {
+	let row = line.trim();
+	if (row.startsWith("|")) row = row.slice(1);
+	if (row.endsWith("|") && !row.endsWith("\\|")) row = row.slice(0, -1);
+	const cells = [];
+	let cell = "";
+	for (let i = 0; i < row.length; i += 1) {
+		if (row[i] === "\\" && row[i + 1] === "|") {
+			cell += "|";
+			i += 1;
+		} else if (row[i] === "|") {
+			cells.push(cell.trim());
+			cell = "";
+		} else cell += row[i];
+	}
+	cells.push(cell.trim());
+	return cells;
+}
+/** True when line is a GFM delimiter row under header: both carry a pipe, the header is not a quote,
+ *  every delimiter cell is dashes with optional colons, and the cell counts match. */
+function isTableDelimiterFor(header, line) {
+	if (!line.includes("|") || !line.includes("-") || !header.includes("|") || /^ {0,3}>/.test(header)) return false;
+	const delimiter = splitTableRow(line);
+	return delimiter.every((cell) => /^:?-+:?$/.test(cell)) && splitTableRow(header).length === delimiter.length;
+}
+/** Index of the first GFM delimiter row after lines[from] (its header is the line before), or -1. */
+function tableDelimiterIndex(lines, from) {
+	for (let j = from + 1; j < lines.length; j += 1) if (isTableDelimiterFor(lines[j - 1], lines[j])) return j;
+	return -1;
+}
+/** Render a GFM table: header, then body rows cut to the header's width. A short row is not
+ *  padded (the browser leaves its missing cells empty), so the output never outgrows the input. */
+function renderTableBlock(lines) {
+	const head = splitTableRow(lines[0]);
+	const cell = (tag, text) => "<" + tag + ">" + renderInline(escapeHtml(text)) + "</" + tag + ">";
+	const body = lines.slice(2).map((line) => {
+		const cells = splitTableRow(line).slice(0, head.length);
+		return "<tr>" + cells.map((text) => cell("td", text)).join("") + "</tr>";
+	});
+	return '<div class="dashboard-table dashboard-markdown__table"><table class="dashboard-table__grid"><thead><tr>' + head.map((text) => cell("th", text)).join("") + "</tr></thead><tbody>" + body.join("") + "</tbody></table></div>";
+}
+/** True for a quote line or a thematic break (*** / --- / ___), which end a GFM table. Linear. */
+function endsTable(line) {
+	if (/^ {0,3}>/.test(line)) return true;
+	if (!/^ {0,3}[-*_]/.test(line)) return false;
+	const marks = line.replace(/[ \t]/g, "");
+	return marks.length >= 3 && marks.split("").every((ch) => ch === marks[0]);
+}
+/** A paragraph block, or its tables with the text around them. A table runs until a quote line or
+ *  a thematic break (GFM ends a table at another block); the block is otherwise rendered exactly as before. */
+function renderBlockOrTable(block) {
+	const lines = block.split("\n");
+	let html = "";
+	// A cursor, not a shrinking copy, keeps many tables in one block linear.
+	let start = 0;
+	for (;;) {
+		const j = tableDelimiterIndex(lines, start);
+		if (j < 0) {
+			if (start === 0) return renderBlock(block);
+			return start < lines.length ? html + renderBlock(lines.slice(start).join("\n")) : html;
+		}
+		let end = j + 1;
+		while (end < lines.length && !endsTable(lines[end])) end += 1;
+		if (j - 1 > start) html += renderBlock(lines.slice(start, j - 1).join("\n"));
+		html += renderTableBlock(lines.slice(j - 1, end));
+		start = end;
+	}
+}
 function toSanitizedMarkdownHtml(source) {
 	const rawLines = source.replace(/\r\n?/g, "\n").split("\n");
 	const html = [];
@@ -5846,7 +5915,7 @@ function toSanitizedMarkdownHtml(source) {
 		const block = paragraph.join("\n");
 		if (isUnorderedList(block)) html.push(renderList(block, false));
 		else if (isOrderedList(block)) html.push(renderList(block, true));
-		else html.push(renderBlock(block));
+		else html.push(renderBlockOrTable(block));
 		paragraph = [];
 	};
 	for (let i = 0; i < rawLines.length; i += 1) {
@@ -5874,7 +5943,7 @@ function toSanitizedMarkdownHtml(source) {
 			html.push(`<h${level}>${renderInline(escapeHtml(text))}</h${level}>`);
 			continue;
 		}
-		let kind = isUnorderedList(line) ? "ul" : isOrderedList(line) ? "ol" : "p";
+		let kind = paragraphKind === "p" && paragraph.length > 0 && isTableDelimiterFor(paragraph[paragraph.length - 1], line) ? "p" : isUnorderedList(line) ? "ul" : isOrderedList(line) ? "ol" : "p";
 		const continuation = /^(?: {4}| {0,3}\t)/.test(line) || /^\s*(?:[-*]|\d+\.)\s*$/.test(line) || kind === "ol" && Number.parseInt(line.trim(), 10) !== 1;
 		if (paragraphKind === "p" && paragraph.length > 0 && continuation) kind = "p";
 		if (kind !== paragraphKind) flushParagraph();

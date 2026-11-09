@@ -3,6 +3,32 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.5.6
+
+### Fixed
+
+- Markdown widgets render GFM pipe tables
+  ([#32](https://github.com/100yenadmin/boardstate-hermes-plugin/issues/32)). A table an agent wrote into a
+  `builtin:markdown` card showed as raw pipes (`| Category | Planned |`, `|---|---|`). It now renders as a table
+  styled like `builtin:table`, on the Web tab and in Hermes Desktop.
+  - Supported: a header row, a delimiter row (`---`, `:--`, `--:`, or the short `- | -`), and body rows. Both the
+    header and the delimiter row need at least one pipe, and their cell counts must match. Inline code, bold, italics
+    and http(s) links work inside cells, and `\|` is a literal pipe.
+  - A line of text right above the table stays a paragraph. A quote line or a thematic break (`***`, `---`) ends the
+    table, as in GFM. Long rows are cut to the header's width; a short row leaves its missing cells empty, so a table
+    never renders more cells than its text holds.
+  - Every cell goes through the renderer's own HTML escaping, the same as a paragraph line.
+  - Markdown with no such table renders exactly as before.
+  - Chat messages, which use the same renderer, get tables too.
+  - The upstream renderer (`@boardstate/lit` 0.9.2) has no table support yet, so the build patches it into the
+    vendored copy, both the one the Web tab loads and the one built into the Desktop bundle. If a later version moves
+    the code, or the Desktop build stops picking up the patch, the build fails instead of shipping without tables.
+
+### Changed
+
+- The `boardstate_widget_add` and `boardstate_widget_update` descriptions no longer say markdown can't render pipe
+  tables. The percent-format note stays.
+
 ## 1.5.5
 
 ### Fixed
