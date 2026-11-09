@@ -2,51 +2,111 @@
 
 ![Boardstate: a live board your agent builds for you](docs/media/banner.png)
 
-Boardstate gives Hermes a durable board that the agent can build with native tools. Open
-the **Board** tab in `hermes dashboard` or the **Board** page in Hermes Desktop, then ask
-Hermes to create tabs, add widgets, arrange a layout, or review its design. Widgets include
-notes, markdown, tables, charts, KPI cards, live Hermes data, and approvals. Changes are
-stored as a validated workspace document and appear live when the dashboard socket is
-available.
+From one ask, your Hermes agent builds a live board of KPIs, tables and charts, and keeps it current as plans change.
 
-Boardstate is one unified Hermes plugin: the agent tools, Web dashboard tab, Python
-backend, Desktop page, and loopback Node sidecar install from this repository together.
+[![Latest release](https://img.shields.io/github/v/release/100yenadmin/boardstate-hermes-plugin)](https://github.com/100yenadmin/boardstate-hermes-plugin/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/100yenadmin/boardstate-hermes-plugin)](LICENSE)
+[![Hermes 0.21.2+](https://img.shields.io/badge/Hermes-0.21.2%2B-blue)](https://github.com/NousResearch/hermes-agent)
+[![CI](https://github.com/100yenadmin/boardstate-hermes-plugin/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/100yenadmin/boardstate-hermes-plugin/actions/workflows/ci.yml)
+
+![A launch board the agent built from one ask: KPI cards for signups, days to launch and open bugs, a daily signups chart and a budget chart](docs/screenshots/launch-board.png)
 
 ## Install
 
-Boardstate requires Hermes 0.21.2 or newer and Node.js 20 or newer. Boardstate looks for Node
-in `HERMES_NODE_BIN`, then in Hermes' own Node lookup, then on `PATH`.
+```bash
+hermes plugins install 100yenadmin/boardstate-hermes-plugin --enable
+```
+
+This installs the current `main` branch; to install one exact release, pin it (see
+[More install options](#more-install-options)). You need Hermes 0.21.2 or newer and Node.js 20 or newer.
+No API keys or accounts. Hermes prints a "custom (unreviewed) source" warning for any install from a
+repository; Boardstate scans `safe`, so it installs with no prompt. Then start (or restart) `hermes dashboard`
+and follow **Try it** below.
+
+The catalog name also works, but it can give an older release:
 
 ```bash
 hermes plugins install boardstate --enable
 ```
 
-This installs the catalog entry at its reviewed pin.
+On Hermes 0.23.0 that line installs 1.5.2, because 0.23.0 falls back to the catalog copy it shipped with
+([NousResearch/hermes-agent#151856](https://github.com/NousResearch/hermes-agent/issues/151856)). Use the
+first line for the current version.
 
-To install a specific release straight from this repository, pin its commit:
+## Try it
+
+1. **Open the board.** Start `hermes dashboard` and open the **Board** tab. In Hermes Desktop, switch on
+   **Boardstate** under **Capabilities → Plugins** and open the **Board** page. The Web tab and the Desktop
+   page have separate switches.
+2. **Ask your agent** for a board, for example: "Make me a launch board for a coffee subscription app
+   shipping Friday: KPIs for signups and days to launch, a task table with owners, a budget chart, a risks
+   list, and live usage of this agent. Use sample numbers."
+3. **Watch it appear.** KPI cards, the task table, the chart, the risks list and a live usage panel land on
+   the board as the agent's `boardstate_*` tool calls run. Then say "Launch slipped to Monday. Update the
+   board." The same widgets change in place.
+
+## What you get
+
+- **Where it shows:** a **Board** tab in the Hermes web dashboard, a **Board** page in Hermes Desktop, and
+  19 native agent tools (`boardstate_*`). An optional MCP endpoint is there for other clients.
+- **Widgets:** notes, markdown (tables included), tables, charts, KPI cards, live Hermes data (sessions,
+  usage, cron jobs, running instances) and approvals. Starter templates: Agent HQ, Usage & Cost, Sessions
+  Monitor and Office Ops.
+- **It is saved:** the board is a validated document in your Hermes home, with undo, history, export and
+  import. It survives restarts, updates and reinstalls.
+- **It is live:** changes from the agent show up live on the open board. Hermes Desktop connected to a
+  remote over OAuth has no live socket, so the page says **live updates unavailable**; reload it to see
+  changes.
+- **Reaching outside Hermes is opt-in:** connectors to local tools or remote MCP servers run only when an
+  operator configures them. Their reads need an approved grant, and their actions wait for an operator decision unless the operator
+  has set that tool to **Auto-run**.
+
+## How it compares
+
+| | Stock Hermes dashboard | [Home Dashboard](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/home-dashboard.yaml) | [Board](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/hermes-board.yaml) | Boardstate |
+| --- | --- | --- | --- | --- |
+| What it is | Fixed pages: sessions, analytics, cron, logs, config and more | A home page of draggable, resizable widgets | A Miro-like diagram board: nodes, edges, notes and groups | A board of KPI cards, tables, charts, notes, live Hermes data and approvals |
+| Who builds it | Hermes ships it | You arrange it (no agent tools) | The agent, with 7 `board_*` tools; you edit it in a Desktop pane | The agent, with 19 `boardstate_*` tools; you apply templates, type notes and approve actions |
+| Where | Web dashboard | Web dashboard and Desktop | Desktop pane, plus PNG export | Web dashboard tab and Desktop page |
+
+Sources: the [Hermes v0.23.0 dashboard pages](https://github.com/NousResearch/hermes-agent/tree/v0.23.0/web/src/pages)
+and each plugin's Hermes catalog entry, as of 2026-11-10.
+
+## Settings
+
+Boardstate needs no configuration. These are the settings an operator can change:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `HERMES_NODE_BIN` | unset | The Node.js 20+ binary for the sidecar. When it is unset, Boardstate uses Hermes' own Node lookup, then `PATH`. |
+| `BOARDSTATE_HERMES_STATE_DIR` | `boardstate-state` in the profile's Hermes home | Where the board is stored (see [Uninstall](#uninstall)). |
+| `boardstate.connectors.json` in the state directory | absent: no connectors | Operator-authored external connectors (see [Connector configuration](#connector-configuration)). |
+| `boardstate.operators.json` in the state directory | absent | Who may approve actions on a dashboard behind an auth gate. Without it, approvals there are refused. See [docs/connectors/officecli.md](docs/connectors/officecli.md#multi-user--gated-dashboards). |
+
+## More install options
+
+To install one exact release, pin its commit:
 
 ```bash
 hermes plugins install 100yenadmin/boardstate-hermes-plugin --ref <40-character commit sha> --enable
 ```
 
-Each [release](https://github.com/100yenadmin/boardstate-hermes-plugin/releases) names its commit
-sha. `--ref` takes a full sha, not a tag. Hermes scans this install as a community source. On
-Hermes 0.23.0, 1.5.4 scans `safe`, so it installs with no prompt and no `--force`, including from
-Hermes Desktop and scripts. CI runs that scanner on every later commit and fails on anything that
-would not scan `safe` (see "Security scanner notes" below). 1.5.3 and earlier scan `caution`.
+Each [release](https://github.com/100yenadmin/boardstate-hermes-plugin/releases) names its commit sha. `--ref` takes a full sha, not a tag. Hermes scans
+this install as a community source. Every release since 1.5.4 scans `safe` on Hermes 0.23.0, so it installs
+with no prompt and no `--force`, including from Hermes Desktop and scripts. CI runs that scanner on every
+commit and fails on anything that would not scan `safe` (see
+[docs/security-scanner.md](docs/security-scanner.md)). 1.5.3 and earlier scan `caution`.
 
-If Boardstate is already installed, for example at an older catalog pin, remove it first. The board
-stays in `boardstate-state` (see "Uninstall" below). Then run the line above:
+If Boardstate is already installed, for example at an older catalog pin, remove it first. The board stays
+in `boardstate-state` (see [Uninstall](#uninstall)). Then run an install line again:
 
 ```bash
 hermes plugins remove boardstate
 ```
 
-`hermes plugins update boardstate` follows the catalog pin, so it does not move a catalog install to
-a newer release. Use this form when `hermes plugins install boardstate` gives an older version than the
-latest release. Hermes 0.23.0 falls back to the catalog copy it shipped with when it cannot use the
-published catalog
-([NousResearch/hermes-agent#151856](https://github.com/NousResearch/hermes-agent/issues/151856)).
+`hermes plugins update boardstate` moves a catalog install only as far as the catalog pin, which on Hermes
+0.23.0 can be the older copy Hermes shipped with. It moves an unpinned repository install to the latest
+commit on `main`, and leaves a `--ref` install where it is.
 
 To enable an installed copy later:
 
@@ -54,13 +114,9 @@ To enable an installed copy later:
 hermes plugins enable boardstate
 ```
 
-Start `hermes dashboard` for the Web tab. The unified package also contributes a Desktop
-plugin; enable **Boardstate** under **Capabilities → Plugins** in Hermes Desktop. The two
-surfaces have separate enable switches by design.
-
 After you update or reinstall the plugin, quit and reopen Hermes Desktop. **Rescan** under
-**Capabilities → Plugins** copies the new Desktop files, but a Desktop plugin that is already
-loaded keeps running its old code until the app restarts.
+**Capabilities → Plugins** copies the new Desktop files, but a Desktop plugin that is already loaded keeps
+running its old code until the app restarts.
 
 ### Profiles
 
@@ -190,49 +246,11 @@ Connector grants are scoped to the active Hermes profile: Boardstate keeps separ
 each `HERMES_HOME`/profile, while sessions within one profile are the same agent and
 intentionally share native-tool grants.
 
-## Security scanner notes
+## Security scanner
 
-On Hermes 0.23.0, `hermes plugins validate` and the install-time scan report `safe`: no HIGH or
-CRITICAL finding, so a pinned `owner/repo` install needs no `--force`. CI runs the v0.23.0 scanner on
-every commit (`test/install_scan.py`). Reviewers should still read every finding.
-
-Before 1.5.4 the scan reported `caution` for two HIGH findings, both dependency text in the committed
-`dashboard/sidecar/server.js` bundle that never runs. `build.mjs` now leaves both out of the bundle,
-and `test/scan-hygiene.mjs` checks the result:
-
-- `exfil_service`: the default Pipedream remote-MCP URL in `@boardstate/broker`'s Pipedream preset.
-  Boardstate imports only the broker's OfficeCLI preset. The build lets esbuild tree-shake the
-  broker's unused preset table, which takes the Pipedream and Composio presets with it. Operators
-  still author connectors, any remote MCP URL included, in `boardstate.connectors.json`.
-- `sudo_usage`: a comment in the MCP SDK's stdio client about the environment variables a child
-  process inherits. The build drops the comment; the code is unchanged.
-
-The MEDIUM and LOW findings are informational. They fall into these groups:
-
-- Character-code, base64, Unicode-escape, backtick and relative-path matches in the generated bundles:
-  `server.js`, `dashboard/dist/index.js`, `dashboard/vendor/boardstate-browser.js` and
-  `desktop/plugin.js`.
-- Oversized-file warnings for `server.js` and `docs/media/banner.png`.
-- Mentions in the docs and CI: `sudo` (this section, CHANGELOG.md and a CI step name), agent-config
-  file names (AGENTS.md, CLAUDE.md, CONTRIBUTING.md, CHANGELOG.md, README.md and the pull request
-  template), and `pip install` / `git clone` steps (AGENTS.md and `.github/workflows/ci.yml`).
-- `subprocess` use and path fixtures in `test/`.
-- An example loopback dashboard address in a comment in `dashboard/sidecar/src/hermes-data.ts`.
-
-Catalog self-updater check: the catalog CI flags a bundled JS file that contains both a
-GitHub raw-content URL and a file-write call. In the sidecar bundle, the only such URL was
-ajv's `$data` meta-schema **identifier** (its `$id` and the one `$ref` to it), which is never
-fetched. `build.mjs` rewrites that identifier consistently to `https://ajv.js.org/refs/data.json#`,
-so the check stays meaningful for this bundle: a later `releases/latest` or
-`raw.githubusercontent.com` URL next to a file write would still trip it. This repository's CI
-replays the check, with upstream's exact file enumeration, on every build. Boardstate has no updater;
-updates arrive only through a new catalog pin plus `hermes plugins update boardstate`.
-
-`dangerous` scanner results are not accepted. Reproduce the reviewed artifacts with:
-
-```bash
-npm ci && npm run build && git diff --exit-code
-```
+On Hermes 0.23.0 the install-time scan reports `safe`, and CI runs that scanner on every commit. What each
+remaining informational finding is, and how the build keeps it that way:
+[docs/security-scanner.md](docs/security-scanner.md).
 
 ## Development and tests
 
@@ -265,6 +283,12 @@ The probe reports `ok`, `sidecar_running`, `sidecar_port`, `state_dir`, and `bun
 On Hermes 0.21.6 or newer, ask your Hermes agent to "report a problem with Boardstate". On older versions, ask it to load the `boardstate:boardstate-report-problem` skill. Either way, review its draft before it is filed.
 Use the [bug report form](https://github.com/100yenadmin/boardstate-hermes-plugin/issues/new?template=bug_report.yml).
 Report security problems through a [private advisory](https://github.com/100yenadmin/boardstate-hermes-plugin/security/advisories/new).
+
+## Links
+
+- [Releases](https://github.com/100yenadmin/boardstate-hermes-plugin/releases) and the [CHANGELOG](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md) and the [security policy](SECURITY.md)
+- [Bug report form](https://github.com/100yenadmin/boardstate-hermes-plugin/issues/new?template=bug_report.yml)
 
 ## License
 
