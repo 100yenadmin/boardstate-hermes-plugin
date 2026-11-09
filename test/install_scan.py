@@ -32,7 +32,9 @@ def main() -> int:
     from tools.plugin_guard import scan_plugin  # noqa: E402
 
     ref = sys.argv[1] if len(sys.argv) > 1 else "HEAD"
-    archive = subprocess.run(["git", "-C", str(REPO), "archive", ref], check=True, capture_output=True).stdout
+    archive = subprocess.run(
+        ["git", "-C", str(REPO), "archive", "--end-of-options", ref], check=True, capture_output=True
+    ).stdout
     with tempfile.TemporaryDirectory(prefix="boardstate-scan-") as tmp:
         tree = Path(tmp) / "boardstate"
         tree.mkdir()
