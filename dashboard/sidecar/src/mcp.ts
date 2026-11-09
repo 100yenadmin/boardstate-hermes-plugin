@@ -145,7 +145,39 @@ export async function createMcpEndpoint(
       context: { agentId },
       broadcast: host.broadcast,
       ...(toolSearch ? { toolSearch } : {}),
-    });
+    }).map((tool) => (tool.name === "dashboard_workspace_get" ? withNotesText(tool) : tool));
+
+  // What the user typed into each `builtin:notes` card (#30). The text is the card's widget state
+  // (the user's write-back), not part of the document, so the agent could not read it. Read-only, it
+  // rides beside `doc` as `notes`, which leaves the document an agent passes back to
+  // workspace_replace unchanged. A card the user never typed in has no entry: its props hold the
+  // starting text.
+  const notesText = async (doc: unknown): Promise<Record<string, unknown>[]> => {
+    const notes: Record<string, unknown>[] = [];
+    const tabs = isRecord(doc) && Array.isArray(doc.tabs) ? doc.tabs : [];
+    for (const tab of tabs) {
+      if (!isRecord(tab) || !Array.isArray(tab.widgets)) continue;
+      for (const widget of tab.widgets) {
+        if (!isRecord(widget) || widget.kind !== "builtin:notes" || typeof widget.id !== "string") continue;
+        const record = await store.readWidgetState(widget.id).catch(() => null);
+        if (record && typeof record.blob === "string") {
+          notes.push({ widgetId: widget.id, tab: tab.slug, title: widget.title, text: record.blob, updatedAt: record.updatedAt });
+        }
+      }
+    }
+    return notes;
+  };
+  function withNotesText(tool: AgentTool): AgentTool {
+    return {
+      ...tool,
+      execute: async (toolCallId, params) => {
+        const result = await tool.execute(toolCallId, params);
+        if (!isRecord(result.details)) return result;
+        const notes = await notesText(result.details.doc);
+        return notes.length > 0 ? { ...result, details: { ...result.details, notes } } : result;
+      },
+    };
+  }
 
   // Map each turn's tools by their PRESENTED MCP name (lossless): the name→name transform
   // is not round-trippable for tools already `boardstate_`-prefixed (`boardstate_tool_search`),
