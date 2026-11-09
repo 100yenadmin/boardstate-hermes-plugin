@@ -28593,14 +28593,21 @@ var epochMs = (v) => {
   }
   return void 0;
 };
+var localDay = (now = /* @__PURE__ */ new Date()) => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 var HANDLERS = {
-  // usage widget: { totals: { totalCost, totalTokens }, days? }
+  // usage widget: { totals: { totalCost, totalTokens }, days?, todayCost?, todayTokens? }
   "usage.status": async (get) => {
     const u = obj(await get("/api/analytics/usage"));
     const totals = obj(u.totals ?? u);
     const totalCost = num(totals.total_estimated_cost ?? totals.estimated_cost ?? totals.totalCost);
     const totalTokens = num(totals.total_input ?? totals.input_tokens) + num(totals.total_output ?? totals.output_tokens);
-    return { totals: { totalCost, totalTokens }, days: num(u.days) || void 0 };
+    const result = { totals: { totalCost, totalTokens }, days: num(u.days ?? u.period_days) || void 0 };
+    if (Array.isArray(u.daily)) {
+      const today = obj(u.daily.find((d) => str(obj(d).day) === localDay()));
+      result.todayCost = num(today.estimated_cost);
+      result.todayTokens = num(today.input_tokens) + num(today.output_tokens);
+    }
+    return result;
   },
   // stat-card (usd): a single number.
   "usage.cost": async (get) => {
@@ -28630,6 +28637,19 @@ var HANDLERS = {
   // instances widget: { presence: [{ instanceId, platform, version, lastInputSeconds }] }
   "system-presence": async (get) => {
     const s = obj(await get("/api/status"));
+    if (typeof s.active_agents === "number") {
+      if (s.gateway_running !== true) return { presence: [] };
+      const n = num(s.active_agents);
+      const gateway = {
+        instanceId: "Hermes gateway",
+        mode: str(s.gateway_state) || "running",
+        platform: `${n} active agent${n === 1 ? "" : "s"}`,
+        version: str(s.version)
+      };
+      if (typeof s.gateway_heartbeat_stale_s === "number") gateway.lastInputSeconds = s.gateway_heartbeat_stale_s;
+      const platforms = Object.entries(obj(s.gateway_platforms)).filter(([, entry]) => str(obj(entry).state) === "connected").map(([name]) => ({ instanceId: name, mode: "connected" }));
+      return { presence: [gateway, ...platforms] };
+    }
     const agents = arr(s.active_agents ?? s.agents ?? s.presence);
     return {
       presence: agents.map((a) => {
