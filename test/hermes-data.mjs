@@ -25,7 +25,9 @@ let cronJobsBroken = false;
 // Hermes 0.23 /api/status reports counts, not an agent list.
 let statusMode = "list"; // "list" | "v023" | "v023-stale" | "v023-stopped"
 const localDay = (offsetDays = 0) => {
-  const d = new Date(Date.now() + offsetDays * 86_400_000);
+  // Calendar arithmetic, not 24 h steps: a 25-hour daylight-saving day would repeat a date.
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 const V023_STATUS = {
