@@ -82,7 +82,8 @@ def _fill_server_owned_fields(args: dict[str, Any]) -> dict[str, Any]:
     entry, else ``pending`` + the calling agent; approval reconciliation runs after). It
     validates the raw document first, though, so an agent that omits or guesses one of
     those values is refused for a field that is then discarded. Only invalid values of
-    those fields are filled, and a registry status is only ever filled with ``pending``;
+    those fields are filled, and a registry status is only ever filled with ``pending``.
+    Unbound live-data widgets also get their default binding (``_bind_live_data``);
     everything else is forwarded as sent and validated by the server.
     """
     if not isinstance(args, dict):

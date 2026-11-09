@@ -15,7 +15,7 @@ adheres to [Semantic Versioning](https://semver.org/).
   - Now the native tool fills a missing or invalid `status` with `pending` and a missing or invalid `createdBy` with
     a placeholder before sending, as 1.5.3 did for each tab's `createdBy`. Valid values are sent as they are.
   - Approvals work as before. A stored entry keeps its approval state, a new one lands `pending` under the calling
-    agent, and an agent that marks its own entry `approved` still gets `pending`. The fill never writes `approved`.
+    agent, and marking an entry `approved` never approves it. The fill never writes `approved`.
   - Other registry mistakes, such as an unknown key, a bad name, an entry that is not an object, or an invalid
     `approvedBy`, are still refused with nothing written.
   - The `boardstate_workspace_replace` description now says the server sets these fields. Still 19 native tools.
