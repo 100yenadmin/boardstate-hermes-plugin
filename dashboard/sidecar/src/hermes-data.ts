@@ -50,6 +50,11 @@ const epochMs = (v: unknown): number | undefined => {
   return undefined;
 };
 
+/** The sidecar's local calendar day as YYYY-MM-DD. The sidecar runs on the Hermes host, and Hermes 0.23
+ *  buckets `/api/analytics/usage` `daily[].day` by that host's local calendar day. */
+const localDay = (now: Date = new Date()): string =>
+  `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
 /**
  * Each handler maps a Boardstate data-read method to a Hermes REST call + shapes the
  * response to what the corresponding builtin expects (SPEC data shapes). Best-effort
@@ -61,14 +66,24 @@ type Handler = (
 ) => Promise<unknown>;
 
 const HANDLERS: Record<string, Handler> = {
-  // usage widget: { totals: { totalCost, totalTokens }, days? }
+  // usage widget: { totals: { totalCost, totalTokens }, days?, costToday?, tokensToday? }
   "usage.status": async (get) => {
     const u = obj(await get("/api/analytics/usage"));
     const totals = obj(u.totals ?? u);
     const totalCost = num(totals.total_estimated_cost ?? totals.estimated_cost ?? totals.totalCost);
     const totalTokens =
       num(totals.total_input ?? totals.input_tokens) + num(totals.total_output ?? totals.output_tokens);
-    return { totals: { totalCost, totalTokens }, days: num(u.days) || undefined };
+    const result: Record<string, unknown> = { totals: { totalCost, totalTokens }, days: num(u.days ?? u.period_days) || undefined };
+    // Hermes 0.23 has a per-day series. Today's row feeds the Usage & Cost "today" stat cards, which
+    // select `costToday` / `tokensToday` through props.metric. Not `todayCost` / `todayTokens`: the
+    // renderer maps those two names to `totals`, the whole period. With a series but no row for today,
+    // today is a real 0. Without a series, leave the fields out so the cards show "—".
+    if (Array.isArray(u.daily)) {
+      const today = obj(u.daily.find((d) => str(obj(d).day) === localDay()));
+      result.costToday = num(today.estimated_cost);
+      result.tokensToday = num(today.input_tokens) + num(today.output_tokens);
+    }
+    return result;
   },
   // stat-card (usd): a single number.
   "usage.cost": async (get) => {
@@ -98,6 +113,27 @@ const HANDLERS: Record<string, Handler> = {
   // instances widget: { presence: [{ instanceId, platform, version, lastInputSeconds }] }
   "system-presence": async (get) => {
     const s = obj(await get("/api/status"));
+    // Hermes 0.23 reports `active_agents` as a count, with the gateway and its platforms beside it.
+    // Instances are then the running gateway plus each connected platform; a stopped gateway has none.
+    if (typeof s.active_agents === "number") {
+      if (s.gateway_running !== true) return { presence: [] };
+      const n = num(s.active_agents);
+      // The renderer's meta text never shrinks and the name truncates, so the count rides in the name
+      // and the meta stays short ("running · 0.23.0"): a narrow widget still shows "Hermes gateway…".
+      const gateway: Record<string, unknown> = {
+        instanceId: `Hermes gateway (${n} active agent${n === 1 ? "" : "s"})`,
+        mode: str(s.gateway_state) || "running",
+        version: str(s.version),
+      };
+      // Only a stale heartbeat has an idle time; the renderer shows "idle 0s" for a 0. Hermes sets the
+      // field only once the heartbeat is over 120 s old but truncates it to whole seconds, and the
+      // renderer marks 120 or less healthy, so floor it at 121 to keep the dot red.
+      if (typeof s.gateway_heartbeat_stale_s === "number") gateway.lastInputSeconds = Math.max(s.gateway_heartbeat_stale_s, 121);
+      const platforms = Object.entries(obj(s.gateway_platforms))
+        .filter(([, entry]) => str(obj(entry).state) === "connected")
+        .map(([name]) => ({ instanceId: name, mode: "connected" }));
+      return { presence: [gateway, ...platforms] };
+    }
     const agents = arr(s.active_agents ?? s.agents ?? s.presence);
     return {
       presence: agents.map((a) => {

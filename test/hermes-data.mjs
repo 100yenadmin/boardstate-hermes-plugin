@@ -22,6 +22,23 @@ const NONCE = "data-nonce";
 const seenAuth = [];
 let cronJobsGone = false;
 let cronJobsBroken = false;
+// Hermes 0.23 /api/status reports counts, not an agent list.
+let statusMode = "list"; // "list" | "v023" | "v023-stale" | "v023-stopped"
+const localDay = (offsetDays = 0) => {
+  // Calendar arithmetic, not 24 h steps: a 25-hour daylight-saving day would repeat a date.
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const V023_STATUS = {
+  version: "0.23.0",
+  gateway_running: true,
+  gateway_state: "running",
+  gateway_platforms: { telegram: { state: "connected" }, discord: { state: "fatal", error_message: "bad token" } },
+  gateway_heartbeat_stale_s: null,
+  active_agents: 2,
+  active_sessions: 3,
+};
 const fake = createServer((req, res) => {
   seenAuth.push(req.headers["x-hermes-session-token"]);
   if (req.headers["x-hermes-session-token"] !== TOKEN) {
@@ -39,6 +56,11 @@ const fake = createServer((req, res) => {
     "/api/analytics/usage": {
       totals: { total_estimated_cost: 12.5, total_input: 1000, total_output: 500 },
       days: 30,
+      // Hermes 0.23: one row per local calendar day (sqlite date(..., 'localtime')).
+      daily: [
+        { day: localDay(-1), input_tokens: 100, output_tokens: 50, estimated_cost: 1.25 },
+        { day: localDay(0), input_tokens: 300, output_tokens: 200, estimated_cost: 2.5 },
+      ],
     },
     // Hermes 0.23 wraps the list and names the fields is_active / last_active (epoch
     // seconds); older hosts returned a bare list with has_active_run / updated_at (ISO).
@@ -49,9 +71,14 @@ const fake = createServer((req, res) => {
         { id: "s3", title: "Session Three", is_active: true, last_active: 1794088202.79 },
       ],
     },
-    "/api/status": {
-      active_agents: [{ instance_id: "gw-1", platform: "macos", version: "1.0", last_input_seconds: 8 }],
-    },
+    "/api/status":
+      statusMode === "v023"
+        ? V023_STATUS
+        : statusMode === "v023-stale"
+          ? { ...V023_STATUS, gateway_heartbeat_stale_s: 120 }
+        : statusMode === "v023-stopped"
+          ? { ...V023_STATUS, gateway_running: false, gateway_state: "stopped", gateway_platforms: {}, active_agents: 0 }
+          : { active_agents: [{ instance_id: "gw-1", platform: "macos", version: "1.0", last_input_seconds: 8 }] },
     // Hermes 0.23 serves jobs at /api/cron/jobs (ISO next_run_at, last_status, string state);
     // older hosts served /api/cron. The handler tries the new path first.
     "/api/cron/jobs": cronJobsGone
@@ -162,6 +189,55 @@ check(
 
 const presence = (await rpc("system-presence", {})).result;
 check("system-presence (direct) → presence shape", presence?.presence?.[0]?.instanceId === "gw-1");
+
+check("usage.status → today's cost and tokens from the 0.23 daily series", usage?.costToday === 2.5 && usage?.tokensToday === 500);
+
+// What the Usage & Cost "today" cards SHOW: run the shipped renderer's own selectMetric on the
+// template's props.metric. The renderer maps `todayCost` / `todayTokens` to `totals` (the whole
+// period), so a wire-only check passes while the cards show the period total.
+{
+  const { readFileSync } = await import("node:fs");
+  const { build } = await import("esbuild");
+  const vendor = readFileSync(join(repo, "dashboard/vendor/boardstate-browser.js"), "utf8");
+  const fn = vendor.match(/function selectMetric\(value, metric\) \{[\s\S]*?\n\}\n/);
+  const isRecord = vendor.match(/function (isRecord\$\d+)\(value\) \{[^}]*\}/g)?.find((f) => fn?.[0].includes(f.match(/function (\S+)\(/)[1]));
+  check("renderer selectMetric found in the vendored bundle", Boolean(fn && isRecord));
+  const selectMetric = fn && isRecord ? new Function(`${isRecord}\n${fn[0]}\nreturn selectMetric;`)() : () => undefined;
+  const out = await build({ entryPoints: [join(repo, "dashboard/src/templates.ts")], bundle: true, format: "esm", write: false, platform: "neutral" });
+  const { TEMPLATES } = await import("data:text/javascript;base64," + Buffer.from(out.outputFiles[0].text).toString("base64"));
+  const cards = (TEMPLATES.find((t) => t.id === "usage-cost")?.doc?.tabs ?? []).flatMap((t) => t.widgets ?? []);
+  const shown = (id) => {
+    const w = cards.find((c) => c.id === id);
+    return w?.bindings?.value?.method === "usage.status" ? selectMetric(usage, w.props?.metric) : undefined;
+  };
+  check("Usage & Cost \"Cost (today)\" card shows today's cost, not the period total", shown("cost") === 2.5);
+  check("Usage & Cost \"Tokens (today)\" card shows today's tokens, not the period total", shown("tokens") === 500);
+}
+
+statusMode = "v023";
+const presence023 = (await rpc("system-presence", {})).result?.presence ?? [];
+check(
+  "system-presence (0.23 counts) → gateway row with state, agent count and version, no idle time",
+  presence023[0]?.instanceId === "Hermes gateway (2 active agents)" &&
+    presence023[0]?.mode === "running" &&
+    !("platform" in presence023[0]) &&
+    presence023[0]?.version === "0.23.0" &&
+    !("lastInputSeconds" in presence023[0]),
+);
+check(
+  "system-presence (0.23 counts) → one row per connected platform, none for a failed one",
+  presence023.length === 2 && presence023[1]?.instanceId === "telegram" && presence023[1]?.mode === "connected",
+);
+statusMode = "v023-stale";
+const presenceStale = (await rpc("system-presence", {})).result?.presence ?? [];
+check(
+  "system-presence (0.23, stale heartbeat at 120 s) → idle time past the renderer's 120 s healthy limit",
+  presenceStale[0]?.lastInputSeconds === 121,
+);
+statusMode = "v023-stopped";
+const presenceStopped = (await rpc("system-presence", {})).result?.presence;
+check("system-presence (0.23, gateway stopped) → no instances", Array.isArray(presenceStopped) && presenceStopped.length === 0);
+statusMode = "list";
 
 const nodes = (await rpc("node.list", {})).result;
 check("node.list (direct) → aliases presence", nodes?.presence?.[0]?.instanceId === "gw-1");

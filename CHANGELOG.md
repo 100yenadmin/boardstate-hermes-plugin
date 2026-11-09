@@ -3,6 +3,32 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.5.5
+
+### Fixed
+
+- Hermes 0.23: the Instances widget shows real instances again
+  ([#31](https://github.com/100yenadmin/boardstate-hermes-plugin/issues/31)). Hermes 0.23 reports `active_agents` as a
+  count, so the widget said "No connected instances.". It now lists the running Hermes gateway (its state, how many
+  agents are active, and its version) and each connected messaging platform. A failed platform is left out, and a
+  stopped gateway lists none. An idle time appears only when the gateway's heartbeat is stale, and then its status dot always shows the warning colour. Older hosts that
+  return an agent list are read as before.
+- Hermes 0.23: the Usage & Cost template's "Cost (today)" and "Tokens (today)" cards show today's values
+  ([#31](https://github.com/100yenadmin/boardstate-hermes-plugin/issues/31)). Before, they showed the whole period's
+  totals (the last 30 days by default) under the "today" label, because the renderer reads the metric names
+  `todayCost` and `todayTokens` from the period totals. `usage.status` now adds `costToday` and `tokensToday` from
+  `/api/analytics/usage`'s per-day series, using the Hermes host's local calendar day, and the template's cards select
+  them. A day with no usage reads 0. A board made from this template before 1.5.5 keeps the old cards: apply the
+  template again, or ask the agent to set the two cards' `metric` to `costToday` and `tokensToday`. `usage.status`
+  also reports Hermes 0.23's period length as `days`.
+
+### Changed
+
+- The native `boardstate_widget_add` and `boardstate_widget_update` descriptions tell agents two things. A
+  `builtin:stat-card` with `format: "percent"` multiplies by 100, so 0.39 shows 39%; an agent-built launch board had
+  shown "3,900%" for 39.0. And tabular data goes in `builtin:table`, because `builtin:markdown` does not render pipe
+  tables yet ([#32](https://github.com/100yenadmin/boardstate-hermes-plugin/issues/32)).
+
 ## 1.5.4
 
 ### Fixed
