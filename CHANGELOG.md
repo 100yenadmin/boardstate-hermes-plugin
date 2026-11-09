@@ -11,7 +11,7 @@ adheres to [Semantic Versioning](https://semver.org/).
   ([#31](https://github.com/100yenadmin/boardstate-hermes-plugin/issues/31)). Hermes 0.23 reports `active_agents` as a
   count, so the widget said "No connected instances.". It now lists the running Hermes gateway (its state, how many
   agents are active, and its version) and each connected messaging platform. A failed platform is left out, and a
-  stopped gateway lists none. An idle time appears only when the gateway's heartbeat is stale, and then the dot is always red. Older hosts that
+  stopped gateway lists none. An idle time appears only when the gateway's heartbeat is stale, and then its status dot always shows the warning colour. Older hosts that
   return an agent list are read as before.
 - Hermes 0.23: the Usage & Cost template's "Cost (today)" and "Tokens (today)" cards show today's values
   ([#31](https://github.com/100yenadmin/boardstate-hermes-plugin/issues/31)). Before, they showed the whole period's
