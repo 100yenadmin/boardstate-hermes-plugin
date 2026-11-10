@@ -3,6 +3,13 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.5.10
+
+### Changed
+
+- The README links to the demo, right under its opening line.
+- No code changes. Still the same 19 native tools.
+
 ## 1.5.9
 
 ### Changed
