@@ -4,6 +4,8 @@
 
 From one ask, your Hermes agent builds a live board of KPIs, tables and charts, and keeps it current as plans change.
 
+https://github.com/user-attachments/assets/ccdbef31-792d-43b2-9b2a-635fe47aef4a
+
 [![Latest release](https://img.shields.io/github/v/release/100yenadmin/boardstate-hermes-plugin)](https://github.com/100yenadmin/boardstate-hermes-plugin/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/100yenadmin/boardstate-hermes-plugin)](LICENSE)
 [![Hermes 0.21.2+](https://img.shields.io/badge/Hermes-0.21.2%2B-blue)](https://github.com/NousResearch/hermes-agent)
