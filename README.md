@@ -35,12 +35,12 @@ hermes plugins install boardstate --enable
 
 On Hermes 0.23.1 or newer this installs the live catalog pin (currently 1.5.9), which has the same code as
 the current release (later releases changed only the README), and Hermes shows the catalog entry instead of
-the "custom (unreviewed) source" warning. If Hermes cannot fetch the live catalog and has no cached copy, it
-falls back to the catalog copy it shipped with (1.5.3 on 0.23.1). Hermes versions before 0.23.1 install from
-the copy they shipped with as well
-([NousResearch/hermes-agent#151856](https://github.com/NousResearch/hermes-agent/issues/151856)), so the same
-line installs an older release there: 1.5.2 on 0.23.0 and 0.22.7. If the install reports a version older
-than 1.5.9, use the first line, which always installs the current release.
+the "custom (unreviewed) source" warning. When Hermes cannot fetch the live catalog, it uses its last cached
+copy, which can pin an older release, or, with no cache, the catalog copy it shipped with (1.5.3 on 0.23.1).
+Hermes versions before 0.23.1 can also end up on an older release, such as the 1.5.2 that 0.23.0 and 0.22.7
+shipped with ([NousResearch/hermes-agent#151856](https://github.com/NousResearch/hermes-agent/issues/151856)).
+If the install reports a version older than 1.5.9, or you cannot check, use the first line, which always
+installs the current release.
 
 ## Try it
 
@@ -114,8 +114,8 @@ in `boardstate-state` (see [Uninstall](#uninstall)). Then run an install line ag
 hermes plugins remove boardstate
 ```
 
-`hermes plugins update boardstate` moves a catalog install only as far as the catalog pin, which before Hermes
-0.23.1, or when the live catalog cannot be fetched, can be the older copy Hermes shipped with. It moves an unpinned repository install to the latest
+`hermes plugins update boardstate` moves a catalog install only as far as the catalog pin Hermes sees, which
+can be an older cached or shipped catalog copy, as described under [Install](#install). It moves an unpinned repository install to the latest
 commit on `main`, and leaves a `--ref` install where it is.
 
 To enable an installed copy later:
