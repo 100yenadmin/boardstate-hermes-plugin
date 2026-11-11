@@ -27,15 +27,20 @@ No API keys or accounts. Hermes prints a "custom (unreviewed) source" warning fo
 repository; Boardstate scans `safe`, so it installs with no prompt. Then start (or restart) `hermes dashboard`
 and follow **Try it** below.
 
-The catalog name also works, but it can give an older release:
+The catalog name installs the release the Hermes catalog reviewed:
 
 ```bash
 hermes plugins install boardstate --enable
 ```
 
-On Hermes 0.23.0 that line installs 1.5.2, because 0.23.0 falls back to the catalog copy it shipped with
-([NousResearch/hermes-agent#151856](https://github.com/NousResearch/hermes-agent/issues/151856)). Use the
-first line for the current version.
+On Hermes 0.23.1 or newer this installs the live catalog pin (currently 1.5.9), which has the same code as
+the current release (later releases changed only the README), and Hermes shows the catalog entry instead of
+the "custom (unreviewed) source" warning. When Hermes cannot fetch the live catalog, it uses its last cached
+copy, which can pin an older release, or, with no cache, the catalog copy it shipped with (1.5.3 on 0.23.1).
+Hermes versions before 0.23.1 can also end up on an older release, such as the 1.5.2 that 0.23.0 and 0.22.7
+shipped with ([NousResearch/hermes-agent#151856](https://github.com/NousResearch/hermes-agent/issues/151856)).
+If the install reports a version older than 1.5.9, or you cannot check, use the first line, which always
+installs the current release.
 
 ## Try it
 
@@ -96,7 +101,8 @@ hermes plugins install 100yenadmin/boardstate-hermes-plugin --ref <40-character 
 ```
 
 Each [release](https://github.com/100yenadmin/boardstate-hermes-plugin/releases) names its commit sha. `--ref` takes a full sha, not a tag. Hermes scans
-this install as a community source. Every release since 1.5.4 scans `safe` on Hermes 0.23.0, so it installs
+this install as a community source. Every release since 1.5.4 scans `safe` on Hermes 0.23.0, and the current
+release also scans `safe` on 0.23.1, so it installs
 with no prompt and no `--force`, including from Hermes Desktop and scripts. CI runs that scanner on every
 commit and fails on anything that would not scan `safe` (see
 [docs/security-scanner.md](docs/security-scanner.md)). 1.5.3 and earlier scan `caution`.
@@ -108,8 +114,8 @@ in `boardstate-state` (see [Uninstall](#uninstall)). Then run an install line ag
 hermes plugins remove boardstate
 ```
 
-`hermes plugins update boardstate` moves a catalog install only as far as the catalog pin, which on Hermes
-0.23.0 can be the older copy Hermes shipped with. It moves an unpinned repository install to the latest
+`hermes plugins update boardstate` moves a catalog install only as far as the catalog pin Hermes sees, which
+can be an older cached or shipped catalog copy, as described under [Install](#install). It moves an unpinned repository install to the latest
 commit on `main`, and leaves a `--ref` install where it is.
 
 To enable an installed copy later:
@@ -252,7 +258,8 @@ intentionally share native-tool grants.
 
 ## Security scanner
 
-On Hermes 0.23.0 the install-time scan reports `safe`, and CI runs that scanner on every commit. What each
+On Hermes 0.23.0 and 0.23.1 the install-time scan reports `safe`, and CI runs the 0.23.0 scanner on every
+commit. What each
 remaining informational finding is, and how the build keeps it that way:
 [docs/security-scanner.md](docs/security-scanner.md).
 

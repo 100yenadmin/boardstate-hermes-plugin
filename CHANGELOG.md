@@ -3,6 +3,19 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.5.12
+
+### Changed
+
+- The README says what the catalog name installs on each Hermes version. On Hermes 0.23.1 or newer,
+  `hermes plugins install boardstate --enable` installs the live catalog pin (1.5.9, the same code as this
+  release) with no unreviewed-source warning. When Hermes cannot fetch the live catalog it uses its last cached
+  copy or the copy it shipped with, and versions before 0.23.1 can do the same, so the catalog name can install
+  an older release (for example 1.5.3 shipped with 0.23.1, or 1.5.2 shipped with 0.23.0 and 0.22.7). The README
+  says to use the repository line when the install reports a version older than 1.5.9, or when you cannot check.
+- The README notes that the current release also scans `safe` on Hermes 0.23.1.
+- No code changes. Still the same 19 native tools.
+
 ## 1.5.11
 
 ### Changed
