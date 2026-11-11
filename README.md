@@ -27,15 +27,18 @@ No API keys or accounts. Hermes prints a "custom (unreviewed) source" warning fo
 repository; Boardstate scans `safe`, so it installs with no prompt. Then start (or restart) `hermes dashboard`
 and follow **Try it** below.
 
-The catalog name also works, but it can give an older release:
+The catalog name installs the release the Hermes catalog reviewed:
 
 ```bash
 hermes plugins install boardstate --enable
 ```
 
-On Hermes 0.23.0 that line installs 1.5.2, because 0.23.0 falls back to the catalog copy it shipped with
-([NousResearch/hermes-agent#151856](https://github.com/NousResearch/hermes-agent/issues/151856)). Use the
-first line for the current version.
+On Hermes 0.23.1 or newer this installs the catalog pin (currently 1.5.9), which has the same code as the
+current release (later releases changed only the README). Hermes shows the catalog entry instead of the "custom
+(unreviewed) source" warning. On Hermes 0.23.0 the same line installs 1.5.2, because 0.23.0 falls back to
+the catalog copy it shipped with
+([NousResearch/hermes-agent#151856](https://github.com/NousResearch/hermes-agent/issues/151856)); there,
+use the first line.
 
 ## Try it
 
@@ -96,7 +99,8 @@ hermes plugins install 100yenadmin/boardstate-hermes-plugin --ref <40-character 
 ```
 
 Each [release](https://github.com/100yenadmin/boardstate-hermes-plugin/releases) names its commit sha. `--ref` takes a full sha, not a tag. Hermes scans
-this install as a community source. Every release since 1.5.4 scans `safe` on Hermes 0.23.0, so it installs
+this install as a community source. Every release since 1.5.4 scans `safe` on Hermes 0.23.0, and the current
+release also scans `safe` on 0.23.1, so it installs
 with no prompt and no `--force`, including from Hermes Desktop and scripts. CI runs that scanner on every
 commit and fails on anything that would not scan `safe` (see
 [docs/security-scanner.md](docs/security-scanner.md)). 1.5.3 and earlier scan `caution`.
@@ -252,7 +256,8 @@ intentionally share native-tool grants.
 
 ## Security scanner
 
-On Hermes 0.23.0 the install-time scan reports `safe`, and CI runs that scanner on every commit. What each
+On Hermes 0.23.0 and 0.23.1 the install-time scan reports `safe`, and CI runs the 0.23.0 scanner on every
+commit. What each
 remaining informational finding is, and how the build keeps it that way:
 [docs/security-scanner.md](docs/security-scanner.md).
 
