@@ -3,6 +3,27 @@
 All notable changes to `boardstate-hermes-plugin` are documented here. This project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.5.13
+
+### Security
+
+- The sidecar's dependencies move past the advisories a dependency audit found (#45). The MCP SDK goes from
+  1.29.0 to 1.32.2, and the packages it brings in move to patched versions: `@hono/node-server` 2.1.8, `hono`
+  4.13.18, `fast-uri` 3.1.9 and `zod` 4.6.7, plus `qs`, `body-parser`, `proxy-addr` and `ip-address`, which
+  are installed but not bundled. The build tool esbuild goes to 0.25.12. `npm audit` now reports no known
+  vulnerabilities.
+- Only the sidecar bundle (`dashboard/sidecar/server.js`) changes. The Web tab, Desktop page and vendored
+  element bundles are byte-identical to 1.5.12, and no Boardstate code changed. Still the same 19 native tools.
+- Two behaviour changes come with the newer SDK:
+  - **Connector redirects:** an HTTP or SSE connector no longer follows a redirect to another host or port,
+    or from `https` to `http`; it fails with an error naming `redirectPolicy: 'same-origin'`. A redirect of a
+    POST request, such as a Streamable HTTP connector's first request, is followed only for status 307 or 308.
+    Configure each connector with its final URL.
+  - **Size limits:** the agent's MCP endpoint refuses request bodies over 4 MiB and batches over 100
+    messages, and a stdio connector message over 10 MiB is rejected. Native tool calls already have their
+    own 1 MiB limit, which is unchanged.
+- The release still scans `safe` on Hermes 0.23.0 and 0.23.1. Node.js 20 is still the minimum.
+
 ## 1.5.12
 
 ### Changed
