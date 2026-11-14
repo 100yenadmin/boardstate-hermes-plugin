@@ -15,10 +15,10 @@ adheres to [Semantic Versioning](https://semver.org/).
 - Only the sidecar bundle (`dashboard/sidecar/server.js`) changes. The Web tab, Desktop page and vendored
   element bundles are byte-identical to 1.5.12, and no Boardstate code changed. Still the same 19 native tools.
 - Two behaviour changes come with the newer SDK:
-  - **Connector redirects:** an HTTP or SSE connector now follows a redirect only within the same origin. A
-    connector URL that redirects to another host or port, or from `https` to `http`, now fails with an error
-    naming `redirectPolicy: 'same-origin'`. Configure the final URL instead. A same-host upgrade from `http`
-    to `https` on the default ports is still followed.
+  - **Connector redirects:** an HTTP or SSE connector no longer follows a redirect to another host or port,
+    or from `https` to `http`; it fails with an error naming `redirectPolicy: 'same-origin'`. A redirect of a
+    POST request, such as a Streamable HTTP connector's first request, is followed only for status 307 or 308.
+    Configure each connector with its final URL.
   - **Size limits:** the agent's MCP endpoint refuses request bodies over 4 MiB and batches over 100
     messages, and a stdio connector message over 10 MiB is rejected. Native tool calls already have their
     own 1 MiB limit, which is unchanged.
