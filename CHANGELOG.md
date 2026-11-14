@@ -14,6 +14,13 @@ adheres to [Semantic Versioning](https://semver.org/).
   vulnerabilities.
 - Only the sidecar bundle (`dashboard/sidecar/server.js`) changes. The Web tab, Desktop page and vendored
   element bundles are byte-identical to 1.5.12, and no Boardstate code changed. Still the same 19 native tools.
+- Two behaviour changes come with the newer SDK:
+  - **Connector redirects:** an HTTP or SSE connector now follows a redirect only within the same origin. A
+    connector URL that redirects to another host, or from `http` to `https`, now fails with an error naming
+    `redirectPolicy: 'same-origin'`. Configure the final URL instead.
+  - **Size limits:** the agent's MCP endpoint refuses request bodies over 4 MiB and batches over 100
+    messages, and a stdio connector message over 10 MiB is rejected. Native tool calls already have their
+    own 1 MiB limit, which is unchanged.
 - The release still scans `safe` on Hermes 0.23.0 and 0.23.1. Node.js 20 is still the minimum.
 
 ## 1.5.12
