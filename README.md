@@ -33,13 +33,13 @@ The catalog name installs the release the Hermes catalog reviewed:
 hermes plugins install boardstate --enable
 ```
 
-On Hermes 0.23.1 or newer this installs the live catalog pin (currently 1.5.9), which has the same code as
-the current release (later releases changed only the README), and Hermes shows the catalog entry instead of
-the "custom (unreviewed) source" warning. When Hermes cannot fetch the live catalog, it uses its last cached
+On Hermes 0.23.1 or newer this installs the live catalog pin, and Hermes shows the catalog entry instead of
+the "custom (unreviewed) source" warning. The pin is 1.5.12 until the catalog moves to 1.5.13, which updates
+the sidecar's dependencies for known security advisories. When Hermes cannot fetch the live catalog, it uses its last cached
 copy, which can pin an older release, or, with no cache, the catalog copy it shipped with (1.5.3 on 0.23.1).
 Hermes versions before 0.23.1 can also end up on an older release, such as the 1.5.2 that 0.23.0 and 0.22.7
 shipped with ([NousResearch/hermes-agent#151856](https://github.com/NousResearch/hermes-agent/issues/151856)).
-If the install reports a version older than 1.5.9, or you cannot check, use the first line, which always
+If the install reports a version older than 1.5.13, or you cannot check, use the first line, which always
 installs the current release.
 
 ## Try it
