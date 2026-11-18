@@ -30,6 +30,9 @@ python -m pip install fastapi websockets httpx
 python test/plugin_api_check.py
 ```
 
+Required checks on `main`: `build-and-smoke`, `python`, `node20-runtime`, `hermes-install-scan`, `hermes-catalog-acceptance` and
+`windows-lifecycle`. Pull requests merge only when all six pass.
+
 The `git diff --exit-code` line is the build check: after `npm run build`, the committed bundles must not change. If they do, commit
 the rebuilt files with your change.
 

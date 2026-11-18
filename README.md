@@ -298,6 +298,7 @@ Report security problems through a [private advisory](https://github.com/100yena
 ## Links
 
 - [Releases](https://github.com/100yenadmin/boardstate-hermes-plugin/releases) and the [CHANGELOG](CHANGELOG.md)
+- [Vision](VISION.md) and [roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md) and the [security policy](SECURITY.md)
 - [Bug report form](https://github.com/100yenadmin/boardstate-hermes-plugin/issues/new?template=bug_report.yml)
 
