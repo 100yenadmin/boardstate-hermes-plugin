@@ -43,6 +43,15 @@ the rebuilt files with your change.
 - Never commit secrets, tokens, real user data, or machine-specific paths.
 - Tests use a temporary `HERMES_HOME`, never a real one.
 
+## Release closeout (maintainers)
+
+Required after every release, rc promoted to stable, or GA tag. Contributors don't cut releases (see Rules). After the release is published and its receipt sent:
+
+1. Close every issue the release fully served, with a comment naming the version (never an umbrella/parent issue whose own acceptance is not met).
+2. Tick the boxes it completed on ROADMAP.md / VISION.md, roadmap or tracking issues, and closed issues whose checklists shipped; close a milestone once all its issues are closed.
+3. Update every README / ROADMAP line that names the latest release or what ships next.
+4. Send the Plugin Manager one closeout line: issues closed, boxes ticked, docs updated (or "none").
+
 ## Filing issues
 
 - Search first: `gh issue list -R 100yenadmin/boardstate-hermes-plugin --state all --search "<key words>"`.
