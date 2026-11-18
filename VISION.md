@@ -25,8 +25,8 @@ saved, validated document in your Hermes home, so it outlasts the chat that made
 ## Non-goals
 
 - Drawing the board inside chat messages. The board lives in the dashboard and Desktop.
-- A hosted Boardstate service, accounts or API keys. The board lives in the Hermes home of the Hermes it runs on, and nothing leaves
-  that machine unless an operator configures a connector.
+- A hosted Boardstate service, accounts or API keys. The board lives in the Hermes home of the Hermes it runs on. Boardstate makes no
+  third-party network request by default; operator-configured connectors are the only paths that reach outside Hermes.
 - A general BI tool or data warehouse. Boardstate shows what the agent and Hermes know; it does not query outside systems unless an
   operator configures a connector.
 - Running connectors without an operator. Connector reads need an approved grant, and actions wait for an operator decision unless
