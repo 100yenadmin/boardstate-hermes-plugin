@@ -5,7 +5,8 @@ not counted as planned until they move up.
 
 ## Now
 
-- Maintenance on 1.5.13 (the release that moved the sidecar's dependencies past known advisories, #45). Keep CI, the Hermes catalog
+- Maintenance on 1.5.13 (the release that fixed the dependency finding in #45; that issue stays open for two repository-settings
+  findings). Keep CI, the Hermes catalog
   pin and the install paths current, and answer issues.
 
 ## Next
@@ -13,10 +14,10 @@ not counted as planned until they move up.
 - [ ] Return compact mutation receipts instead of the full workspace by default (#43).
 - [ ] Add freshness metadata and stale-state badges for static widgets (#44).
 
-## Later (parked, each on its revisit trigger)
+## Later (parked)
 
-- An agent-callable status tool for bug reports (#24). It would add a native tool.
-- The parked follow-ups from the v1.5.0 review (#20): two dashboards on one Hermes home, process-start identity in sidecar records,
+- An agent-callable status tool or slash command for bug reports (#24). Parked until it is scheduled.
+- The parked follow-ups from the v1.5.0 review (#20), each on the revisit trigger recorded there: two dashboards on one Hermes home, process-start identity in sidecar records,
   a public origin for Desktop widget assets behind a proxy, per-session scoping, and items 19-24 from its comments.
 
 ## Done
